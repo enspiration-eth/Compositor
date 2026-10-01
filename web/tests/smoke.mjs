@@ -369,10 +369,19 @@ try {
     await page.click('.rail-btn[data-tool="wand"]');
     const [x, y] = await toScreen(450, 530); await page.mouse.click(x, y);
     await page.waitForFunction(() => !window.compositor.app.busy && window.compositor.app.history.undoLabel === 'Object Selection', null, { timeout: 60000 });
-    const n = await page.evaluate(() => { const d = window.compositor.app.doc.selection.getContext('2d').getImageData(0, 0, 1600, 1000).data; let c = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 127) c++; return c; });
-    assert(n > 15000 && n < 80000, 'object = the stroke, px ' + n);
+    const count = () => page.evaluate(() => { const d = window.compositor.app.doc.selection.getContext('2d').getImageData(0, 0, 1600, 1000).data; let c = 0, soft = 0; for (let i = 3; i < d.length; i += 4) { if (d[i] > 127) c++; if (d[i] > 0 && d[i] < 255) soft++; } return { c, soft }; });
+    const n = await count();
+    assert(n.c > 15000 && n.c < 80000, 'object = the stroke, px ' + n.c);
+    assert(n.soft > 100, 'anti-aliased, smoothed outline ' + n.soft);
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/06-object-selection.png` });
+    // Edge +4 erodes the hard mask; Anti-alias off keeps the raw pixel mask.
+    await page.evaluate(() => { const { app } = window.compositor; app.deselect(); app.objectSel.edgeOffset = 4; app.objectSel.antiAlias = false; });
+    await page.mouse.click(x, y);
+    await page.waitForFunction(() => !window.compositor.app.busy && window.compositor.app.doc.selection, null, { timeout: 60000 });
+    const e = await count();
+    assert(e.soft === 0 && e.c < n.c && e.c > n.c * 0.4, 'eroded raw mask ' + JSON.stringify(e) + ' vs ' + n.c);
+    await page.evaluate(() => { const { app } = window.compositor; app.objectSel.edgeOffset = 0; app.objectSel.antiAlias = true; });
     await page.evaluate(() => { const { app } = window.compositor; app.wandMode = 'wand'; app.deselect(); });
   });
 

@@ -309,6 +309,7 @@ function renderHeader() {
         checkbox('Contiguous', app.wand.contiguous, v => app.wand.contiguous = v), checkbox('Sample all layers', app.wand.sampleAll, v => app.wand.sampleAll = v));
       if (t === 'wand' && app.wandMode === 'object') hd.append(checkbox('Sample all layers', app.objectSel.sampleAll, v => app.objectSel.sampleAll = v),
         slider({ label: 'Edge', min: -10, max: 10, value: app.objectSel.edgeOffset, unit: 'px', width: 170, onInput: v => app.objectSel.edgeOffset = v }),
+        checkbox('Anti-alias', app.objectSel.antiAlias, v => app.objectSel.antiAlias = v),
         button('Select Subject', () => app.selectSubject()));
       if (t !== 'wand') hd.append(slider({ label: 'Feather', min: 0, max: 100, value: app.marqueeFeather, unit: 'px', width: 190, onInput: v => app.marqueeFeather = v }));
       hd.append(button('Select All', () => app.selectAll()), button('Deselect', () => app.deselect()), button('Inverse', () => app.inverseSelection()),

@@ -51,6 +51,65 @@ export function maskBytesToCanvas(doc: Doc, mask: Uint8Array) {
   for (let i = 0; i < mask.length; i++) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255; img.data[i * 4 + 3] = mask[i]; }
   x.putImageData(img, 0, 0); return c;
 }
+/** ObjectSelection.smoothed: the traced outline of a 0/255 mask with its one-pixel stair steps rounded off
+ *  (Douglas–Peucker at 1.6 px, then three rounds of Chaikin corner cutting), filled anti-aliased. Holes stay holes. */
+export function smoothedMaskSelection(doc: Doc, mask: Uint8Array): HTMLCanvasElement {
+  const loops = traceMask(mask, doc.width, doc.height);
+  if (!loops) return maskBytesToCanvas(doc, mask);
+  return shapeCanvas(doc, x => {
+    x.beginPath();
+    for (const flat of loops) {
+      const pts: [number, number][] = [];
+      for (let i = 0; i + 1 < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
+      const sm = chaikin(simplifyClosed(pts, 1.6), 3);
+      if (sm.length < 3) continue;
+      sm.forEach(([a, b], i) => i ? x.lineTo(a, b) : x.moveTo(a, b)); x.closePath();
+    }
+    x.fill('evenodd');
+  });
+}
+type P = [number, number];
+function simplifyClosed(input: P[], tol: number): P[] {
+  const pts = input.slice();
+  if (pts.length > 1 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
+  if (pts.length < 4) return pts;
+  let start = 0;
+  for (let i = 1; i < pts.length; i++) if (pts[i][0] < pts[start][0] || (pts[i][0] === pts[start][0] && pts[i][1] < pts[start][1])) start = i;
+  const rot = [...pts.slice(start), ...pts.slice(0, start)];
+  let open = simplifyOpen([...rot, rot[0]], tol);
+  open = open.slice(0, -1);
+  return open.length >= 3 ? open : pts;
+}
+function simplifyOpen(p: P[], tol: number): P[] {
+  // Iterative Douglas–Peucker (outlines can have many thousands of points).
+  const keep = new Uint8Array(p.length); keep[0] = keep[p.length - 1] = 1;
+  const stack: [number, number][] = [[0, p.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    if (b <= a + 1) continue;
+    const [ax, ay] = p[a], [bx, by] = p[b], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+    let far = a + 1, best = 0;
+    for (let i = a + 1; i < b; i++) {
+      const d = len > 0 ? Math.abs(dy * p[i][0] - dx * p[i][1] + bx * ay - by * ax) / len : Math.hypot(p[i][0] - ax, p[i][1] - ay);
+      if (d > best) { best = d; far = i; }
+    }
+    if (best > tol) { keep[far] = 1; stack.push([a, far], [far, b]); }
+  }
+  return p.filter((_, i) => keep[i]);
+}
+function chaikin(input: P[], iterations: number): P[] {
+  let pts = input;
+  if (pts.length < 3) return pts;
+  for (let k = 0; k < iterations; k++) {
+    const next: P[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25], [a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    pts = next;
+  }
+  return pts;
+}
 export function selectionBytes(c: HTMLCanvasElement): Uint8Array {
   const d = ctx2d(c).getImageData(0, 0, c.width, c.height).data, out = new Uint8Array(c.width * c.height);
   for (let i = 0; i < out.length; i++) out[i] = d[i * 4 + 3];

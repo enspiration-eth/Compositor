@@ -337,3 +337,21 @@ export function motionBlurInto(img: ImageData, angleDeg: number, length: number,
     return out;
   });
 }
+
+/** CIEdgePreserveUpsampleFilter's job (ObjectPixels.c): a low-resolution 0–1 mask brought up to the guide image's size
+ *  along the guide's edges. */
+export function edgePreserveUpsample(small: Float32Array, sw: number, sh: number, guide: ImageData, spatialSigma = 1, lumaSigma = 0.15): Float32Array {
+  return withHeap((heap, m) => {
+    const sp = heap.floats(small), gp = heap.bytes(guide.data), n = guide.width * guide.height, op = heap.alloc(n * 4);
+    if (!m._edge_preserve_upsample(sp, sw, sh, gp, guide.width, guide.height, op, spatialSigma, lumaSigma)) throw new Error('Out of memory upsampling the mask');
+    return kernels().HEAPF32.slice(op >> 2, (op >> 2) + n);
+  });
+}
+/** ObjectSelection.adjusted: `steps` rounds of 3×3 erosion (`erode`) or dilation of a 0/255 mask, in place. */
+export function maskMorph(mask: Uint8Array, w: number, h: number, steps: number, erode: boolean) {
+  withHeap((heap, m) => {
+    const p = heap.bytes(mask);
+    if (!m._mask_morph(p, w, h, steps, erode ? 1 : 0)) throw new Error('Out of memory');
+    mask.set(kernels().HEAPU8.subarray(p, p + mask.length));
+  });
+}

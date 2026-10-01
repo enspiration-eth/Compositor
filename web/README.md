@@ -103,7 +103,11 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Remove Background, Select Subject, Object Selection** run on an open salient-object model (U²-Net-p) instead of
   Apple Vision. The model is good at clear foreground subjects, but it doesn't separate instances the way Vision does.
   Object Selection takes the connected part of the subject mask under the click, with closer looks around the
-  click as a fallback, and diffuse things such as glows aren't detected. The first use downloads about 4.5 MB of
+  click as a fallback; otherwise it follows `ObjectSelection.swift`: the low-resolution mask is upsampled along the
+  image's edges (a joint bilateral upsample in wasm standing in for `CIEdgePreserveUpsampleFilter`, sigma 5 / luma
+  0.15), thresholded, eroded or dilated in whole-pixel steps by Edge (wasm `mask_morph`), and with Anti-alias the traced
+  outline is simplified and Chaikin-smoothed. Touching objects that the model sees as one subject come out as one
+  selection, and diffuse things such as glows aren't detected. The first use downloads about 4.5 MB of
   model plus a 14 MB runtime (about 3.5 MB gzipped).
 - **Camera Raw:** the full pipeline and panel: editable point curves (RGB/Red/Green/Blue, plus presets), Point Color
   (sample up to eight colors from the image, shift and range sliders, Visualize), Geometry (Upright Off/Guided with

@@ -6,7 +6,7 @@
 import type { InferenceSession } from 'onnxruntime-web';
 import ortWasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import { canvasOf, ctx2d } from './adjustments';
-import { kernels, withHeap } from './kernels';
+import { kernels, withHeap, edgePreserveUpsample } from './kernels';
 
 const SIZE = 320;
 let sessionPromise: Promise<InferenceSession> | null = null;
@@ -93,9 +93,22 @@ export async function subjectMatte(src: HTMLCanvasElement, s: MatteSettings = de
   return w === W && h === H ? m : resample(m, w, h, W, H);
 }
 
+/** ObjectSelection's mask: the model's low-resolution map brought up to `src`'s size along the image's own edges
+ *  (the Mac app runs CIEdgePreserveUpsampleFilter over Vision's instance mask, spatial sigma 5, luma sigma 0.15). */
+export async function objectMatte(src: HTMLCanvasElement): Promise<Float32Array> {
+  let r = rawCache.get(src);
+  if (!r) { r = await raw(src); rawCache.set(src, r); }
+  const guide = ctx2d(src).getImageData(0, 0, src.width, src.height);
+  // Sigma 5 is in image pixels; in the model's grid that is 5 / (image px per cell), at least one cell.
+  const cell = Math.max(src.width / SIZE, src.height / SIZE);
+  return edgePreserveUpsample(r, SIZE, SIZE, guide, Math.max(1, 5 / cell), 0.15);
+}
+
 /** Raw saliency for an arbitrary region (Object Selection's second look), resampled to w×h. */
 export async function saliency(src: HTMLCanvasElement): Promise<Float32Array> {
-  return resample(await raw(src), SIZE, SIZE, src.width, src.height);
+  const guide = ctx2d(src).getImageData(0, 0, src.width, src.height);
+  const cell = Math.max(src.width / SIZE, src.height / SIZE);
+  return edgePreserveUpsample(await raw(src), SIZE, SIZE, guide, Math.max(1, 5 / cell), 0.15);
 }
 
 /** A 0–1 map as a layer mask canvas (gray in RGB, opaque). */

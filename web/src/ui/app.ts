@@ -44,7 +44,7 @@ export class App {
   lassoKind: 'freehand' | 'polygonal' = 'freehand';
   wand = { tolerance: 32, contiguous: true, sampleAll: true };
   wandMode: 'wand' | 'object' = 'wand';
-  objectSel = { sampleAll: true, edgeOffset: 0 };
+  objectSel = { sampleAll: true, edgeOffset: 0, antiAlias: true };
   busy = false;
   smearMode: 'liquify' | 'blur' | 'smudge' = 'blur';
   smearStrength = 0.5;

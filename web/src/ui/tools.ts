@@ -10,8 +10,8 @@ import { type Layer, type Mat, type Transform, layerMatrix, invert, apply, clone
   isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer, maskTransformOf, bakeMask, retargetRuns, setTextColor, setTextFont } from '../engine/document';
 import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
-import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds } from '../engine/kernels';
-import { subjectMatte, saliency } from '../engine/segment';
+import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds, maskMorph } from '../engine/kernels';
+import { objectMatte, saliency } from '../engine/segment';
 import { toast } from './dom';
 
 type Pt = [number, number];
@@ -604,9 +604,11 @@ export class CanvasController {
     if (pts && pts.length >= 3) { app.edit('Polygonal Lasso'); Sel.combine(d, Sel.polygonSelection(d, pts, app.marqueeFeather), mode); app.emit('selection'); }
     app.needsRender = true;
   }
-  /** Object Selection (ObjectSelection.swift): the subject region under the click. Vision finds instances; the web
-   *  model finds salient objects, so this takes the connected part of the subject mask that holds the click, looking
-   *  again at the area around the click when the whole-image pass saw only background there. */
+  /** Object Selection (ObjectSelection.swift): the object under the click. Vision finds separate instances; the web
+   *  model finds salient objects, so this takes the connected part of the object mask that holds the click, looking
+   *  again at the area around the click when the whole-image pass saw only background there. As in the Mac app the
+   *  low-resolution mask is brought up to full size along the image's edges, thresholded, eroded or dilated by the
+   *  Edge setting in whole-pixel steps, and (with Anti-alias) its traced outline is smoothed. */
   async objectClick(dpt: Pt, mode: Sel.SelMode) {
     const d = app.doc!, x = Math.floor(dpt[0]), y = Math.floor(dpt[1]);
     if (x < 0 || y < 0 || x >= d.width || y >= d.height) return;
@@ -614,7 +616,7 @@ export class CanvasController {
     if (app.objectSel.sampleAll || !app.active?.canvas) sx.putImageData(app.renderer.readComposite(d), 0, 0);
     else { const a = app.active!, m = layerMatrix(a); sx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]); sx.drawImage(a.canvas!, 0, 0); }
     const found = await app.busyWith('Finding the object', async () => {
-      let m = await subjectMatte(src);
+      let m = await objectMatte(src);
       if (m[y * d.width + x] < 0.5) {
         // Closer looks at squares around the click, half then a quarter of the canvas across.
         let hit: Float32Array | null = null;
@@ -632,21 +634,21 @@ export class CanvasController {
         if (!hit) return null;
         m = hit;
       }
-      if (app.objectSel.edgeOffset) {
-        // Positive values erode the mask inward; negative expand it (the Mac app's edgeOffset).
-        const bin = new Float32Array(m.length); for (let i = 0; i < m.length; i++) bin[i] = m[i] >= 0.5 ? 1 : 0;
-        withHeap((heap, k) => { const p = heap.floats(bin); k._matte_shift_edge(p, d.width, d.height, -app.objectSel.edgeOffset); bin.set(kernels().HEAPF32.subarray(p >> 2, (p >> 2) + bin.length)); });
-        m = bin;
-      }
+      const bin = new Uint8Array(m.length);
+      for (let i = 0; i < m.length; i++) bin[i] = m[i] >= 0.5 ? 255 : 0;
+      const off = Math.max(-10, Math.min(10, Math.round(app.objectSel.edgeOffset)));
+      if (off) maskMorph(bin, d.width, d.height, Math.abs(off), off > 0);
+      if (!bin[y * d.width + x]) return null;
       // The connected region under the click: flood-fill the thresholded mask with the original wand kernel.
       const img = new ImageData(d.width, d.height);
-      for (let i = 0; i < m.length; i++) { const v = m[i] >= 0.5 ? 255 : 0; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255; }
-      if (img.data[(y * d.width + x) * 4] === 0) return null;
+      for (let i = 0; i < bin.length; i++) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = bin[i]; img.data[i * 4 + 3] = 255; }
       return wandMask(img, x, y, 0, 0, true);
     });
     if (found === undefined) return;
     if (!found) { toast('No object found there.'); return; }
-    app.edit('Object Selection'); Sel.combine(d, Sel.maskBytesToCanvas(d, found), mode); app.emit('selection');
+    app.edit('Object Selection');
+    Sel.combine(d, app.objectSel.antiAlias ? Sel.smoothedMaskSelection(d, found) : Sel.maskBytesToCanvas(d, found), mode);
+    app.emit('selection');
   }
   wandClick(dpt: Pt, mode: Sel.SelMode) {
     if (app.wandMode === 'object') { void this.objectClick(dpt, mode); return; }
