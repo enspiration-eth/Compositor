@@ -10,7 +10,7 @@ import { type Layer, type Mat, type Transform, layerMatrix, invert, apply, clone
   isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer } from '../engine/document';
 import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
-import { wandMask, spotHeal, withHeap, kernels } from '../engine/kernels';
+import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds } from '../engine/kernels';
 import { subjectMatte, saliency } from '../engine/segment';
 import { toast } from './dom';
 
@@ -40,6 +40,8 @@ export class CanvasController {
   textEditor: HTMLTextAreaElement | null = null;
   rulerX: HTMLCanvasElement; rulerY: HTMLCanvasElement; rulerCorner: HTMLElement;
   guideDrag: { guide: Guide; isNew: boolean; startPos: number } | null = null;
+  /** Free Distort in progress (Distort.swift): the layer's original pixels and the four dragged image corners. */
+  distort: { layer: Layer; canvas: HTMLCanvasElement; mask: HTMLCanvasElement | null; transform: Transform; corners: Pt[]; src: ImageData; maskSrc: ImageData | null } | null = null;
   antsPhase = 0;
 
   constructor(stage: HTMLElement) {
@@ -65,7 +67,10 @@ export class CanvasController {
       c.addEventListener('pointerup', e => this.endGuideDrag(e));
       c.addEventListener('pointercancel', e => this.endGuideDrag(e));
     }
-    app.on(what => { if (what === 'view-settings') this.layoutRulers(); });
+    app.on(what => {
+      if (what === 'view-settings') this.layoutRulers();
+      if (this.distort && (what === 'tool' || what === 'project' || (what === 'layers' && app.active !== this.distort.layer))) this.commitDistort();
+    });
     this.layoutRulers();
     this.octx = this.overlay.getContext('2d')!;
     new ResizeObserver(() => this.resize()).observe(stage);
@@ -165,7 +170,12 @@ export class CanvasController {
     }
     // transform box for the move tool
     const a = app.active;
-    if (app.tool === 'move' && a && !a.isGroup && !a.adjustment && isEffectivelyVisible(d, a)) {
+    if (this.distort) {
+      const cs = this.distort.corners.map(c => S(...c));
+      x.save(); x.strokeStyle = '#4c8dff'; x.lineWidth = 1; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
+      for (const c of cs) { x.fillStyle = '#fff'; x.beginPath(); x.rect(c[0] - 4, c[1] - 4, 8, 8); x.fill(); x.stroke(); }
+      x.restore();
+    } else if (app.tool === 'move' && a && !a.isGroup && !a.adjustment && isEffectivelyVisible(d, a)) {
       const cs = layerCorners(a).map(([u, v]) => S(u, v));
       x.save(); x.strokeStyle = '#4c8dff'; x.lineWidth = 1; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
       for (const hp of this.handles(a)) { x.fillStyle = '#fff'; x.strokeStyle = '#4c8dff'; x.beginPath(); if (hp.kind === 'rotate') x.arc(hp.s[0], hp.s[1], 5, 0, Math.PI * 2); else x.rect(hp.s[0] - 4, hp.s[1] - 4, 8, 8); x.fill(); x.stroke(); }
@@ -322,6 +332,11 @@ export class CanvasController {
         dr.data!.last = [last[0] + Math.round(dpt[0] - last[0]), last[1] + Math.round(dpt[1] - last[1])]; return;
       }
       case 'move': return this.moveDrag(dr, dpt, e);
+      case 'distort': {
+        const dist = this.distort; if (!dist) return;
+        dist.corners[dr.data!.i as number] = snapPoint(...dpt, [dist.layer]);
+        this.previewDistort(); return;
+      }
       case 'cropNew': case 'cropMove': case 'cropHandle': return this.cropDrag(dr, dpt, e);
       case 'gradient': {
         let end = dpt;
@@ -406,7 +421,20 @@ export class CanvasController {
   // ---------- move / transform ----------
   moveDown(e: PointerEvent, s: Pt, dpt: Pt) {
     const d = app.doc!;
+    if (this.distort) {
+      const i = this.distortCornerAt(s);
+      if (i >= 0) { this.drag = { kind: 'distort', start: s, startDoc: dpt, data: { i } }; return; }
+      this.commitDistort();
+    }
     let a = app.active;
+    if (a && (e.metaKey || e.ctrlKey) && a.canvas && !a.isGroup && !a.adjustment) {
+      // ⌘-drag a corner handle: Free Distort.
+      const corner = this.handles(a).find(hp => hp.kind === 'scale' && hp.u !== 0.5 && hp.v !== 0.5 && Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8);
+      if (corner && this.startDistort(a)) {
+        const i = this.distortCornerAt(s);
+        if (i >= 0) { this.drag = { kind: 'distort', start: s, startDoc: dpt, data: { i } }; return; }
+      }
+    }
     const hit = a && !a.isGroup ? this.handles(a).find(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8) : null;
     if (!hit && (e.metaKey || e.ctrlKey || !a)) {
       // Auto-select the topmost visible pixel layer under the pointer.
@@ -466,6 +494,69 @@ export class CanvasController {
       }
     }
     app.needsRender = true; app.emit('transform-live');
+  }
+  // ---------- Free Distort ----------
+  startDistort(l: Layer | null = app.active): boolean {
+    if (this.distort) return this.distort.layer === l;
+    if (!l || !l.canvas || l.isGroup || l.adjustment) { toast('Select a pixel layer to distort.'); return false; }
+    app.edit('Distort');
+    app.rasterize(l);
+    this.distort = { layer: l, canvas: l.canvas, mask: l.mask, transform: { ...l.transform }, corners: layerCorners(l).map(c => [c[0], c[1]] as Pt),
+      src: imageDataOf(l.canvas), maskSrc: l.mask ? imageDataOf(l.mask) : null };
+    toast('Free Distort: drag the corners · Return applies · Esc cancels');
+    app.needsRender = true;
+    return true;
+  }
+  distortCornerAt(s: Pt): number {
+    const dist = this.distort; if (!dist) return -1;
+    let best = -1, bd = 10;
+    dist.corners.forEach((c, i) => { const q = app.toScreen(...c), dd = Math.hypot(q[0] - s[0], q[1] - s[1]); if (dd < bd) { bd = dd; best = i; } });
+    return best;
+  }
+  /** Warps the original pixels (and mask) into the corners; `limit` caps the longest side for the live preview. */
+  private warpDistort(limit: number): { canvas: HTMLCanvasElement; mask: HTMLCanvasElement | null; transform: Transform } | null {
+    const dist = this.distort!, xs = dist.corners.map(c => c[0]), ys = dist.corners.map(c => c[1]);
+    const minX = Math.floor(Math.min(...xs)), minY = Math.floor(Math.min(...ys));
+    const bw = Math.ceil(Math.max(...xs)) - minX, bh = Math.ceil(Math.max(...ys)) - minY;
+    if (bw < 1 || bh < 1 || bw > 30000 || bh > 30000) return null;
+    const f = Math.min(1, limit / Math.max(bw, bh)), dw = Math.max(1, Math.ceil(bw * f)), dh = Math.max(1, Math.ceil(bh * f));
+    const local = dist.corners.flatMap(c => [(c[0] - minX) * f, (c[1] - minY) * f]);
+    const toCanvas = (img: ImageData) => { const c = canvasOf(img.width, img.height); ctx2d(c).putImageData(img, 0, 0); return c; };
+    const warped = distortWarp(dist.src, dw, dh, local);
+    if (!warped.mode) return null;
+    const mask = dist.maskSrc ? toCanvas(distortWarp(dist.maskSrc, dw, dh, local).img) : null;
+    return { canvas: toCanvas(warped.img), mask, transform: { x: minX, y: minY, w: bw, h: bh, rotation: 0, flipX: false, flipY: false, sampling: dist.transform.sampling } };
+  }
+  previewDistort() {
+    const dist = this.distort; if (!dist) return;
+    const r = this.warpDistort(1024); if (!r) return;
+    const l = dist.layer; l.canvas = r.canvas; l.mask = r.mask; l.transform = r.transform; l.rev++;
+    app.needsRender = true;
+  }
+  commitDistort() {
+    const dist = this.distort; if (!dist) return;
+    const r = this.warpDistort(8192);
+    this.distort = null;
+    const l = dist.layer;
+    if (!r) { l.canvas = dist.canvas; l.mask = dist.mask; l.transform = dist.transform; l.rev++; app.changed('layers'); return; }
+    // Hug what's actually there (DistortWarp.warpTrimmed).
+    const b = alphaBounds(imageDataOf(r.canvas));
+    let { canvas, mask, transform } = r;
+    if (b[2] > b[0] && b[3] > b[1] && (b[0] > 0 || b[1] > 0 || b[2] < canvas.width || b[3] < canvas.height)) {
+      const sx = r.transform.w / canvas.width, sy = r.transform.h / canvas.height, cw = b[2] - b[0], ch = b[3] - b[1];
+      const crop = (c: HTMLCanvasElement) => { const o = canvasOf(cw, ch); ctx2d(o).drawImage(c, -b[0], -b[1]); return o; };
+      canvas = crop(canvas); mask = mask ? crop(mask) : null;
+      transform = { ...transform, x: transform.x + b[0] * sx, y: transform.y + b[1] * sy, w: cw * sx, h: ch * sy };
+    }
+    l.canvas = canvas; l.mask = mask; l.transform = transform; l.rev++;
+    app.changed('layers');
+  }
+  cancelDistort() {
+    const dist = this.distort; if (!dist) return;
+    this.distort = null;
+    const l = dist.layer; l.canvas = dist.canvas; l.mask = dist.mask; l.transform = dist.transform; l.rev++;
+    if (app.history?.undoLabel === 'Distort') app.history.undoStack.pop();
+    app.changed('layers');
   }
   nudge(dx: number, dy: number) {
     const d = app.doc; if (!d) return;
@@ -883,12 +974,14 @@ export class CanvasController {
     app.emit('colors');
   }
   cancel() {
+    if (this.distort) { this.cancelDistort(); return true; }
     if (this.textEditor) { this.commitText(true); return true; }
     if (this.lasso) { this.lasso = null; app.needsRender = true; return true; }
     if (this.crop) { this.cancelCrop(); return true; }
     return false;
   }
   commit() {
+    if (this.distort) { this.commitDistort(); return true; }
     if (this.crop) { this.applyCrop(); return true; }
     if (this.lasso && app.lassoKind === 'polygonal') { this.finishLasso('replace'); return true; }
     return false;

@@ -12,6 +12,7 @@ re-implements the platform layers (AppKit/SwiftUI, Metal, Core Image) with web A
 |---|---|---|
 | Pixel kernels (levels, hue/sat cube, gradient map, B&W, color balance, grain, noise, vignette, tonal contrast, lens correction, Camera Raw, magic wand flood fill + contour tracing, spot healing, content-aware fill, dither, alpha bounds) | C in `Compositor/Rendering/*.c` | **The same C files, compiled unchanged to WebAssembly** with Emscripten (`wasm/build.sh` → `src/wasm/pixels.{mjs,wasm}`) |
 | Smudge and Liquify (`WarpStroke` CPU path in `Document/SmudgeLiquify.swift`) | Swift (+ Metal) | Translated line for line to C (`wasm/src/WarpPixels.c`) and compiled into the same wasm module |
+| Free Distort (`⌘`-drag a transform handle; perspective quad warp) | Swift / Core Image | New C kernel (`wasm/src/DistortPixels.c`, inverse homography + bilinear); ⌘-drag a corner with Move or Edit › Distort, Return applies, Esc cancels |
 | Remove Background's matte refinement (`GuidedMatte.swift` guided filter, Shift Edge, Contrast) | Swift + Core Image | Translated to C (`wasm/src/MattePixels.c`), in the same wasm module |
 | Subject detection (Remove Background, Select Subject, Object Selection) | Apple Vision | U²-Net-p (Apache-2.0, `public/models/u2netp.onnx`) on onnxruntime-web's WebAssembly backend, loaded on first use only |
 | libdispatch / Blocks (used by `DitherPixels.c`) | system | Small shims in `wasm/shim/`: a serial `dispatch_apply` and the Blocks runtime symbols, so the C sources compile as-is |
@@ -107,7 +108,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   adjustment tool and no clipping overlays.
 - **RAW / HEIC / TIFF import:** these need ImageIO. The browser can only decode what its own image decoders support.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
-- **Unlinked masks, perspective/free distort:** not ported yet.
+- **Unlinked masks:** not ported yet.
 - **Text:** styled as a single run (one font/size/color per layer, via canvas 2D instead of Core Text). Shapes and
   gradients are rasterized.
 - **Layer effects and Bloom** are close approximations drawn with canvas 2D filters, not the Core Image pipeline.

@@ -101,6 +101,7 @@ function buildMenubar() {
       { label: 'Content-Aware Fill…', shortcut: '⇧⌫', action: () => app.contentAwareFill(), disabled: !app.doc?.selection },
       { separator: true },
       { label: 'Free Transform', shortcut: `${MOD}T`, action: () => selectTool('move'), disabled: !app.active },
+      { label: 'Distort', action: () => { selectTool('move'); ctl.startDistort(app.active); }, disabled: !app.active?.canvas },
       { label: 'Keyboard Shortcuts…', action: showShortcuts },
     ]],
     ['Image', () => [

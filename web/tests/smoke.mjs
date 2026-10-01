@@ -172,6 +172,24 @@ try {
     await page.keyboard.press(`${mod}+'`);
   });
 
+  await step('Free Distort (wasm perspective warp)', async () => {
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Compositor').id); });
+    await page.click('.rail-btn[data-tool="move"]');
+    const c = await page.evaluate(() => { const { app } = window.compositor; const t = app.active.transform; return [t.x + t.w, t.y, t.w, t.h]; });
+    const [x0, y0] = await toScreen(c[0], c[1]), [x1, y1] = await toScreen(c[0] + 160, c[1] - 90);
+    await page.keyboard.down(mod);
+    await page.mouse.move(x0, y0); await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(x0 + (x1 - x0) * i / 8, y0 + (y1 - y0) * i / 8);
+    await page.mouse.up(); await page.keyboard.up(mod);
+    assert(await page.evaluate(() => !!window.compositor.ctl.distort), 'distort session');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${SHOTS}/07-free-distort.png` });
+    await page.keyboard.press('Enter');
+    const s = await page.evaluate(() => { const { app, ctl } = window.compositor; return { active: !!ctl.distort, label: app.history.undoLabel, t: app.active.transform }; });
+    assert(!s.active && s.label === 'Distort' && Math.abs(s.t.w - c[2]) > 30 && s.t.y !== c[1], 'distort applied ' + JSON.stringify({ s, c }));
+  });
+
   await step('magic wand selection (wasm flood fill + trace)', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers[0].id); });
     await page.click('.rail-btn[data-tool="wand"]');

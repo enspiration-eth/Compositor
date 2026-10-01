@@ -297,3 +297,14 @@ export function cameraRawCalibration(img: ImageData, c: { shadowTint: number; re
   onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_calibration(p, w, h, s, c.shadowTint, c.redHue, c.redSaturation, c.greenHue,
     c.greenSaturation, c.blueHue, c.blueSaturation, c.process));
 }
+
+/** Free Distort (Distort.swift): `src` warped so its corners (image TL, TR, BR, BL, in output pixels) land on `corners`. */
+export function distortWarp(src: ImageData, dw: number, dh: number, corners: number[]): { img: ImageData; mode: number } {
+  return withHeap((heap, m) => {
+    const sp = heap.alloc(src.data.length); premultiplyInto(src.data, m.HEAPU8, sp);
+    const dp = heap.alloc(dw * dh * 4), cp = heap.doubles(corners);
+    const mode = m._distort_warp(sp, src.width, src.height, dp, dw, dh, cp);
+    const img = new ImageData(dw, dh); unpremultiplyFrom(kernels().HEAPU8, dp, img.data);
+    return { img, mode };
+  });
+}
