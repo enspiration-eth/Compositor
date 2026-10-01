@@ -50,6 +50,7 @@ export class CanvasController {
     this.overlay = document.createElement('canvas'); this.overlay.className = 'overlay-canvas';
     stage.append(this.gl, this.overlay);
     app.renderer = new Renderer(this.gl);
+    app.renderer.onAsyncResult = () => { app.needsRender = true; };
     const wrap = stage.parentElement ?? stage;
     this.rulerX = document.createElement('canvas'); this.rulerX.className = 'ruler ruler-x';
     this.rulerY = document.createElement('canvas'); this.rulerY.className = 'ruler ruler-y';
@@ -849,12 +850,8 @@ export class CanvasController {
     const st = this.stroke!, t = st.target, tx = ctx2d(t), size = Math.ceil(r * 2 + 4);
     const tmp = canvasOf(size, size), mx = ctx2d(tmp);
     const sx = lx - size / 2, sy = ly - size / 2;
-    if (app.smearMode === 'blur') {
-      mx.filter = `blur(${Math.max(0.6, r / 5)}px)`; mx.drawImage(t, -sx, -sy); mx.filter = 'none';
-    } else {
-      const prev = st.lastLayerPt ?? [lx, ly];
-      mx.drawImage(t, -(prev[0] - size / 2), -(prev[1] - size / 2));
-    }
+    const prev = st.lastLayerPt ?? [lx, ly];
+    mx.drawImage(t, -(prev[0] - size / 2), -(prev[1] - size / 2));
     st.lastLayerPt = [lx, ly];
     mx.globalCompositeOperation = 'destination-in'; this.dabShape(mx, size / 2, size / 2, r, app.brush.hardness * 0.8, 'rgba(0,0,0,1)');
     tx.save(); tx.globalAlpha = app.smearStrength;

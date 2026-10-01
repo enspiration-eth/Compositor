@@ -23,7 +23,7 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
-const step = async (name, fn) => { process.stdout.write(`• ${name} … `); await fn(); console.log('ok'); };
+const step = async (name, fn) => { process.stdout.write(`• ${name} … `); const t0 = Date.now(); await fn(); console.log(process.env.TIMING ? `ok (${Date.now() - t0} ms)` : 'ok'); };
 const assert = (c, msg) => { if (!c) throw new Error('assertion failed: ' + msg); };
 const st = () => page.evaluate(() => {
   const { app } = window.compositor; const d = app.doc;
@@ -221,6 +221,21 @@ try {
     assert(g0.join() !== g1.join() && Math.abs(s0[2] - s1[2]) <= 2, `greens shifted ${g0}->${g1}, sky kept ${s0}->${s1}`);
     // Hide it again so later steps see the original colors (it is still saved with the project).
     await page.evaluate(() => { const { app } = window.compositor; app.active.visible = false; app.changed('layers'); });
+  });
+
+  await step('adjustment layers recompute in the workers while the canvas keeps the last result', async () => {
+    const r = await page.evaluate(async () => {
+      const { app } = window.compositor;
+      const sky = app.doc.layers.find(l => l.name === 'Sky');
+      const before = app.renderer.frameKey;
+      sky.transform = { ...sky.transform, x: sky.transform.x + 3 }; sky.rev++; app.needsRender = true;
+      await new Promise(r => setTimeout(r, 1500));
+      const exact = app.renderer.readPixel(app.doc, 800, 300);
+      sky.transform = { ...sky.transform, x: sky.transform.x - 3 }; sky.rev++; app.needsRender = true;
+      await new Promise(r => setTimeout(r, 1500));
+      return { frames: app.renderer.frameKey - before, exact };
+    });
+    assert(r.frames >= 2, 'canvas redrew after the background result ' + JSON.stringify(r));
   });
 
   await step('Liquify push (wasm warp kernel)', async () => {

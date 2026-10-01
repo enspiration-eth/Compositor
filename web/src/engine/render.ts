@@ -4,6 +4,7 @@
 // as Photoshop does. Adjustment layers read back what is below them and run the original C kernels over it.
 import { type Doc, type Layer, type Mat, ancestors, apply, getLayer, invert, isEffectivelyVisible, layerMatrix, mul, renderEffects, effectsMargin, BLEND_MODES, maskInLayerGrid, maskPlacementOf } from './document';
 import { adjustmentAsFilter, applyFilter } from './adjustments';
+import { applyFilterAsync } from './filterPool';
 import { unpremultiplyFrom } from './kernels';
 
 const VS = `#version 300 es
@@ -119,6 +120,15 @@ export class Renderer {
   private texCache = new Map<string, CachedTex>();
   private effectCache = new Map<string, { key: string; canvas: HTMLCanvasElement; margin: number; masked?: boolean }>();
   private adjCache = new Map<string, { key: string; tex: WebGLTexture }>();
+  /** Adjustment layers being recomputed in the filter workers: per layer, the key in flight and the latest one asked
+   *  for meanwhile. While one is pending the canvas shows the layer's previous result, so dragging a layer under a
+   *  blur adjustment stays smooth; reads for export, the eyedropper and tests always compute it exactly, here. */
+  private adjJobs = new Map<string, { key: string; next: { key: string; img: ImageData; l: Layer } | null }>();
+  private adjGen = 0;
+  private compositeStale = false;
+  private exact = false;
+  /** Called when an adjustment finished in the background and the canvas should redraw. */
+  onAsyncResult: (() => void) | null = null;
   composite: Target | null = null;
   private compositeKey = '';
   frameKey = 0;
@@ -170,7 +180,7 @@ export class Renderer {
     this.targets = [0, 1, 2, 3, 4].map(() => this.target(w, h));
     this.compositeKey = '';
     for (const a of this.adjCache.values()) this.gl.deleteTexture(a.tex);
-    this.adjCache.clear();
+    this.adjCache.clear(); this.adjJobs.clear(); this.adjGen++;
   }
   private uploadTex(key: string, versionKey: string, src: TexImageSource, w: number, h: number, nearest = false, premultiply = true): WebGLTexture {
     const gl = this.gl;
@@ -236,8 +246,9 @@ export class Renderer {
     const leaves = doc.layers.filter(l => !l.isGroup && isEffectivelyVisible(doc, l));
     for (const l of leaves) sigParts.push(this.layerSig(doc, l));
     const key = sigParts.join(';') + overlayKey;
-    if (key === this.compositeKey && this.composite) return false;
+    if (key === this.compositeKey && this.composite && !(this.exact && this.compositeStale)) return false;
     this.compositeKey = key;
+    this.compositeStale = false;
     const [A, B, L, C, T] = this.targets;
     let accum = A, other = B;
     gl.viewport(0, 0, W, H);
@@ -324,20 +335,52 @@ export class Renderer {
     gl.bindFramebuffer(gl.FRAMEBUFFER, accum.fbo);
     const raw = new Uint8Array(W * H * 4);
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     let img = new ImageData(W, H);
     unpremultiplyFrom(raw, 0, img.data);
+    if (cached && !this.exact && typeof Worker !== 'undefined') {
+      // Shown from the previous result until the workers finish this one.
+      this.queueAdjustment(l, key, img);
+      this.compositeStale = true;
+      return cached.tex;
+    }
     const f = adjustmentAsFilter(l.adjustment!);
     img = applyFilter(f.kind, f.settings, img, { seed: f.seed, scale: 1, originX: 0, originY: 0 });
-    const tex = cached?.tex ?? gl.createTexture()!;
+    return this.storeAdjusted(l.id, key, img, cached?.tex);
+  }
+  private storeAdjusted(id: string, key: string, img: ImageData, existing?: WebGLTexture): WebGLTexture {
+    const gl = this.gl;
+    const tex = existing ?? gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, img);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.adjCache.set(l.id, { key, tex });
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.adjCache.set(id, { key, tex });
     return tex;
+  }
+  private queueAdjustment(l: Layer, key: string, img: ImageData) {
+    const job = this.adjJobs.get(l.id);
+    if (job) { if (job.key !== key) job.next = { key, img, l }; return; }
+    this.startAdjustment(l, key, img);
+  }
+  private startAdjustment(l: Layer, key: string, img: ImageData) {
+    const gen = this.adjGen, job = { key, next: null as { key: string; img: ImageData; l: Layer } | null };
+    this.adjJobs.set(l.id, job);
+    const f = adjustmentAsFilter(l.adjustment!);
+    applyFilterAsync(f.kind, f.settings, img, { seed: f.seed, scale: 1, originX: 0, originY: 0 }).then(out => {
+      if (gen !== this.adjGen) return;
+      const cached = this.adjCache.get(l.id);
+      if (cached) this.storeAdjusted(l.id, key, out, cached.tex);
+    }).catch(e => console.warn('adjustment layer', e)).finally(() => {
+      if (gen !== this.adjGen) return;
+      this.adjJobs.delete(l.id);
+      // Already out of date: go straight on to the latest, and redraw once that one is in.
+      if (job.next) { this.startAdjustment(job.next.l, job.next.key, job.next.img); return; }
+      this.compositeKey = '';
+      this.onAsyncResult?.();
+    });
   }
 
   /** Draws the composite to the screen at `zoom` (screen px per doc px) with the doc's top-left at offset (CSS px). */
@@ -369,7 +412,7 @@ export class Renderer {
 
   /** The flattened document, straight alpha (for export, the eyedropper and the Magic Wand). */
   readComposite(doc: Doc): ImageData {
-    this.render(doc);
+    this.exact = true; try { this.render(doc); } finally { this.exact = false; }
     const gl = this.gl, W = doc.width, H = doc.height;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.composite!.fbo);
     const raw = new Uint8Array(W * H * 4);
@@ -380,7 +423,7 @@ export class Renderer {
     return img;
   }
   readPixel(doc: Doc, x: number, y: number): [number, number, number, number] {
-    this.render(doc);
+    this.exact = true; try { this.render(doc); } finally { this.exact = false; }
     const gl = this.gl, out = new Uint8Array(4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.composite!.fbo);
     gl.readPixels(Math.floor(x), Math.floor(y), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, out);

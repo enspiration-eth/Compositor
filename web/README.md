@@ -137,7 +137,8 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   need the whole image (Camera Raw, lens correction, vignette) run in one worker so the page stays responsive, and Dither
   stays on the main thread. This uses transferred buffers, not SharedArrayBuffer: wasm threads need cross-origin
   isolation headers (COOP/COEP), which GitHub Pages can't send. Each kernel call is still single-threaded
-  (`dispatch_apply` is serial), and adjustment layers are recomputed on the main thread and cached.
+  (`dispatch_apply` is serial). Adjustment layers are recomputed in the workers too: while a new result is on its way the
+  canvas keeps showing the previous one, and exports, the eyedropper and other reads compute it exactly first.
 - **Hue/Saturation:** all seven ranges, Invert Range and editable hue bands (drag the spectrum handles, or drag inside the band to slide it) on both the filter and adjustment layers, saved as the Mac app’s `hsvSettings`. Not ported: the panel’s eyedroppers (sample / add / remove a color from the image) and the targeted-adjustment drag.
 - `.comp` projects are saved as a `.comp.zip` (browsers can't write folder bundles). Unzip one to open it in the Mac app.
 - No Sparkle updates, Quick Look, or document-based windowing; tabs replace windows.
