@@ -581,6 +581,37 @@ try {
     await page.evaluate(() => window.compositor.app.toggleMaskLink());
   });
 
+  await step('Transform Selection (⌘T with a selection): lift, move, merge back as one undo step', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.deselect();
+      const c = document.createElement('canvas'); c.width = 200; c.height = 200; const x = c.getContext('2d'); x.fillStyle = '#ff0000'; x.fillRect(0, 0, 200, 200);
+      app.placeImage(c, 'Red Square', [200, 200]); });
+    await page.click('.rail-btn[data-tool="marquee"]');
+    { const [x0, y0] = await toScreen(100, 100), [x1, y1] = await toScreen(200, 300); await page.mouse.move(x0, y0); await page.mouse.down(); await page.mouse.move(x1, y1, { steps: 4 }); await page.mouse.up(); }
+    const n0 = (await st()).layers;
+    await page.keyboard.press('Control+t');
+    await page.waitForFunction(() => !!window.compositor.app.floating);
+    assert((await st()).layers === n0 + 1 && (await pixel(150, 200))[0] > 200, 'floating layer shows the lifted pixels');
+    { const [x0, y0] = await toScreen(150, 200), [x1, y1] = await toScreen(450, 200); await page.mouse.move(x0, y0); await page.mouse.down(); await page.mouse.move(x1, y1, { steps: 6 }); await page.mouse.up(); }
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: `${SHOTS}/16-transform-selection.png` });
+    await page.keyboard.press('Enter');
+    const r = await page.evaluate(() => { const { app } = window.compositor; const a = app.active; return { floating: !!app.floating, name: a.name, t: a.transform, label: app.history.undoLabel, n: app.doc.layers.length }; });
+    const moved = await pixel(450, 200), cleared = await pixel(150, 200), kept = await pixel(250, 200);
+    assert(!r.floating && r.name === 'Red Square' && r.label === 'Transform Selection' && r.n === n0 && Math.abs(r.t.w - 400) <= 3, 'merged back ' + JSON.stringify(r));
+    assert(moved[0] > 200 && moved[1] < 60 && !(cleared[0] > 200 && cleared[1] < 60) && kept[0] > 200 && kept[1] < 60, `pixels moved ${moved} ${cleared} ${kept}`);
+    await page.evaluate(() => window.compositor.app.undo());
+    const back = await page.evaluate(() => ({ w: window.compositor.app.active.transform.w, n: window.compositor.app.doc.layers.length }));
+    assert(back.w === 200 && back.n === n0 && (await pixel(150, 200))[0] > 200, 'one undo restores ' + JSON.stringify(back));
+    // Escape cancels exactly.
+    await page.keyboard.press('Control+t');
+    await page.waitForFunction(() => !!window.compositor.app.floating);
+    await page.keyboard.press('Escape');
+    const c = await page.evaluate(() => ({ f: !!window.compositor.app.floating, n: window.compositor.app.doc.layers.length, w: window.compositor.app.active.transform.w }));
+    assert(!c.f && c.n === n0 && c.w === 200 && (await pixel(150, 200))[0] > 200, 'escape restores ' + JSON.stringify(c));
+    await page.evaluate(() => window.compositor.app.deselect());
+    await page.click('.rail-btn[data-tool="move"]');
+  });
+
   await step('export PNG + save .comp', async () => {
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportImage('png'))]);
     assert(/\.png$/.test(dl.suggestedFilename()), dl.suggestedFilename());

@@ -1063,6 +1063,7 @@ export class CanvasController {
   }
   cancel() {
     if (this.distort) { this.cancelDistort(); return true; }
+    if (app.floating) { app.cancelFloating(); return true; }
     if (this.textEditor) { this.commitText(true); return true; }
     if (this.lasso) { this.lasso = null; app.needsRender = true; return true; }
     if (this.crop) { this.cancelCrop(); return true; }
@@ -1070,6 +1071,7 @@ export class CanvasController {
   }
   commit() {
     if (this.distort) { this.commitDistort(); return true; }
+    if (app.floating) { app.commitFloating(); return true; }
     if (this.crop) { this.applyCrop(); return true; }
     if (this.lasso && app.lassoKind === 'polygonal') { this.finishLasso('replace'); return true; }
     return false;

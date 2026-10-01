@@ -104,7 +104,8 @@ function buildMenubar() {
       { label: 'Clear Selection Pixels', shortcut: '⌫', action: () => app.clearSelected(), disabled: !app.doc?.selection },
       { label: 'Content-Aware Fill…', shortcut: '⇧⌫', action: () => app.contentAwareFill(), disabled: !app.doc?.selection },
       { separator: true },
-      { label: 'Free Transform', shortcut: `${MOD}T`, action: () => selectTool('move'), disabled: !app.active },
+      { label: 'Free Transform', shortcut: `${MOD}T`, action: () => app.canTransformSelection ? app.beginSelectionTransform() : selectTool('move'), disabled: !app.active },
+      { label: 'Transform Selection', action: () => app.beginSelectionTransform(), disabled: !app.canTransformSelection },
       { label: 'Distort', action: () => { selectTool('move'); ctl.startDistort(app.active); }, disabled: !app.active?.canvas },
       { label: 'Keyboard Shortcuts…', action: showShortcuts },
     ]],
@@ -234,6 +235,7 @@ export function selectTool(t: Tool) {
   if (ctl.crop && t !== 'crop') ctl.cancelCrop();
   if (ctl.lasso && t !== 'lasso') ctl.lasso = null;
   if (ctl.textEditor && t !== 'type') ctl.commitText();
+  if (app.floating && t !== 'move') app.commitFloating();
   app.tool = t;
   if (t === 'crop' && app.doc && !ctl.crop) ctl.startCropFromSelection();
   app.emit('tool');
@@ -675,7 +677,7 @@ function setupKeys() {
       if (k === 'u') return run(() => openFilter('Hue/Saturation'));
       if (k === 'j') return run(() => e.shiftKey ? app.layerViaCopy(true) : app.duplicateLayer());
       if (k === 'g') return run(() => e.altKey ? app.toggleClip() : e.shiftKey ? app.ungroup() : app.groupSelected());
-      if (k === 't') return run(() => selectTool('move'));
+      if (k === 't') return run(() => app.canTransformSelection ? app.beginSelectionTransform() : selectTool('move'));
       if (k === 'c' && e.altKey) return run(() => showCanvasSize());
       if (k === 'c') return run(() => e.shiftKey ? app.copyMerged() : app.copy());
       if (k === 'x') return run(() => app.copy(true));

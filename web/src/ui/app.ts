@@ -3,7 +3,7 @@
 import {
   type Doc, type Layer, type BlendMode, type Effects, type EffectKey, type Transform, History, newDoc, newPixelLayer, uuid, cloneCanvas,
   getLayer, descendants, ancestors, childrenOf, layerMatrix, solidMask, fullTransform, renderText, rgbCss, BLEND_MODES, invert, apply, renderShape,
-  toggleMaskLink, maskGridView, maskTransformOf, maskInLayerGrid, eachTransform,
+  toggleMaskLink, maskGridView, maskTransformOf, maskInLayerGrid, eachTransform, pixelToDoc, mul, maskPlacementOf, setMaskPlacement,
 } from '../engine/document';
 import { Renderer } from '../engine/render';
 import { canvasOf, ctx2d, imageDataOf, newAdjustment, type AdjustmentKind, type FilterKind, type FilterSettings, type RGB } from '../engine/adjustments';
@@ -100,7 +100,13 @@ export class App {
 
   // ---------- history ----------
   edit(label: string) { if (this.doc && this.history) this.history.push(this.doc, label); }
-  undo() { if (!this.doc || !this.history) return; const l = this.history.undo(this.doc); if (l) { this.maskTarget = this.maskTarget && !!this.active?.mask; this.changed('history'); } }
+  undo() {
+    if (!this.doc || !this.history) return;
+    const l = this.history.undo(this.doc);
+    // Undoing past the start of Transform Selection puts the pixels back: nothing floats any more.
+    if (this.floating && this.history.undoStack.length < this.floating.depth) this.floating = null;
+    if (l) { this.maskTarget = this.maskTarget && !!this.active?.mask; this.changed('history'); }
+  }
   redo() { if (!this.doc || !this.history) return; const l = this.history.redo(this.doc); if (l) this.changed('history'); }
   ownPixels(l: Layer) { this.history!.ownLayer(l); return l.canvas!; }
   /** The mask's pixels, owned by this edit, in the mask's own grid (a placed mask isn't resampled). */
@@ -111,6 +117,7 @@ export class App {
   // ---------- layers ----------
   setActive(id: string, extend = false) {
     const d = this.doc; if (!d) return;
+    if (this.floating && id !== this.floating.floatId) this.commitFloating();
     if (extend) d.selectedIds = d.selectedIds.includes(id) ? d.selectedIds.filter(x => x !== id) : [...d.selectedIds, id];
     else d.selectedIds = [id];
     d.activeId = id;
@@ -320,6 +327,92 @@ export class App {
     const c = canvasOf(d.width, d.height); ctx2d(c).putImageData(img, 0, 0); return c;
   }
   rasterize(l: Layer) { if (l.text || l.shape) { l.text = undefined; l.shape = undefined; } }
+
+  // ---------- Transform Selection (FloatingSelection.swift) ----------
+  /** The selected pixels lifted onto a temporary layer while ⌘T with a selection is open. `depth` is the undo stack
+   *  size right after its "Transform Selection" step, so the whole thing collapses into that one step. */
+  floating: { sourceId: string; floatId: string; original: Transform; pw: number; ph: number; depth: number } | null = null;
+  get canTransformSelection() {
+    const d = this.doc, a = this.active;
+    return !!(d?.selection && a && a.canvas && !a.isGroup && !a.adjustment && !this.maskTarget && !this.floating);
+  }
+  beginSelectionTransform() {
+    const d = this.doc!, src = this.active!;
+    if (!this.canTransformSelection) return;
+    const sel = d.selection!, [sx0, sy0, sx1, sy1] = alphaBounds(ctx2d(sel).getImageData(0, 0, sel.width, sel.height));
+    // renderSelectedPixels: the layer's pixels inside the selection, in document pixels, over the selection's bounds.
+    const m = layerMatrix(src), cs = [[0, 0], [src.canvas!.width, 0], [0, src.canvas!.height], [src.canvas!.width, src.canvas!.height]].map(([u, v]) => apply(m, u, v));
+    const x0 = Math.max(sx0, Math.floor(Math.min(...cs.map(c => c[0])))), y0 = Math.max(sy0, Math.floor(Math.min(...cs.map(c => c[1]))));
+    const x1 = Math.min(sx1, Math.ceil(Math.max(...cs.map(c => c[0])))), y1 = Math.min(sy1, Math.ceil(Math.max(...cs.map(c => c[1]))));
+    if (x1 <= x0 || y1 <= y0) { toast('The selection doesn’t cover this layer.'); return; }
+    const w = x1 - x0, h = y1 - y0, lifted = canvasOf(w, h), lx = ctx2d(lifted);
+    lx.setTransform(m[0], m[1], m[2], m[3], m[4] - x0, m[5] - y0); lx.drawImage(src.canvas!, 0, 0); lx.setTransform(1, 0, 0, 1, 0, 0);
+    lx.globalCompositeOperation = 'destination-in'; lx.drawImage(sel, -x0, -y0);
+    if (this.isEmptyLayer(lifted)) { toast('No pixels are selected on this layer.'); return; }
+    // Outer edit, closed by commitFloating (merge) or cancelFloating (restore).
+    this.edit('Transform Selection');
+    const own = this.ownPixels(src), inLayer = Sel.selectionInLayer(d, src, own.width, own.height)!;
+    const ox = ctx2d(own); ox.save(); ox.globalCompositeOperation = 'destination-out'; ox.drawImage(inLayer, 0, 0); ox.restore();
+    this.rasterize(src); src.rev++;
+    const fl = newPixelLayer(d, 'Floating Selection', lifted, { x: x0, y: y0, w, h, rotation: 0 });
+    fl.opacity = src.opacity; fl.blend = src.blend;
+    this.insertAboveActive(fl);
+    this.floating = { sourceId: src.id, floatId: fl.id, original: { ...fl.transform }, pw: w, ph: h, depth: this.history!.undoStack.length };
+    this.tool = 'move';
+    toast('Transform Selection: drag the handles · Return applies · Escape cancels');
+    this.changed('layers'); this.emit('tool');
+  }
+  /** mergeFloatingTransform: the transformed pixels drawn back into their layer (growing it where they now reach past
+   *  it), the selection moved with them, all as the one "Transform Selection" step. */
+  commitFloating() {
+    const f = this.floating, d = this.doc; if (!f || !d) return;
+    this.floating = null;
+    const fl = getLayer(d, f.floatId), src = getLayer(d, f.sourceId);
+    const h = this.history!;
+    const collapse = () => { h.undoStack.splice(f.depth); h.redoStack = []; };
+    if (!fl || !src || !src.canvas || !fl.canvas) { if (fl) d.layers = d.layers.filter(l => l !== fl); collapse(); this.changed('layers'); return; }
+    const W = src.canvas.width, H = src.canvas.height, toDoc = layerMatrix(src), toPix = invert(toDoc), fm = layerMatrix(fl);
+    const corners = [[0, 0], [fl.canvas.width, 0], [0, fl.canvas.height], [fl.canvas.width, fl.canvas.height]].map(([u, v]) => apply(toPix, ...apply(fm, u, v)));
+    const ex0 = Math.floor(Math.min(0, ...corners.map(c => c[0]))), ey0 = Math.floor(Math.min(0, ...corners.map(c => c[1])));
+    const ex1 = Math.ceil(Math.max(W, ...corners.map(c => c[0]))), ey1 = Math.ceil(Math.max(H, ...corners.map(c => c[1])));
+    const EW = ex1 - ex0, EH = ey1 - ey0;
+    if (EW > 16384 || EH > 16384 || EW * EH > 268435456) { toast('The transformed selection is too large.', 'error'); this.floating = f; this.cancelFloating(); return; }
+    const merged = canvasOf(EW, EH), mx = ctx2d(merged);
+    mx.drawImage(src.canvas, -ex0, -ey0);
+    const pm = mul([1, 0, 0, 1, -ex0, -ey0], mul(toPix, fm));
+    mx.save(); mx.globalAlpha = 1; mx.imageSmoothingQuality = 'high'; mx.setTransform(pm[0], pm[1], pm[2], pm[3], pm[4], pm[5]); mx.drawImage(fl.canvas, 0, 0); mx.restore();
+    // The selection follows the pixels (a distorted float takes its new outline from the moved pixels).
+    let moved: HTMLCanvasElement | null = null;
+    if (d.selection) {
+      moved = canvasOf(d.width, d.height); const sx = ctx2d(moved);
+      if (fl.canvas.width === f.pw && fl.canvas.height === f.ph) {
+        const sm = mul(fm, invert(pixelToDoc(f.original, f.pw, f.ph)));
+        sx.setTransform(sm[0], sm[1], sm[2], sm[3], sm[4], sm[5]); sx.drawImage(d.selection, 0, 0);
+      } else { sx.setTransform(fm[0], fm[1], fm[2], fm[3], fm[4], fm[5]); sx.drawImage(fl.canvas, 0, 0); }
+    }
+    const placed = maskPlacementOf(src);
+    if (src.mask && !placed && (EW !== W || EH !== H || ex0 || ey0)) {
+      // A mask grows with the layer, revealing the new area.
+      const g = canvasOf(EW, EH), gx = ctx2d(g); gx.fillStyle = '#fff'; gx.fillRect(0, 0, EW, EH); gx.drawImage(src.mask, -ex0, -ey0); src.mask = g;
+    }
+    const t = src.transform, sw = t.w / W, sh = t.h / H, nw = EW * sw, nh = EH * sh, c = apply(toDoc, ex0 + EW / 2, ey0 + EH / 2);
+    src.canvas = merged; src.transform = { ...t, w: nw, h: nh, x: c[0] - nw / 2, y: c[1] - nh / 2 };
+    if (placed) setMaskPlacement(src, placed);
+    src.rev++;
+    d.layers = d.layers.filter(l => l !== fl);
+    if (moved) { d.selection = moved; d.selRev++; }
+    d.activeId = src.id; d.selectedIds = [src.id];
+    collapse();
+    this.changed('layers'); this.emit('selection');
+  }
+  /** cancelFloatingTransform: the document exactly as before ⌘T. */
+  cancelFloating() {
+    const f = this.floating, d = this.doc, h = this.history; if (!f || !d || !h) return;
+    this.floating = null;
+    while (h.undoStack.length >= f.depth) h.undo(d);
+    h.redoStack = [];
+    this.changed('history'); this.emit('selection');
+  }
 
   // ---------- masks ----------
   addMask(fromSelection = true, hide = false) {
@@ -650,6 +743,7 @@ export class App {
   }
   async save() {
     const d = this.doc; if (!d) return;
+    this.commitFloating();
     const bytes = await writeComp(d);
     const name = `${d.name || 'Untitled'}.comp.zip`;
     const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
@@ -665,6 +759,7 @@ export class App {
   /** File › Save as .comp Folder… (Chromium): the Mac app's package layout written into a picked directory. */
   async saveFolder(dir?: FileSystemDirectoryHandle) {
     const d = this.doc; if (!d) return;
+    this.commitFloating();
     const w = window as unknown as { showDirectoryPicker?: (o: unknown) => Promise<FileSystemDirectoryHandle> };
     if (!dir) {
       if (!w.showDirectoryPicker) { toast('This browser can’t write folders. Use Save (a zipped .comp) instead.', 'error'); return; }
@@ -676,6 +771,7 @@ export class App {
   async saveAs() { const d = this.doc; if (!d) return; d.fileHandle = undefined; await this.save(); }
   async exportImage(type: 'png' | 'jpeg', quality = 0.92) {
     const d = this.doc; if (!d) return;
+    this.commitFloating();
     const img = this.renderer.readComposite(d);
     const c = canvasOf(d.width, d.height), x = ctx2d(c);
     if (type === 'jpeg') { x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); const t = canvasOf(d.width, d.height); ctx2d(t).putImageData(img, 0, 0); x.drawImage(t, 0, 0); }
@@ -685,6 +781,7 @@ export class App {
   }
   async exportTiff() {
     const d = this.doc; if (!d) return;
+    this.commitFloating();
     const { canvasToTiff } = await import('../engine/tiff');
     download(await canvasToTiff(this.renderer.readComposite(d)), `${d.name || 'Untitled'}.tif`, 'image/tiff');
   }
