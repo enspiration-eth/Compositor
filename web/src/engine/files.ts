@@ -7,7 +7,7 @@ import { isTiffName, tiffToCanvas } from './tiff';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { readPsd, type Layer as PsdLayer } from 'ag-psd';
 import { type Doc, type Guide, type Layer, type BlendMode, BLEND_MODES, newDoc, newPixelLayer, uuid, fullTransform, maskPlacementOf } from './document';
-import { canvasOf, ctx2d, type AdjustmentRecord } from './adjustments';
+import { canvasOf, ctx2d, type AdjustmentRecord, hueSatToMac, hueSatFromMac } from './adjustments';
 
 export interface ManifestLayer {
   id: string; name: string; isVisible: boolean; imageFile?: string; parentID?: string; isGroup?: boolean; opacity?: number; blendMode?: string;
@@ -71,7 +71,7 @@ export async function writeComp(doc: Doc): Promise<Uint8Array> {
       files[`${folder}/images/${l.id}.mask.png`] = await maskToPng(l.mask);
     }
     if (l.clipTo) rec.maskSourceID = l.clipTo;
-    if (l.adjustment) rec.adjustment = l.adjustment;
+    if (l.adjustment) rec.adjustment = l.adjustment.hsvSettings ? { ...l.adjustment, hsvSettings: hueSatToMac(l.adjustment.hsvSettings) as never } : l.adjustment;
     if (l.text) rec.text = l.text;
     if (l.shape) rec.shape = l.shape;
     if (l.effects && Object.keys(l.effects).length) rec.effects = l.effects;
@@ -106,7 +106,7 @@ export async function readCompFiles(files: Map<string, Uint8Array>, name: string
       transform: { x: t.origin[0], y: t.origin[1], w: t.size[0], h: t.size[1], rotation: t.rotation ?? 0, flipX: !!t.flipX, flipY: !!t.flipY,
         sampling: (t.sampling as 'High quality') ?? 'High quality' },
       mask: null, maskEnabled: r.maskEnabled ?? true, clipTo: r.maskSourceID ?? null, rev: 1,
-      adjustment: r.adjustment, text: r.text as Layer['text'], shape: r.shape as Layer['shape'], effects: r.effects as Layer['effects'],
+      adjustment: r.adjustment && (r.adjustment.hsvSettings ? { ...r.adjustment, hsvSettings: hueSatFromMac(r.adjustment.hsvSettings) } : r.adjustment), text: r.text as Layer['text'], shape: r.shape as Layer['shape'], effects: r.effects as Layer['effects'],
     };
     if (r.imageFile) {
       const bytes = files.get(`images/${r.imageFile}`);

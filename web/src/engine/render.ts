@@ -237,6 +237,8 @@ export class Renderer {
       gl.disable(gl.BLEND);
       if (l.adjustment) {
         const tex = this.adjustedBackdrop(l, accum, W, H, belowSig + '|' + JSON.stringify(l.adjustment));
+        // adjustedBackdrop reads back the accumulation: draw into L again.
+        gl.bindFramebuffer(gl.FRAMEBUFFER, L.fbo); gl.viewport(0, 0, W, H);
         this.drawQuad(this.layerProg, unitDoc, W, H, tex);
       } else if (l.canvas) {
         const src = this.layerSource(l);

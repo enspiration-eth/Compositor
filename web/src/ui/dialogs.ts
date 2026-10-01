@@ -5,6 +5,7 @@ import { h, slider, select, checkbox, colorWell, button, floatingPanel, modal, t
 import {
   type FilterKind, type FilterSettings, defaultFilterSettings, applyFilter, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
   curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
+  rangeWeight, bandOf, setBandHandle, shiftBand,
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, bakeMask, maskInLayerGrid, setMaskPlacement } from '../engine/document';
@@ -195,15 +196,18 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         inner.replaceChildren();
         const adj = hs.adjustments[hs.range] ?? (hs.adjustments[hs.range] = { hue: 0, saturation: 0, lightness: 0 });
         inner.append(
-          slider({ label: 'Hue', min: hs.colorize ? 0 : -180, max: hs.colorize ? 360 : 180, value: adj.hue, unit: '°', onInput: v => { adj.hue = v; changed(); }, id: 'hs-hue' }),
-          slider({ label: 'Saturation', min: hs.colorize ? 0 : -100, max: 100, value: adj.saturation, onInput: v => { adj.saturation = v; changed(); }, id: 'hs-sat' }),
-          slider({ label: 'Lightness', min: -100, max: 100, value: adj.lightness, onInput: v => { adj.lightness = v; changed(); } }),
-          h('div', { class: 'spectrum' }));
+          slider({ label: 'Hue', min: hs.colorize ? 0 : -180, max: hs.colorize ? 360 : 180, value: adj.hue, unit: '°', onInput: v => { adj.hue = v; changed(); spec.draw(); }, id: 'hs-hue' }),
+          slider({ label: 'Saturation', min: hs.colorize ? 0 : -100, max: 100, value: adj.saturation, onInput: v => { adj.saturation = v; changed(); spec.draw(); }, id: 'hs-sat' }),
+          slider({ label: 'Lightness', min: -100, max: 100, value: adj.lightness, onInput: v => { adj.lightness = v; changed(); spec.draw(); } }));
+        if (!hs.colorize && hs.range !== 'Master') inner.append(checkbox('Invert Range', !!hs.invertRange, v => { hs.invertRange = v; changed(); spec.draw(); }));
+        inner.append(spec.el);
+        spec.draw();
       };
-      if (!forAdjustmentLayer) box.append(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Range'), select(COLOR_RANGES, hs.range, v => { hs.range = v as ColorRangeName; draw(); })));
+      const spec = hueSpectrum(hs, () => { changed(); });
+      if (!hs.colorize) box.append(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Range'), select(COLOR_RANGES, hs.range, v => { hs.range = v as ColorRangeName; draw(); }, { id: 'hs-range' })));
       box.append(inner, checkbox('Colorize', hs.colorize, v => {
         hs.colorize = v; if (v) { hs.range = 'Master'; hs.adjustments = { Master: { hue: 0, saturation: 25, lightness: 0 } }; } else hs.adjustments = {};
-        changed(); draw();
+        changed(); rebuild();
       }));
       draw();
       break;
@@ -213,6 +217,61 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
     default: break;
   }
   return box;
+}
+
+/** The Hue/Saturation spectrum (UI/HueSaturationSheet.swift): the input hues over what they become, with the selected
+ *  range's band — drag a handle to move a falloff or range edge, drag between them to slide the whole band. */
+function hueSpectrum(hs: FilterSettings['hueSat'], changed: () => void) {
+  const W = 300, H = 46;
+  const cv = h('canvas', { width: W * 2, height: H * 2, class: 'hue-spectrum', id: 'hs-spectrum', style: `width:${W}px;height:${H}px;touch-action:none;cursor:ew-resize` }) as HTMLCanvasElement;
+  const x = cv.getContext('2d')!;
+  const X = (deg: number) => (deg / 360) * W;
+  const draw = () => {
+    x.setTransform(2, 0, 0, 2, 0, 0); x.clearRect(0, 0, W, H);
+    for (let px = 0; px < W; px++) {
+      const deg = px / W * 360;
+      x.fillStyle = `hsl(${deg},100%,50%)`; x.fillRect(px, 6, 1, 12);
+      let dh = 0, ds = 0, dl = 0;
+      if (hs.colorize) { const c = hs.adjustments.Master ?? { hue: 0, saturation: 25, lightness: 0 }; x.fillStyle = `hsl(${c.hue},${c.saturation}%,${50 + c.lightness / 2}%)`; }
+      else {
+        for (const [name, a] of Object.entries(hs.adjustments) as [ColorRangeName, { hue: number; saturation: number; lightness: number }][]) {
+          if (!a) continue; const w = rangeWeight(hs, name, deg); dh += a.hue * w; ds += a.saturation * w; dl += a.lightness * w;
+        }
+        x.fillStyle = `hsl(${deg + dh},${Math.max(0, Math.min(100, 100 + ds))}%,${Math.max(0, Math.min(100, 50 + dl / 2))}%)`;
+      }
+      x.fillRect(px, 26, 1, 12);
+    }
+    if (hs.range === 'Master' || hs.colorize) return;
+    const b = bandOf(hs, hs.range);
+    x.fillStyle = 'rgba(255,255,255,0.18)';
+    const seg = (a: number, z: number, y: number, hh: number) => { if (z >= a) x.fillRect(X(a), y, X(z) - X(a), hh); else { x.fillRect(X(a), y, W - X(a), hh); x.fillRect(0, y, X(z), hh); } };
+    seg(b[1], b[2], 19, 6);
+    x.fillStyle = 'rgba(255,255,255,0.08)'; seg(b[0], b[1], 19, 6); seg(b[2], b[3], 19, 6);
+    b.forEach((d, i) => {
+      x.fillStyle = '#fff'; x.strokeStyle = '#222'; x.lineWidth = 1;
+      x.beginPath();
+      if (i === 1 || i === 2) x.rect(X(d) - 3, 18, 6, 8); else { x.moveTo(X(d), 18); x.lineTo(X(d) - 4, 26); x.lineTo(X(d) + 4, 26); x.closePath(); }
+      x.fill(); x.stroke();
+    });
+  };
+  let drag: { i: number; deg0: number; band0: [number, number, number, number] } | null = null;
+  const degAt = (e: PointerEvent) => { const r = cv.getBoundingClientRect(); return Math.max(0, Math.min(360, (e.clientX - r.left) / r.width * 360)); };
+  cv.addEventListener('pointerdown', e => {
+    if (hs.range === 'Master' || hs.colorize) return;
+    const deg = degAt(e), b = bandOf(hs, hs.range);
+    let i = -1, best = 8 / W * 360;
+    b.forEach((d, k) => { const dd = Math.min(Math.abs(d - deg), 360 - Math.abs(d - deg)); if (dd < best) { best = dd; i = k; } });
+    drag = { i, deg0: deg, band0: [...b] as [number, number, number, number] };
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const deg = degAt(e);
+    const nb = drag.i >= 0 ? setBandHandle(bandOf(hs, hs.range), drag.i, deg) : shiftBand(drag.band0, deg - drag.deg0);
+    hs.bands = { ...(hs.bands ?? {}), [hs.range]: nb }; draw(); changed();
+  });
+  cv.addEventListener('pointerup', () => { drag = null; });
+  return { el: h('div', { class: 'row spectrum-row' }, cv), draw };
 }
 
 function curvesEditor(s: FilterSettings, changed: () => void): HTMLElement {
@@ -292,6 +351,7 @@ function filterToAdjustment(kind: FilterKind, s: FilterSettings, a: AdjustmentRe
   a.levels = s.levels; a.curves = s.curves;
   const m = s.hueSat.adjustments.Master ?? { hue: 0, saturation: 0, lightness: 0 };
   a.hue = m.hue; a.saturation = m.saturation; a.lightness = m.lightness; a.colorize = s.hueSat.colorize;
+  if (kind === 'Hue/Saturation') a.hsvSettings = structuredClone(s.hueSat);
   if (kind === 'Exposure') a.exposureSettings = s.exposure;
   if (kind === 'Gradient Map') a.gradientMapSettings = s.gradientMap;
   if (kind === 'Grain') a.grainSettings = { ...s.grain, seed: a.grainSettings?.seed ?? 0 };

@@ -123,6 +123,39 @@ try {
     await page.waitForTimeout(200);
     if (await page.locator('#filter-panel').count()) await page.click('#filter-ok');
     assert((await st()).layers === n + 1, 'adjustment added');
+    // It must actually change the composite (regression: adjustment layers once drew to the screen, not the layer buffer).
+    const before = await pixel(800, 300);
+    await page.evaluate(() => { const a = window.compositor.app.active; window.__lv = a.adjustment; a.adjustment = { ...a.adjustment, levels: { channel: 'RGB', ranges: [{ black: 60, gamma: 1, white: 200, outputBlack: 0, outputWhite: 255 }, ...a.adjustment.levels.ranges.slice(1)] } }; window.compositor.app.needsRender = true; });
+    const after = await pixel(800, 300);
+    assert(before.join() !== after.join(), `levels layer changed the composite ${before} -> ${after}`);
+    await page.evaluate(() => { const a = window.compositor.app.active; a.adjustment = window.__lv; window.compositor.app.needsRender = true; });
+  });
+
+  await step('Hue/Saturation adjustment layer: Greens range + band edit', async () => {
+    // Pick a clearly green spot of the composite.
+    let gp = null;
+    for (const [x, y] of [[60, 640], [60, 560], [1500, 640], [800, 700], [300, 620], [1550, 560]]) { const p = await pixel(x, y); if (p[1] > p[0] + 30 && p[1] > p[2] + 10) { gp = [x, y]; break; } }
+    assert(gp, 'found a green pixel');
+    const g0 = await pixel(...gp), s0 = await pixel(800, 20);
+    await page.evaluate(() => window.compositor.app.addAdjustmentLayer('Hue/Saturation'));
+    await page.dblclick('.layer-row.active .layer-name');
+    await page.waitForSelector('#filter-panel #hs-range');
+    await page.selectOption('#hs-range', 'Greens');
+    const hue = page.locator('#filter-panel .slider-row').first().locator('input[type=number]');
+    await hue.fill('180'); await hue.press('Enter');
+    // Slide the Greens band a little (drag inside it).
+    const box = await page.locator('#hs-spectrum').boundingBox();
+    const bx = box.x + box.width * (120 / 360), by = box.y + 22;
+    await page.mouse.move(bx, by); await page.mouse.down(); await page.mouse.move(bx + box.width * 10 / 360, by, { steps: 4 }); await page.mouse.up();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/09-hue-sat-ranges.png` });
+    await page.click('#filter-ok');
+    const a = await page.evaluate(() => window.compositor.app.active.adjustment.hsvSettings);
+    assert(a && a.adjustments.Greens?.hue === 180 && a.bands?.Greens && Math.abs(a.bands.Greens[1] - 115) < 4, 'hsvSettings ' + JSON.stringify(a));
+    const g1 = await pixel(...gp), s1 = await pixel(800, 20);
+    assert(g0.join() !== g1.join() && Math.abs(s0[2] - s1[2]) <= 2, `greens shifted ${g0}->${g1}, sky kept ${s0}->${s1}`);
+    // Hide it again so later steps see the original colors (it is still saved with the project).
+    await page.evaluate(() => { const { app } = window.compositor; app.active.visible = false; app.changed('layers'); });
   });
 
   await step('Liquify push (wasm warp kernel)', async () => {
@@ -274,6 +307,8 @@ try {
     assert(manifest.guides?.length === 1, 'manifest guides');
     const ml = manifest.layers.find(l => l.maskLinked === false);
     assert(ml && ml.maskPlacement?.origin?.length === 2, 'manifest unlinked mask placement');
+    const hl = manifest.layers.find(l => l.adjustment?.hsvSettings);
+    assert(hl && Array.isArray(hl.adjustment.hsvSettings.adjustments) && hl.adjustment.hsvSettings.adjustments.includes('Greens'), 'manifest hsvSettings (Mac encoding)');
     console.log(`(manifest v${manifest.version}, ${manifest.layers.length} layers, ${Object.keys(files).length} entries) `);
     // Round-trip: reopen the saved project.
     await page.evaluate(async b64 => { const { app } = window.compositor; const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -281,6 +316,7 @@ try {
     await page.waitForFunction(() => window.compositor.app.projects.length === 2);
     const s2 = await st(); assert(s2.layers === manifest.layers.length, 'reopened layers ' + s2.layers);
     assert(await page.evaluate(() => window.compositor.app.doc.layers.some(l => l.maskLinked === false && l.maskPlacement)), 'reopened unlinked mask');
+    assert(await page.evaluate(() => window.compositor.app.doc.layers.some(l => l.adjustment?.hsvSettings?.adjustments?.Greens?.hue === 180)), 'reopened hsv ranges');
   });
 
   await step('TIFF import (LZW, Deflate+alpha, 16-bit gray) + TIFF export', async () => {

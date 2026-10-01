@@ -114,6 +114,6 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Layer effects and Bloom** are close approximations drawn with canvas 2D filters, not the Core Image pipeline.
 - **Performance:** the wasm kernels run single-threaded (`dispatch_apply` is serial; no SharedArrayBuffer threads on
   GitHub Pages). Adjustment layers are recomputed on the CPU and cached.
-- **Hue/Saturation adjustment layers** use the Master range only.
+- **Hue/Saturation:** all seven ranges, Invert Range and editable hue bands (drag the spectrum handles, or drag inside the band to slide it) on both the filter and adjustment layers, saved as the Mac app’s `hsvSettings`. Not ported: the panel’s eyedroppers (sample / add / remove a color from the image) and the targeted-adjustment drag.
 - `.comp` projects are saved as a `.comp.zip` (browsers can't write folder bundles). Unzip one to open it in the Mac app.
 - No Sparkle updates, Quick Look, or document-based windowing; tabs replace windows.

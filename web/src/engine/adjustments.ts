@@ -86,13 +86,54 @@ export function curvesTables(c: CurvesSettings): number[] {
 // ---------- Hue/Saturation (HueSaturation.swift) ----------
 export type ColorRangeName = 'Master' | 'Reds' | 'Yellows' | 'Greens' | 'Cyans' | 'Blues' | 'Magentas';
 export const COLOR_RANGES: ColorRangeName[] = ['Master', 'Reds', 'Yellows', 'Greens', 'Cyans', 'Blues', 'Magentas'];
-type Band = [number, number, number, number];
-const DEFAULT_BANDS: Record<ColorRangeName, Band> = {
+export type Band = [number, number, number, number];
+export const DEFAULT_BANDS: Record<ColorRangeName, Band> = {
   Master: [0, 0, 360, 360], Reds: [315, 345, 15, 45], Yellows: [15, 45, 75, 105], Greens: [75, 105, 135, 165],
   Cyans: [135, 165, 195, 225], Blues: [195, 225, 255, 285], Magentas: [255, 285, 315, 345],
 };
 export interface RangeAdjustment { hue: number; saturation: number; lightness: number }
-export interface HueSaturationSettings { range: ColorRangeName; colorize: boolean; adjustments: Partial<Record<ColorRangeName, RangeAdjustment>> }
+export interface HueSaturationSettings {
+  range: ColorRangeName; colorize: boolean; adjustments: Partial<Record<ColorRangeName, RangeAdjustment>>;
+  /** Applies the selected range to everything outside its band instead. */
+  invertRange?: boolean;
+  /** Edited hue bands (falloff start, range start, range end, falloff end); missing ones use Photoshop's defaults. */
+  bands?: Partial<Record<ColorRangeName, Band>>;
+}
+export const bandOf = (s: HueSaturationSettings, r: ColorRangeName): Band => s.bands?.[r] ?? DEFAULT_BANDS[r];
+/** HueBand.setHandle: moves one handle, keeping the four in order and the band under a full circle. */
+export function setBandHandle(b: Band, i: number, deg: number): Band {
+  const v = ((deg % 360) + 360) % 360, u = [...b] as Band; u[i] = v;
+  const span = fwd(u[0], u[3]), toS = fwd(u[0], u[1]), toE = fwd(u[0], u[2]);
+  return span > 1 && span <= 350 && toS <= toE && toE <= span ? u : b;
+}
+/** HueBand.centered: the band moved whole so its middle sits at `deg`. */
+export function shiftBand(b: Band, delta: number): Band { return b.map(v => (((v + delta) % 360) + 360) % 360) as Band; }
+/** HueSaturationSettings.weight(of:hue:). */
+export function rangeWeight(s: HueSaturationSettings, r: ColorRangeName, hue: number) {
+  if (r === 'Master') return 1;
+  const w = bandWeight(bandOf(s, r), hue);
+  return s.invertRange && r === s.range ? 1 - w : w;
+}
+/** Mac's JSON for HueSaturationSettings: Swift encodes [ColorRange: T] dictionaries as flat [key, value, …] arrays. */
+export function hueSatToMac(s: HueSaturationSettings): Record<string, unknown> {
+  const flat = <T>(o: Partial<Record<ColorRangeName, T>>) => Object.entries(o).flatMap(([k, v]) => [k, v]);
+  const bands = Object.fromEntries(COLOR_RANGES.map(r => [r, bandOf(s, r)]));
+  return { range: s.range, colorize: s.colorize, invertRange: !!s.invertRange, adjustments: flat(s.adjustments),
+    bands: flat(Object.fromEntries(Object.entries(bands).map(([k, b]) => [k, { falloffStart: b[0], rangeStart: b[1], rangeEnd: b[2], falloffEnd: b[3] }]))) };
+}
+export function hueSatFromMac(j: any): HueSaturationSettings | undefined {
+  if (!j || typeof j !== 'object') return undefined;
+  const unflat = (v: unknown): Record<string, any> => Array.isArray(v) ? Object.fromEntries(v.flatMap((x, i) => i % 2 === 0 ? [[x, v[i + 1]]] : [])) : (v && typeof v === 'object' ? v as Record<string, any> : {});
+  const ok = (r: unknown): r is ColorRangeName => COLOR_RANGES.includes(r as ColorRangeName);
+  const adjustments: HueSaturationSettings['adjustments'] = {};
+  for (const [k, a] of Object.entries(unflat(j.adjustments))) if (ok(k) && a) adjustments[k] = { hue: +a.hue || 0, saturation: +a.saturation || 0, lightness: +a.lightness || 0 };
+  const bands: HueSaturationSettings['bands'] = {};
+  for (const [k, b] of Object.entries(unflat(j.bands))) if (ok(k) && b) {
+    const v: Band = Array.isArray(b) ? b as Band : [b.falloffStart, b.rangeStart, b.rangeEnd, b.falloffEnd];
+    if (v.every(Number.isFinite) && v.some((x, i) => x !== DEFAULT_BANDS[k][i])) bands[k] = v;
+  }
+  return { range: ok(j.range) ? j.range : 'Master', colorize: !!j.colorize, invertRange: !!j.invertRange, adjustments, ...(Object.keys(bands).length ? { bands } : {}) };
+}
 export const defaultHueSat = (): HueSaturationSettings => ({ range: 'Master', colorize: false, adjustments: {} });
 const fwd = (from: number, to: number) => { const d = (to - from) % 360; return d < 0 ? d + 360 : d; };
 function bandWeight(b: Band, hue: number) {
@@ -138,7 +179,7 @@ export function hueSatCube(s: HueSaturationSettings, dim = 33): Float32Array {
     const r: [number, number, number] = [0, 0, 0];
     for (const [name, adj] of Object.entries(s.adjustments) as [ColorRangeName, RangeAdjustment][]) {
       if (isZeroAdj(adj)) continue;
-      const w = name === 'Master' ? 1 : bandWeight(DEFAULT_BANDS[name], deg);
+      const w = rangeWeight(s, name, deg);
       if (!(w > 0)) continue;
       r[0] += adj.hue * w; r[1] += adj.saturation * w; r[2] += adj.lightness * w;
     }
@@ -489,7 +530,8 @@ export interface AdjustmentRecord {
   blackWhiteSettings?: BlackWhiteSettings; colorBalanceSettings?: ColorBalanceSettings;
   blurRadius?: number; motionAngle?: number; motionDistance?: number;
   noiseAmount?: number; noiseGaussian?: boolean; noiseMonochromatic?: boolean; noiseSeed?: number;
-  hsvSettings?: unknown;
+  /** LayerAdjustment.hsvSettings: range-aware Hue/Saturation (older projects only have the Master fields above). */
+  hsvSettings?: HueSaturationSettings;
 }
 export function newAdjustment(kind: AdjustmentKind): AdjustmentRecord {
   const a: AdjustmentRecord = { kind, hue: 0, saturation: 0, lightness: 0, colorize: false, levels: defaultLevels(), curves: defaultCurves() };
@@ -507,7 +549,7 @@ export function newAdjustment(kind: AdjustmentKind): AdjustmentRecord {
 export function adjustmentAsFilter(a: AdjustmentRecord): { kind: FilterKind; settings: FilterSettings; seed: number } {
   const s = defaultFilterSettings();
   s.levels = a.levels; s.curves = a.curves;
-  s.hueSat = { range: 'Master', colorize: a.colorize, adjustments: { Master: { hue: a.hue, saturation: a.saturation, lightness: a.lightness } } };
+  s.hueSat = a.hsvSettings ? structuredClone(a.hsvSettings) : { range: 'Master', colorize: a.colorize, adjustments: { Master: { hue: a.hue, saturation: a.saturation, lightness: a.lightness } } };
   if (a.exposureSettings) s.exposure = a.exposureSettings;
   if (a.gradientMapSettings) s.gradientMap = a.gradientMapSettings;
   if (a.grainSettings) s.grain = a.grainSettings;
