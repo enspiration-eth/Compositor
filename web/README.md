@@ -13,6 +13,7 @@ re-implements the platform layers (AppKit/SwiftUI, Metal, Core Image) with web A
 | Pixel kernels (levels, hue/sat cube, gradient map, B&W, color balance, grain, noise, vignette, tonal contrast, lens correction, Camera Raw, magic wand flood fill + contour tracing, spot healing, content-aware fill, dither, alpha bounds) | C in `Compositor/Rendering/*.c` | **The same C files, compiled unchanged to WebAssembly** with Emscripten (`wasm/build.sh` → `src/wasm/pixels.{mjs,wasm}`) |
 | Smudge and Liquify (`WarpStroke` CPU path in `Document/SmudgeLiquify.swift`) | Swift (+ Metal) | Translated line for line to C (`wasm/src/WarpPixels.c`) and compiled into the same wasm module |
 | Free Distort (`⌘`-drag a transform handle; perspective quad warp) | Swift / Core Image | New C kernel (`wasm/src/DistortPixels.c`, inverse homography + bilinear); ⌘-drag a corner with Move or Edit › Distort, Return applies, Esc cancels |
+| Layer effects (`MetalLayerEffects.swift` compute kernels: stroke spread, shadow shift + blur, glows, `effects_compose`) | Swift + Metal | Translated to C (`wasm/src/EffectsPixels.c`), in the same wasm module |
 | Remove Background's matte refinement (`GuidedMatte.swift` guided filter, Shift Edge, Contrast) | Swift + Core Image | Translated to C (`wasm/src/MattePixels.c`), in the same wasm module |
 | Subject detection (Remove Background, Select Subject, Object Selection) | Apple Vision | U²-Net-p (Apache-2.0, `public/models/u2netp.onnx`) on onnxruntime-web's WebAssembly backend, loaded on first use only |
 | libdispatch / Blocks (used by `DitherPixels.c`) | system | Small shims in `wasm/shim/`: a serial `dispatch_apply` and the Blocks runtime symbols, so the C sources compile as-is |
@@ -118,7 +119,12 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   radius), and with a shape layer selected the Shape options edit its color, corner radius or line width. Differences:
   layout is canvas 2D instead of Core Text (line breaking and kerning can differ slightly), there is no per-run size, and
   gradients are rasterized.
-- **Layer effects and Bloom** are close approximations drawn with canvas 2D filters, not the Core Image pipeline.
+- **Layer effects** run the Mac app's own effect passes (`MetalLayerEffects.swift`: coverage, sliding-window spread for
+  the stroke, shifted and Gaussian-blurred coverage for shadows and glows, then `effects_compose`) translated to C and
+  compiled to wasm (`wasm/src/EffectsPixels.c`), in the layer's own pixel units, with the layer mask applied before the
+  effects as the Mac app does. Blurs wider than 64 px use three box passes of matching variance instead of the direct
+  Gaussian loop. **Bloom / Glow** is still an approximation (a blurred copy screened over the image); Core Image's
+  `CIBloom` kernel isn't public.
 - **Performance:** the wasm kernels run single-threaded (`dispatch_apply` is serial; no SharedArrayBuffer threads on
   GitHub Pages). Adjustment layers are recomputed on the CPU and cached.
 - **Hue/Saturation:** all seven ranges, Invert Range and editable hue bands (drag the spectrum handles, or drag inside the band to slide it) on both the filter and adjustment layers, saved as the Mac app’s `hsvSettings`. Not ported: the panel’s eyedroppers (sample / add / remove a color from the image) and the targeted-adjustment drag.

@@ -117,7 +117,7 @@ export class Renderer {
   private quad: WebGLVertexArrayObject;
   private targets: Target[] = [];
   private texCache = new Map<string, CachedTex>();
-  private effectCache = new Map<string, { key: string; canvas: HTMLCanvasElement; margin: number }>();
+  private effectCache = new Map<string, { key: string; canvas: HTMLCanvasElement; margin: number; masked?: boolean }>();
   private adjCache = new Map<string, { key: string; tex: WebGLTexture }>();
   composite: Target | null = null;
   private compositeKey = '';
@@ -200,14 +200,30 @@ export class Renderer {
     gl.bindVertexArray(this.quad);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
-  private layerSource(l: Layer): { canvas: HTMLCanvasElement; margin: number } {
+  /** The layer's pixels as drawn: with its effects, when it has any. As in the Mac app (LayerEffectsRenderer.render),
+   *  the layer's own mask hides its pixels before the effects are made, so a shadow follows the shape that is shown and
+   *  is not cut off by the mask again (`masked`). */
+  private layerSource(l: Layer): { canvas: HTMLCanvasElement; margin: number; masked?: boolean } {
     const c = l.canvas!;
-    if (!l.effects || effectsMargin(l.effects) === 0 && !l.effects.colorOverlay && !l.effects.innerGlow && !l.effects.innerShadow && !l.effects.stroke) return { canvas: c, margin: 0 };
-    const scale = l.transform.w / c.width || 1;
-    const key = `${l.rev}|${JSON.stringify(l.effects)}|${scale.toFixed(4)}`;
+    const e = l.effects;
+    const any = !!e && (['stroke', 'shadow', 'colorOverlay', 'innerShadow', 'outerGlow', 'innerGlow'] as const).some(k => e[k] && e[k]!.enabled !== false);
+    if (!e || !any) return { canvas: c, margin: 0 };
+    const mask = l.mask && l.maskEnabled ? maskInLayerGrid(l) : null;
+    const key = `${l.rev}|${JSON.stringify(e)}|${mask ? `${JSON.stringify(maskPlacementOf(l))}|${JSON.stringify(l.transform)}` : ''}`;
     const cached = this.effectCache.get(l.id);
     if (cached && cached.key === key) return cached;
-    const r = renderEffects(c, l.effects, scale);
+    let shown = c;
+    if (mask) {
+      shown = document.createElement('canvas'); shown.width = c.width; shown.height = c.height;
+      const x = shown.getContext('2d', { willReadFrequently: true })!; x.drawImage(c, 0, 0);
+      const img = x.getImageData(0, 0, c.width, c.height);
+      const mc = document.createElement('canvas'); mc.width = c.width; mc.height = c.height;
+      const mx = mc.getContext('2d', { willReadFrequently: true })!; mx.drawImage(mask, 0, 0, c.width, c.height);
+      const md = mx.getImageData(0, 0, c.width, c.height).data, d = img.data;
+      for (let i = 3; i < d.length; i += 4) d[i] = d[i] * md[i - 3] / 255;
+      x.putImageData(img, 0, 0);
+    }
+    const r = { ...renderEffects(shown, e), masked: !!mask };
     this.effectCache.set(l.id, { key, ...r });
     return r;
   }
@@ -232,6 +248,7 @@ export class Renderer {
     let belowSig = '';
     for (const l of leaves) {
       const sig = this.layerSig(doc, l);
+      let src: { canvas: HTMLCanvasElement; margin: number; masked?: boolean } | null = null;
       // 1. Layer pass: this layer's pixels, placed, into L.
       gl.bindFramebuffer(gl.FRAMEBUFFER, L.fbo); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
       gl.disable(gl.BLEND);
@@ -241,16 +258,16 @@ export class Renderer {
         gl.bindFramebuffer(gl.FRAMEBUFFER, L.fbo); gl.viewport(0, 0, W, H);
         this.drawQuad(this.layerProg, unitDoc, W, H, tex);
       } else if (l.canvas) {
-        const src = this.layerSource(l);
+        src = this.layerSource(l);
         const m = layerMatrix(l);
         const nearest = l.transform.sampling === 'Nearest';
-        const tex = this.uploadTex('L' + l.id, `${l.rev}|${src.canvas.width}x${src.canvas.height}|${src === (l as unknown) ? 0 : src.margin}|${l.effects ? JSON.stringify(l.effects) : ''}`, src.canvas, src.canvas.width, src.canvas.height, nearest);
+        const tex = this.uploadTex('L' + l.id, `${l.rev}|${src.canvas.width}x${src.canvas.height}|${src === (l as unknown) ? 0 : src.margin}|${l.effects ? JSON.stringify(l.effects) : ''}|${src.masked ? this.effectCache.get(l.id)?.key : ''}`, src.canvas, src.canvas.width, src.canvas.height, nearest);
         const toDoc = mul(m, [src.canvas.width, 0, 0, src.canvas.height, -src.margin, -src.margin]);
         this.drawQuad(this.layerProg, toDoc, W, H, tex);
       }
       // 2. Masks: the layer's own, then every enclosing folder's.
       gl.enable(gl.BLEND); gl.blendFunc(gl.ZERO, gl.SRC_ALPHA);
-      const masked = [l, ...ancestors(doc, l)].filter(x => x.mask && x.maskEnabled);
+      const masked = [...(src?.masked ? [] : [l]), ...ancestors(doc, l)].filter(x => x.mask && x.maskEnabled);
       for (const x of masked) {
         const mk = maskInLayerGrid(x)!;
         const mt = this.uploadTex('M' + x.id, `${x.rev}|${mk.width}|${mk === x.mask ? '' : JSON.stringify(maskPlacementOf(x)) + JSON.stringify(x.transform)}`, mk, mk.width, mk.height, false, false);

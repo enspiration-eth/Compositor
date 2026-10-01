@@ -4,6 +4,7 @@
 // and effects. Pixels live in canvases; history shares unchanged canvases between steps (copy on write).
 import type { AdjustmentRecord, RGB } from './adjustments';
 import { canvasOf, ctx2d } from './adjustments';
+import { layerEffects } from './kernels';
 
 export type BlendMode = 'Normal' | 'Darken' | 'Multiply' | 'Color Burn' | 'Linear Burn' | 'Lighten' | 'Screen' | 'Color Dodge'
   | 'Linear Dodge (Add)' | 'Overlay' | 'Soft Light' | 'Hard Light' | 'Vivid Light' | 'Linear Light' | 'Pin Light' | 'Hard Mix'
@@ -428,13 +429,41 @@ export function renderShape(s: ShapeStyle, w: number, h: number): HTMLCanvasElem
 }
 
 // ---------- layer effects (LayerEffects.swift; the Mac app renders them in Metal, here with canvas 2D) ----------
+/** LayerEffectsRenderer.margin: the room the effects need around the layer, in its own pixels. */
 export function effectsMargin(e?: Effects): number {
   if (!e) return 0;
+  const on = <T extends { enabled?: boolean }>(v?: T): v is T => !!v && v.enabled !== false;
   let m = 0;
-  if (e.stroke && e.stroke.enabled !== false && !e.stroke.inside) m = Math.max(m, e.stroke.size + 2);
-  if (e.shadow && e.shadow.enabled !== false) m = Math.max(m, e.shadow.distance + e.shadow.blur * 2 + 2);
-  if (e.outerGlow && e.outerGlow.enabled !== false) m = Math.max(m, e.outerGlow.size * 2 + 2);
-  return Math.ceil(m);
+  if (on(e.stroke) && !e.stroke.inside) m = Math.max(m, e.stroke.size);
+  if (on(e.shadow)) m = Math.max(m, e.shadow.distance + e.shadow.blur * 3);
+  if (on(e.outerGlow)) m = Math.max(m, e.outerGlow.size * 3);
+  return Math.ceil(m) + 2;
+}
+/** The layer's pixels with its effects drawn around and over them, padded by `margin` on every side. Effect sizes are
+ *  in the layer's own pixels, as in the Mac app. Runs the Mac app's effect passes in wasm (EffectsPixels.c); the canvas
+ *  2D approximation below is only a fallback for when the kernels can't run. */
+export function renderEffects(src: HTMLCanvasElement, e: Effects, scale = 1): { canvas: HTMLCanvasElement; margin: number } {
+  const margin = effectsMargin(e);
+  const w = src.width + margin * 2, h = src.height + margin * 2;
+  try {
+    const on = <T extends { enabled?: boolean; opacity: number }>(v?: T): v is T => !!v && v.enabled !== false && v.opacity > 0;
+    const off = (r: number) => r * Math.PI / 180;
+    const p = new Array(48).fill(0);
+    const put = (i: number, c: { red: number; green: number; blue: number; opacity: number }, ...rest: number[]) => { p.splice(i, 8, c.red, c.green, c.blue, c.opacity, 1, ...rest, ...new Array(3 - rest.length).fill(0)); };
+    if (on(e.stroke) && e.stroke.size > 0) put(0, e.stroke, e.stroke.size, e.stroke.inside ? 1 : 0);
+    if (on(e.shadow)) put(8, e.shadow, -Math.cos(off(e.shadow.angle)) * e.shadow.distance, Math.sin(off(e.shadow.angle)) * e.shadow.distance, e.shadow.blur);
+    if (on(e.colorOverlay)) put(16, e.colorOverlay);
+    if (on(e.innerShadow)) put(24, e.innerShadow, -Math.cos(off(e.innerShadow.angle)) * e.innerShadow.distance, Math.sin(off(e.innerShadow.angle)) * e.innerShadow.distance, e.innerShadow.blur);
+    if (on(e.outerGlow) && e.outerGlow.size > 0) put(32, e.outerGlow, e.outerGlow.size);
+    if (on(e.innerGlow) && e.innerGlow.size > 0) put(40, e.innerGlow, e.innerGlow.size);
+    const padded = canvasOf(w, h), px = ctx2d(padded); px.drawImage(src, margin, margin);
+    const out = layerEffects(px.getImageData(0, 0, w, h), p);
+    px.putImageData(out, 0, 0);
+    return { canvas: padded, margin };
+  } catch (err) {
+    console.warn('layer effects: falling back to canvas 2D', err);
+    return renderEffectsCanvas(src, e, margin, w, h);
+  }
 }
 function silhouette(src: HTMLCanvasElement, color: string, w: number, h: number, ox: number, oy: number) {
   const c = canvasOf(w, h), x = ctx2d(c);
@@ -442,9 +471,8 @@ function silhouette(src: HTMLCanvasElement, color: string, w: number, h: number,
   return c;
 }
 /** The layer's pixels with its effects drawn around and over them, padded by `margin` on every side. */
-export function renderEffects(src: HTMLCanvasElement, e: Effects, scale = 1): { canvas: HTMLCanvasElement; margin: number } {
-  const margin = Math.ceil(effectsMargin(e) / scale);
-  const w = src.width + margin * 2, h = src.height + margin * 2;
+function renderEffectsCanvas(src: HTMLCanvasElement, e: Effects, margin: number, w: number, h: number): { canvas: HTMLCanvasElement; margin: number } {
+  const scale = 1;
   const out = canvasOf(w, h), x = ctx2d(out);
   const on = <T extends { enabled?: boolean }>(v?: T): v is T => !!v && v.enabled !== false;
   if (on(e.shadow)) {

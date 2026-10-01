@@ -282,6 +282,26 @@ try {
     assert(s2.r === 5 && s2.label === 'Corner Radius', 'corner radius edited ' + JSON.stringify(s2));
   });
 
+  await step('layer effects (the Mac app\'s effect passes in wasm)', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; const a = app.active;
+      a.effects = { stroke: { size: 10, red: 1, green: 0, blue: 0, opacity: 1, inside: false }, shadow: { angle: 90, distance: 30, blur: 0, red: 0, green: 0, blue: 1, opacity: 1 } }; a.rev++; app.changed('layers'); });
+    await page.waitForTimeout(300);
+    const t = await page.evaluate(() => window.compositor.app.active.transform);
+    const cx = Math.round(t.x + t.w / 2), top = Math.round(t.y), bottom = Math.round(t.y + t.h);
+    const ring = await pixel(cx, top - 5), shadow = await pixel(cx, bottom + 20), body = await pixel(cx, top + 20);
+    assert(ring[0] > 200 && ring[1] < 60 && ring[2] < 60, 'outside stroke ' + ring);
+    assert(shadow[2] > 200 && shadow[0] < 60, 'drop shadow ' + shadow);
+    assert(body[1] > 150 && body[0] < 100, 'layer itself ' + body);
+    await page.evaluate(() => { const { app } = window.compositor; const a = app.active;
+      a.effects = { stroke: { size: 6, red: 1, green: 1, blue: 1, opacity: 1, inside: true }, innerShadow: { angle: 120, distance: 12, blur: 12, red: 0, green: 0, blue: 0, opacity: 0.8 },
+        outerGlow: { size: 24, red: 1, green: 0.85, blue: 0.2, opacity: 0.9 }, shadow: { angle: 90, distance: 18, blur: 24, red: 0, green: 0, blue: 0, opacity: 0.6 } }; a.rev++; app.changed('layers'); });
+    await page.waitForTimeout(300);
+    const inside = await pixel(cx, top + 3), glow = await pixel(cx, top - 12);
+    assert(inside[0] > 230 && inside[1] > 230 && inside[2] > 230, 'inside stroke ' + inside);
+    assert(glow[0] > 150 && glow[1] > 120, 'outer glow ' + glow);
+    await page.screenshot({ path: `${SHOTS}/12-layer-effects.png` });
+  });
+
   await step('text color/font runs on selected letters', async () => {
     await page.click('.rail-btn[data-tool="type"]');
     { const [x, y] = await toScreen(300, 900); await page.mouse.click(x, y); }

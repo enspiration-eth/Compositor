@@ -308,3 +308,15 @@ export function distortWarp(src: ImageData, dw: number, dh: number, corners: num
     return { img, mode };
   });
 }
+
+/** Layer effects (EffectsPixels.c, the Mac app's MetalLayerEffects passes): `img` already padded by the margin. */
+export function layerEffects(img: ImageData, params: number[]): ImageData {
+  return withHeap((heap, m) => {
+    const n = img.data.length;
+    const sp = heap.alloc(n); premultiplyInto(img.data, m.HEAPU8, sp);
+    const dp = heap.alloc(n), pp = heap.floats(params);
+    if (!m._layer_effects(sp, dp, img.width, img.height, pp)) throw new Error('Out of memory for layer effects');
+    const out = new ImageData(img.width, img.height); unpremultiplyFrom(kernels().HEAPU8, dp, out.data);
+    return out;
+  });
+}
