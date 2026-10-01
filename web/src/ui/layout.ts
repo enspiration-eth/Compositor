@@ -290,10 +290,11 @@ function renderHeader() {
     case 'brush': case 'spotHealing': case 'cloneStamp': case 'blur': {
       hd.append(title(t === 'brush' ? (app.brush.mode === 'erase' ? 'Eraser' : 'Brush') : t === 'spotHealing' ? 'Spot Healing' : t === 'cloneStamp' ? 'Clone Stamp' : 'Smear'));
       if (t === 'brush') hd.append(seg([['paint', 'Paint'], ['erase', 'Erase']], app.brush.mode, v => app.brush.mode = v));
-      if (t === 'blur') hd.append(seg([['liquify', 'Liquify'], ['blur', 'Blur'], ['smudge', 'Smudge']], app.smearMode, v => app.smearMode = v));
+      if (t === 'blur') hd.append(seg([['liquify', 'Liquify'], ['blur', 'Blur'], ['smudge', 'Smudge']], app.smearMode, v => { app.smearMode = v; app.emit('tool'); }));
       hd.append(slider({ label: 'Size', min: 1, max: 1000, value: app.brush.size, unit: 'px', width: 210, onInput: v => { app.brush.size = v; app.needsRender = true; }, id: 'brush-size' }),
         slider({ label: 'Hardness', min: 0, max: 100, value: Math.round(app.brush.hardness * 100), unit: '%', width: 190, onInput: v => app.brush.hardness = v / 100 }));
       if (t === 'blur') hd.append(slider({ label: 'Strength', min: 1, max: 100, value: Math.round(app.smearStrength * 100), unit: '%', width: 190, onInput: v => app.smearStrength = v / 100 }));
+      if (t === 'blur' && app.smearMode === 'blur') hd.append(slider({ label: 'Radius', min: 0.5, max: 50, step: 0.5, value: app.blurRadius, unit: 'px', width: 190, onInput: v => app.blurRadius = v, id: 'blur-radius' }));
       else if (t !== 'spotHealing') hd.append(slider({ label: 'Opacity', min: 1, max: 100, value: Math.round(app.brush.opacity * 100), unit: '%', width: 190, onInput: v => app.brush.opacity = v / 100, id: 'brush-opacity' }));
       if (t === 'brush') hd.append(slider({ label: 'Smoothing', min: 0, max: 100, value: Math.round(app.brush.smoothing * 100), unit: '%', width: 200, onInput: v => app.brush.smoothing = v / 100 }));
       if (t === 'cloneStamp') hd.append(checkbox('Aligned', app.clone.aligned, v => app.clone.aligned = v), checkbox('Sample all layers', app.clone.sampleAll, v => app.clone.sampleAll = v));

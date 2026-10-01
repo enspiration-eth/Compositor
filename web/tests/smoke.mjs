@@ -355,6 +355,36 @@ try {
     await page.screenshot({ path: `${SHOTS}/03-editor-selection.png` });
   });
 
+  await step('Expand / Contract / Feather selection and the Blur brush (wasm)', async () => {
+    await page.evaluate(() => window.compositor.app.deselect());
+    await page.click('.rail-btn[data-tool="marquee"]');
+    const drag = async (a, b) => { const [x0, y0] = await toScreen(...a), [x1, y1] = await toScreen(...b); await page.mouse.move(x0, y0); await page.mouse.down(); for (let i = 1; i <= 6; i++) await page.mouse.move(x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6); await page.mouse.up(); };
+    await drag([200, 200], [400, 300]);
+    const stats = () => page.evaluate(() => { const s = window.compositor.app.doc.selection; if (!s) return null; const d = s.getContext('2d').getImageData(0, 0, s.width, s.height).data; let sum = 0, soft = 0; for (let i = 3; i < d.length; i += 4) { sum += d[i] / 255; if (d[i] > 0 && d[i] < 255) soft++; } return { sum: Math.round(sum), soft }; });
+    const s0 = await stats();
+    await page.evaluate(() => window.compositor.app.modifySelection('expand', 10));
+    const s1 = await stats();
+    // A 200×100 rectangle grown by 10 with round corners: 200·100 + 2·10·300 + π·100.
+    assert(Math.abs(s1.sum - (s0.sum + 6000 + 314)) < 150, `expand ${s0.sum} -> ${s1.sum}`);
+    await page.evaluate(() => window.compositor.app.modifySelection('contract', 20));
+    const s2 = await stats();
+    assert(Math.abs(s2.sum - 180 * 80) < 150, 'contract ' + s2.sum);
+    await page.evaluate(() => window.compositor.app.modifySelection('feather', 8));
+    const s3 = await stats();
+    assert(s3.soft > 2000 && Math.abs(s3.sum - s2.sum) < 300, 'feather ' + JSON.stringify(s3));
+    await page.evaluate(() => window.compositor.app.deselect());
+    // Blur brush: paints a softened copy of the layer through the brush.
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Hills').id); app.smearMode = 'blur'; app.blurRadius = 20; app.smearStrength = 1; app.brush.size = 120; app.brush.hardness = 1; app.emit('tool'); });
+    await page.click('.rail-btn[data-tool="blur"]');
+    assert(await page.locator('#blur-radius').count() === 1, 'Radius control');
+    const edge = await page.evaluate(() => { const c = window.compositor.app.active.canvas; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let y = 0; y < c.height; y++) if (d[(y * c.width + 700) * 4 + 3] > 128) return y; return -1; });
+    const before = await pixel(700, edge - 4);
+    await drag([660, edge], [740, edge]);
+    const r = await page.evaluate(() => window.compositor.app.history.undoLabel);
+    const after = await pixel(700, edge - 4);
+    assert(r === 'Blur' && before.join() !== after.join(), `blur brush ${r} ${before} -> ${after}`);
+  });
+
   await step('Select Subject (U²-Net in onnxruntime wasm)', async () => {
     await page.evaluate(() => window.compositor.app.deselect());
     await menu('Select', 'Subject');

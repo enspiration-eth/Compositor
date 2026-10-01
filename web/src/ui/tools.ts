@@ -10,7 +10,7 @@ import { type Layer, type Mat, type Transform, layerMatrix, invert, apply, clone
   isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer, maskTransformOf, bakeMask, retargetRuns, setTextColor, setTextFont } from '../engine/document';
 import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
-import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds, maskMorph } from '../engine/kernels';
+import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds, maskMorph, gaussBlur } from '../engine/kernels';
 import { objectMatte, saliency } from '../engine/segment';
 import { toast } from './dom';
 
@@ -18,7 +18,7 @@ type Pt = [number, number];
 interface Stroke {
   layer: Layer; target: HTMLCanvasElement; orig: HTMLCanvasElement; buffer: HTMLCanvasElement; sel: HTMLCanvasElement | null;
   inv: Mat; scale: number; last: Pt | null; smooth: Pt | null; kind: 'paint' | 'erase' | 'mask' | 'heal' | 'clone' | 'smear';
-  color: string; cloneOffset?: Pt; dirty: [number, number, number, number] | null; lastLayerPt?: Pt;
+  color: string; cloneOffset?: Pt; source?: HTMLCanvasElement; opacity?: number; dirty: [number, number, number, number] | null; lastLayerPt?: Pt;
   warp?: WarpSession; warpLast?: Pt;
 }
 
@@ -748,6 +748,16 @@ export class CanvasController {
       this.stroke.last = dpt; this.stroke.smooth = dpt;
       return;
     }
+    if (kind === 'smear') {
+      // BlurTool.blurSample: Blur paints a softened copy of the layer (or its mask), made when the stroke starts with
+      // the Radius measured on the canvas, through the brush tip at the Strength; a new stroke softens further.
+      const sigma = Math.min(Math.max(0.5, Math.min(50, app.blurRadius)) * scale, Math.max(target.width, target.height) / 2);
+      const img = imageDataOf(target);
+      if (onMask) for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255;
+      gaussBlur(img, sigma, onMask);
+      const soft = canvasOf(target.width, target.height); ctx2d(soft).putImageData(img, 0, 0);
+      Object.assign(this.stroke, { kind: 'clone', source: soft, cloneOffset: [0, 0] as Pt, opacity: app.smearStrength });
+    }
     if (kind === 'clone') {
       if (!this.cloneOffset || !app.clone.aligned) this.cloneOffset = [this.cloneSource![0] - dpt[0], this.cloneSource![1] - dpt[1]];
       this.stroke.cloneOffset = this.cloneOffset;
@@ -755,7 +765,7 @@ export class CanvasController {
         // Sample the merged image, mapped onto this layer's grid.
         const img = app.renderer.readComposite(d), all = canvasOf(d.width, d.height); ctx2d(all).putImageData(img, 0, 0);
         const src = canvasOf(target.width, target.height), sx = ctx2d(src); sx.setTransform(inv[0], inv[1], inv[2], inv[3], inv[4], inv[5]); sx.drawImage(all, 0, 0);
-        this.stroke.orig = src;
+        this.stroke.source = src;
       }
     }
     if (shift && this.lastStrokeEnd && kind !== 'smear') { this.stroke.last = null; this.dabLine(this.lastStrokeEnd, dpt); this.stroke.last = dpt; this.stroke.smooth = dpt; }
@@ -817,7 +827,7 @@ export class CanvasController {
     if (st.kind === 'clone') {
       const off = st.cloneOffset!, [ox0, oy0] = apply(st.inv, p[0] + off[0], p[1] + off[1]);
       const size = Math.ceil(r * 2 + 2), tmp = canvasOf(size, size), tx = ctx2d(tmp);
-      tx.drawImage(st.orig, -(ox0 - size / 2), -(oy0 - size / 2));
+      tx.drawImage(st.source ?? st.orig, -(ox0 - size / 2), -(oy0 - size / 2));
       tx.globalCompositeOperation = 'destination-in'; this.dabShape(tx, size / 2, size / 2, r, hard, 'rgba(0,0,0,1)');
       b.drawImage(tmp, lx - size / 2, ly - size / 2);
       return;
@@ -865,7 +875,7 @@ export class CanvasController {
     t.clearRect(x0, y0, w, h); t.drawImage(st.orig, x0, y0, w, h, x0, y0, w, h);
     let src: CanvasImageSource = st.buffer, sx = x0, sy = y0;
     if (st.sel) { const tmp = canvasOf(w, h), tc = ctx2d(tmp); tc.drawImage(st.buffer, -x0, -y0); tc.globalCompositeOperation = 'destination-in'; tc.drawImage(st.sel, -x0, -y0); src = tmp; sx = 0; sy = 0; }
-    t.save(); t.globalAlpha = app.brush.opacity;
+    t.save(); t.globalAlpha = st.opacity ?? app.brush.opacity;
     t.globalCompositeOperation = st.kind === 'erase' ? 'destination-out' : 'source-over';
     t.drawImage(src, sx, sy, w, h, x0, y0, w, h);
     t.restore();

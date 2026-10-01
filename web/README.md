@@ -82,8 +82,10 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Layer effects:** stroke, drop shadow, inner shadow, outer glow, inner glow, color overlay
 - **Tools:** move/free transform (scale, rotate, flip), rectangle/ellipse marquee, lasso and polygonal lasso, magic wand
   (wasm), crop, brush/eraser (size, hardness, opacity, smoothing; paints on masks too), spot healing (wasm), clone stamp,
-  Liquify/Blur/Smudge (Liquify and Smudge run the Mac app's warp algorithm in wasm), gradient, shape, type, eyedropper, hand, zoom
-- **Selections:** add/subtract/intersect, all, deselect, inverse, expand, contract, feather, layer pixels, marching ants
+  Liquify/Blur/Smudge (Liquify and Smudge run the Mac app's warp algorithm in wasm; Blur paints a softened copy of the
+  layer, made at the start of the stroke with the Radius setting, through the brush, as `BlurTool.swift` does), gradient, shape, type, eyedropper, hand, zoom
+- **Selections:** add/subtract/intersect, all, deselect, inverse, expand/contract (round corners via a Euclidean distance
+  transform in wasm, as the Mac app's stroked-band path ops), feather (Gaussian of feather/2, edges extended), layer pixels, marching ants
   (traced by the wasm `wand_trace`), Content-Aware Fill (wasm), Select Subject and Object Selection (on-device ML)
 - **Image adjustments, destructive or as adjustment layers:** Levels (histogram from wasm), Curves, Hue/Saturation, Exposure,
   Gradient Map, Black & White, Color Balance, Grain, Invert

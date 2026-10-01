@@ -48,6 +48,8 @@ export class App {
   busy = false;
   smearMode: 'liquify' | 'blur' | 'smudge' = 'blur';
   smearStrength = 0.5;
+  /** BrushSettings.blurRadius: how far the Blur brush softens, in canvas pixels (0.5–50). */
+  blurRadius = 5;
   clone = { aligned: true, sampleAll: false };
   gradient = { kind: 'linear' as 'linear' | 'radial', opacity: 1, toTransparent: false };
   shape = { kind: 'Rectangle' as 'Rectangle' | 'Ellipse' | 'Line', cornerRadius: 0, lineWidth: 6 };

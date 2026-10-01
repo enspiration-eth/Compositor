@@ -71,3 +71,77 @@ int mask_morph(uint8_t *mask, int w, int h, int steps, int erode) {
   free(src);
   return 1;
 }
+
+// Selection › Expand / Contract (Selection.swift resizeSelection): the outline grown or shrunk by `amount` pixels with
+// round corners — the union with (or removal of) a round-capped band `amount` wide on each side of the outline, which
+// is a Euclidean dilation (erosion) by a disk. Done with an exact Euclidean distance transform (Felzenszwalb &
+// Huttenlocher) on the selection's alpha, with a one-pixel anti-aliased edge. Contracting also pulls away from the
+// canvas edges, as the Mac app's does.
+static void edt_1d(const float *f, float *d, int *v, double *z, int n) {
+  int k = 0; v[0] = 0; z[0] = -1e300; z[1] = 1e300;
+  for (int q = 1; q < n; q++) {
+    double s;
+    for (;;) {
+      int p = v[k];
+      s = (((double)f[q] + (double)q * q) - ((double)f[p] + (double)p * p)) / (2.0 * q - 2.0 * p);
+      if (s <= z[k] && k > 0) { k--; continue; }
+      break;
+    }
+    if (s <= z[k]) { v[0] = q; z[0] = -1e300; z[1] = 1e300; k = 0; continue; }   // only when k == 0
+    k++; v[k] = q; z[k] = s; z[k + 1] = 1e300;
+  }
+  k = 0;
+  for (int q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++;
+    double dq = (double)(q - v[k]);
+    d[q] = (float)(dq * dq + f[v[k]]);
+  }
+}
+// Squared distance from every pixel to the nearest pixel where `inside` is set (pad = 1 adds a ring of such pixels
+// just outside the image, so distances also count the canvas edge).
+static int edt(const uint8_t *inside, int w, int h, int pad, float *out) {
+  int W = w + 2 * pad, H = h + 2 * pad, n = W > H ? W : H;
+  float *g = malloc(sizeof(float) * W * H), *f = malloc(sizeof(float) * n), *d = malloc(sizeof(float) * n);
+  double *z = malloc(sizeof(double) * (n + 1));
+  int *v = malloc(sizeof(int) * n);
+  if (!g || !f || !d || !z || !v) { free(g); free(f); free(d); free(z); free(v); return 0; }
+  const float INF = 1e20f;
+  for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+    int ix = x - pad, iy = y - pad;
+    int on = (ix < 0 || iy < 0 || ix >= w || iy >= h) ? 1 : inside[iy * w + ix];
+    g[y * W + x] = on ? 0 : INF;
+  }
+  for (int x = 0; x < W; x++) {
+    for (int y = 0; y < H; y++) f[y] = g[y * W + x];
+    edt_1d(f, d, v, z, H);
+    for (int y = 0; y < H; y++) g[y * W + x] = d[y];
+  }
+  for (int y = 0; y < H; y++) {
+    edt_1d(g + y * W, d, v, z, W);
+    memcpy(g + y * W, d, sizeof(float) * W);
+  }
+  for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) out[y * w + x] = g[(y + pad) * W + x + pad];
+  free(g); free(f); free(d); free(z); free(v);
+  return 1;
+}
+
+int mask_grow(uint8_t *alpha, int w, int h, float amount) {
+  int n = w * h;
+  uint8_t *inside = malloc(n);
+  float *dist = malloc(sizeof(float) * n);
+  if (!inside || !dist) { free(inside); free(dist); return 0; }
+  int grow = amount > 0;
+  // Expand: distance to the selection. Contract: distance to what is not selected (and to past the canvas edge).
+  for (int i = 0; i < n; i++) inside[i] = grow ? alpha[i] >= 128 : alpha[i] < 128;
+  if (!edt(inside, w, h, grow ? 0 : 1, dist)) { free(inside); free(dist); return 0; }
+  float r = grow ? amount : -amount;
+  for (int i = 0; i < n; i++) {
+    float d = sqrtf(dist[i]);
+    // Coverage of a pixel whose center is `d` from the nearest selected (unselected) center, edge at `r + 0.5`.
+    float c = r + 0.5f - d + 0.5f; c = c < 0 ? 0 : c > 1 ? 1 : c;
+    if (grow) { float a = alpha[i] / 255.f; a = a > c ? a : c; alpha[i] = (uint8_t)(a * 255 + 0.5f); }
+    else { float a = alpha[i] / 255.f, keep = 1 - c; a = a < keep ? a : keep; alpha[i] = (uint8_t)(a * 255 + 0.5f); }
+  }
+  free(inside); free(dist);
+  return 1;
+}

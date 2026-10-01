@@ -355,3 +355,12 @@ export function maskMorph(mask: Uint8Array, w: number, h: number, steps: number,
     mask.set(kernels().HEAPU8.subarray(p, p + mask.length));
   });
 }
+
+/** Selection Expand (+) / Contract (−) by `amount` px with round corners (ObjectPixels.c `mask_grow`), on 8-bit alpha. */
+export function maskGrow(alpha: Uint8Array, w: number, h: number, amount: number) {
+  withHeap((heap, m) => {
+    const p = heap.bytes(alpha);
+    if (!m._mask_grow(p, w, h, amount)) throw new Error('Out of memory');
+    alpha.set(kernels().HEAPU8.subarray(p, p + alpha.length));
+  });
+}

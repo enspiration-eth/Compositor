@@ -2,7 +2,7 @@
 // replace / add (Shift) / subtract (Option); edges come from the original wand_trace kernel for marching ants.
 import { type Doc, type Layer, type Mat, layerMatrix, invert } from './document';
 import { canvasOf, ctx2d } from './adjustments';
-import { traceMask } from './kernels';
+import { traceMask, gaussBlur, maskGrow } from './kernels';
 
 export type SelMode = 'replace' | 'add' | 'subtract' | 'intersect';
 
@@ -29,11 +29,19 @@ export function isEmpty(c: HTMLCanvasElement | null) {
 export function shapeCanvas(doc: Doc, draw: (x: CanvasRenderingContext2D) => void, feather = 0) {
   const c = canvasOf(doc.width, doc.height), x = ctx2d(c);
   x.fillStyle = '#fff';
-  if (feather > 0) {
-    const t = canvasOf(doc.width, doc.height), tx = ctx2d(t); tx.fillStyle = '#fff'; draw(tx);
-    x.filter = `blur(${feather}px)`; x.drawImage(t, 0, 0); x.filter = 'none';
-  } else draw(x);
+  draw(x);
+  if (feather > 0) softenAlpha(c, feather / 2);
   return c;
+}
+/** A selection's alpha blurred by `sigma` with the edges extended (DocumentSelection's feather: Gaussian of
+ *  feather / 2 over the clamped extent), in wasm. */
+function softenAlpha(c: HTMLCanvasElement, sigma: number) {
+  const x = ctx2d(c), img = x.getImageData(0, 0, c.width, c.height), d = img.data;
+  // Alpha in every channel, opaque, so the premultiplied blur treats it as plain values.
+  for (let i = 0; i < d.length; i += 4) { d[i] = d[i + 1] = d[i + 2] = d[i + 3]; d[i + 3] = 255; }
+  gaussBlur(img, sigma, true);
+  for (let i = 0; i < d.length; i += 4) { d[i + 3] = d[i]; d[i] = d[i + 1] = d[i + 2] = 255; }
+  x.putImageData(img, 0, 0);
 }
 export function rectSelection(doc: Doc, r: { x: number; y: number; w: number; h: number }, ellipse: boolean, feather = 0) {
   return shapeCanvas(doc, x => {
@@ -123,21 +131,22 @@ export function invertSelection(doc: Doc) {
 }
 export function featherSelection(doc: Doc, radius: number) {
   if (!doc.selection) return;
-  const c = canvasOf(doc.width, doc.height), x = ctx2d(c);
-  x.filter = `blur(${radius / 2}px)`; x.drawImage(doc.selection, 0, 0);
+  const c = canvasOf(doc.width, doc.height); ctx2d(c).drawImage(doc.selection, 0, 0);
+  softenAlpha(c, radius / 2);
   doc.selection = c; doc.selRev++;
 }
-/** Expand (positive) or contract (negative) by `amount` pixels: blur then threshold, which rounds corners as Photoshop does. */
+/** Expand (positive) or contract (negative) by `amount` pixels with round corners (Selection.swift resizeSelection:
+ *  a round-capped band around the outline added or removed), as a Euclidean distance transform in wasm. Contracting
+ *  also pulls away from the canvas edges. */
 export function growSelection(doc: Doc, amount: number) {
   if (!doc.selection || !amount) return;
-  const src = doc.selection;
-  const blurred = canvasOf(doc.width, doc.height), bx = ctx2d(blurred);
-  bx.filter = `blur(${Math.abs(amount) / 2}px)`; bx.drawImage(src, 0, 0);
-  const img = bx.getImageData(0, 0, doc.width, doc.height), d = img.data;
-  const threshold = amount > 0 ? 8 : 247;
-  for (let i = 3; i < d.length; i += 4) { const v = d[i] > threshold ? 255 : 0; d[i] = v; d[i - 1] = d[i - 2] = d[i - 3] = 255; }
-  bx.putImageData(img, 0, 0);
-  doc.selection = isEmpty(blurred) ? null : blurred; doc.selRev++;
+  const out = canvasOf(doc.width, doc.height), x = ctx2d(out); x.drawImage(doc.selection, 0, 0);
+  const img = x.getImageData(0, 0, doc.width, doc.height), d = img.data, alpha = new Uint8Array(doc.width * doc.height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = d[i * 4 + 3];
+  maskGrow(alpha, doc.width, doc.height, Math.max(-500, Math.min(500, amount)));
+  for (let i = 0; i < alpha.length; i++) { d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = 255; d[i * 4 + 3] = alpha[i]; }
+  x.putImageData(img, 0, 0);
+  doc.selection = isEmpty(out) ? null : out; doc.selRev++;
 }
 export function translateSelection(doc: Doc, dx: number, dy: number) {
   if (!doc.selection) return;
