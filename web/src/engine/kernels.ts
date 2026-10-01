@@ -320,3 +320,20 @@ export function layerEffects(img: ImageData, params: number[]): ImageData {
     return out;
   });
 }
+
+/** Gaussian blur (BlurPixels.c). `clamp` extends the edge pixels (Core Image's clampedToExtent); otherwise the outside
+ *  is transparent. */
+export function gaussBlur(img: ImageData, sigma: number, clamp: boolean) {
+  onPremultiplied(img, (p, w, h, _s, _heap, m) => { if (!m._gauss_blur(p, w, h, sigma, clamp ? 1 : 0)) throw new Error('Out of memory for blur'); });
+}
+/** Motion blur (BlurPixels.c): `samples` copies along a streak of `length` px at `angleDeg` (counterclockwise). */
+export function motionBlurInto(img: ImageData, angleDeg: number, length: number, samples: number): ImageData {
+  return withHeap((heap, m) => {
+    const n = img.data.length, sp = heap.alloc(n), dp = heap.alloc(n);
+    premultiplyInto(img.data, m.HEAPU8, sp);
+    const a = -angleDeg * Math.PI / 180;
+    m._motion_blur(sp, dp, img.width, img.height, Math.cos(a), Math.sin(a), length, samples);
+    const out = new ImageData(img.width, img.height); unpremultiplyFrom(kernels().HEAPU8, dp, out.data);
+    return out;
+  });
+}

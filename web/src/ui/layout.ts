@@ -1,5 +1,7 @@
 // The window: ContentView.swift's layout (toolbar with project tabs, tool header, tool rail, canvas, Layers panel,
 // status bar) plus the menu bar from CompositorApp.swift's commands, and the keyboard shortcuts.
+import { applyFilterAsync, poolSize } from '../engine/filterPool';
+import { applyFilter, defaultFilterSettings } from '../engine/adjustments';
 import { app, TOOLS, type Tool } from './app';
 import { CanvasController } from './tools';
 import { h, icon, slider, select, checkbox, button, showMenu, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
@@ -38,7 +40,7 @@ export function buildLayout(root: HTMLElement) {
     h('div', { class: 'main' }, els.rail, h('div', { class: 'stage-wrap' }, els.stage, els.welcome), h('div', { class: 'resize-edge' }), els.layers),
     els.status, els.fileInput, els.folderInput);
   ctl = new CanvasController(els.stage);
-  (window as unknown as { compositor: unknown }).compositor = { app, ctl };
+  (window as unknown as { compositor: unknown }).compositor = { app, ctl, filters: { applyFilter, applyFilterAsync, poolSize, defaultFilterSettings } };
   buildMenubar(); buildRail();
   els.fileInput.addEventListener('change', () => {
     const inp = els.fileInput as HTMLInputElement, files = Array.from(inp.files ?? []);

@@ -6,7 +6,8 @@ import {
   bakeMask, toggleMaskLink, maskInLayerGrid, eachTransform,
 } from '../engine/document';
 import { Renderer } from '../engine/render';
-import { canvasOf, ctx2d, imageDataOf, newAdjustment, type AdjustmentKind, type FilterKind, type FilterSettings, applyFilter, type RGB } from '../engine/adjustments';
+import { canvasOf, ctx2d, imageDataOf, newAdjustment, type AdjustmentKind, type FilterKind, type FilterSettings, type RGB } from '../engine/adjustments';
+import { applyFilterAsync } from '../engine/filterPool';
 import * as Sel from '../engine/selection';
 import { contentFill, alphaBounds } from '../engine/kernels';
 import { writeComp, readCompZip, readCompFolder, readPsdFile, fileToCanvas, isImageFile, isPsd, isCompZip, download, canvasToBlob } from '../engine/files';
@@ -430,16 +431,24 @@ export class App {
     ctx2d(c).putImageData(img, 0, 0); a.rev++; this.rasterize(a);
     this.changed('pixels');
   }
-  /** Runs a filter/adjustment over the active layer (through the selection). */
-  runFilter(kind: FilterKind, s: FilterSettings, seed: number, label = kind) {
+  /** Runs a filter/adjustment over the active layer (through the selection), in the filter workers. */
+  filtering = 0;
+  async runFilter(kind: FilterKind, s: FilterSettings, seed: number, label = kind) {
     const d = this.doc, a = this.active; if (!d || !a) return;
-    this.editPixels(label, (x, c, layer) => {
-      const img = x.getImageData(0, 0, c.width, c.height);
-      const scale = c.width / layer.transform.w;
-      const out = applyFilter(kind, s, img, { seed, scale: isFinite(scale) && scale > 0 ? scale : 1,
-        canvasFrame: this.isEmptyLayer(c) ? this.canvasFrameIn(layer, c) : undefined });
-      x.putImageData(out, 0, 0);
-    });
+    const onMask = this.maskTarget && !!a.mask;
+    if (!onMask && !a.canvas) { toast('Select a pixel layer first.'); return; }
+    if (onMask) bakeMask(a);
+    const src = onMask ? a.mask! : a.canvas!;
+    const scale = src.width / a.transform.w;
+    this.filtering++; document.body.classList.add('busy');
+    try {
+      const out = await applyFilterAsync(kind, s, imageDataOf(src), { seed, scale: isFinite(scale) && scale > 0 ? scale : 1,
+        canvasFrame: this.isEmptyLayer(src) ? this.canvasFrameIn(a, src) : undefined });
+      // The layer changed while the filter ran (another edit, undo): applying the result would overwrite that.
+      if (this.doc !== d || this.active !== a || (onMask ? a.mask : a.canvas) !== src) { toast(`${label} was not applied: the layer changed.`); return; }
+      this.editPixels(label, x => x.putImageData(out, 0, 0));
+    } catch (e) { toast(`${label} failed: ${(e as Error).message}`, 'error'); }
+    finally { if (--this.filtering === 0 && !this.busy) document.body.classList.remove('busy'); }
   }
   isEmptyLayer(c: HTMLCanvasElement) { const b = alphaBounds(imageDataOf(c)); return b[2] <= b[0] || b[3] <= b[1]; }
   canvasFrameIn(l: Layer, c: HTMLCanvasElement): [number, number, number, number] {

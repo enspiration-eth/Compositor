@@ -32,6 +32,7 @@ const st = () => page.evaluate(() => {
 });
 const pixel = (x, y) => page.evaluate(([x, y]) => { const { app } = window.compositor; return Array.from(app.renderer.readPixel(app.doc, x, y)); }, [x, y]);
 const toScreen = (x, y) => page.evaluate(([x, y]) => { const { app } = window.compositor; const r = document.getElementById('stage').getBoundingClientRect(); const s = app.toScreen(x, y); return [s[0] + r.left, s[1] + r.top]; }, [x, y]);
+const filterOk = async () => { await page.click('#filter-ok'); await page.waitForFunction(() => window.compositor.app.filtering === 0, null, { timeout: 60000 }); };
 const menu = async (top, item) => { await page.click(`.menubar-item[data-menu="${top}"]`); await page.locator('.menu .menu-item', { hasText: item }).first().click(); };
 
 try {
@@ -88,7 +89,7 @@ try {
     await hue.fill('120'); await hue.press('Enter');
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/02-filter-panel.png` });
-    await page.click('#filter-ok');
+    await filterOk();
     const after = await pixel(100, 100);
     assert(before.join() !== after.join(), `hue changed ${before} -> ${after}`);
   });
@@ -105,7 +106,7 @@ try {
     await sec('Calibration').locator('summary').click(); await setRow('Calibration', 5, -60); // blue saturation
     await page.waitForTimeout(500);
     await page.screenshot({ path: `${SHOTS}/02b-camera-raw.png` });
-    await page.click('#filter-ok');
+    await filterOk();
     const after = await pixel(100, 100);
     assert(before.join() !== after.join(), `camera raw changed ${before} -> ${after}`);
   });
@@ -144,7 +145,7 @@ try {
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/10b-camera-raw-clipping.png` });
     await page.selectOption('#cr-clipping', 'Off');
-    await page.click('#filter-ok');
+    await filterOk();
     const r = await page.evaluate(() => { const { app, ctl } = window.compositor; const c = app.active.canvas;
       return { hook: !!app.canvasHook, px: Array.from(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.filter((_, i) => i % 4000 === 0)), label: app.history.undoLabel }; });
     assert(!r.hook, 'canvas hook released');
@@ -152,10 +153,32 @@ try {
     assert(diff > 1000, 'camera raw geometry/curve/point color changed the layer ' + diff);
   });
 
+  await step('filters in Web Workers: strips match the whole-image result', async () => {
+    const r = await page.evaluate(async () => {
+      const { applyFilter, applyFilterAsync, poolSize, defaultFilterSettings } = window.compositor.filters;
+      const c = window.compositor.app.doc.layers.find(l => l.name === 'Sky').canvas;
+      const get = () => c.getContext('2d').getImageData(0, 0, c.width, c.height);
+      const res = {};
+      for (const [kind, patch] of [['Gaussian Blur', { radius: 12 }], ['Hue/Saturation', {}], ['Add Noise', { amount: 30 }], ['Motion Blur', { angle: 30, distance: 40 }]]) {
+        const s = { ...defaultFilterSettings(), ...patch };
+        if (kind === 'Hue/Saturation') s.hueSat.adjustments.Master = { hue: 90, saturation: 20, lightness: 0 };
+        const ctx = { seed: 7, scale: 1 };
+        const t0 = performance.now(); const a = await applyFilterAsync(kind, s, get(), ctx); const t1 = performance.now();
+        const b = applyFilter(kind, s, get(), ctx); const t2 = performance.now();
+        // Colors compared as premultiplied (a 1/255-alpha pixel's straight color is noise).
+        let diff = 0; for (let i = 0; i < a.data.length; i++) { const al = (i & 3) === 3 ? 255 : Math.min(a.data[i | 3], b.data[i | 3]); diff = Math.max(diff, Math.abs(a.data[i] - b.data[i]) * al / 255); }
+        res[kind] = { diff, workers: Math.round(t1 - t0), main: Math.round(t2 - t1) };
+      }
+      return { pool: poolSize(), res };
+    });
+    console.log('(pool', r.pool, JSON.stringify(r.res) + ')');
+    for (const [k, v] of Object.entries(r.res)) assert(v.diff <= 2, `${k} strips differ by ${v.diff}`);
+  });
+
   await step('Gaussian Blur filter', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers[2].id); });
     await menu('Filter', 'Gaussian Blur');
-    await page.waitForSelector('#filter-panel'); await page.click('#filter-ok');
+    await page.waitForSelector('#filter-panel'); await filterOk();
     assert((await st()).undo > 0, 'blur recorded');
   });
 

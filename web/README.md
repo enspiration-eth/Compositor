@@ -13,6 +13,7 @@ re-implements the platform layers (AppKit/SwiftUI, Metal, Core Image) with web A
 | Pixel kernels (levels, hue/sat cube, gradient map, B&W, color balance, grain, noise, vignette, tonal contrast, lens correction, Camera Raw, magic wand flood fill + contour tracing, spot healing, content-aware fill, dither, alpha bounds) | C in `Compositor/Rendering/*.c` | **The same C files, compiled unchanged to WebAssembly** with Emscripten (`wasm/build.sh` → `src/wasm/pixels.{mjs,wasm}`) |
 | Smudge and Liquify (`WarpStroke` CPU path in `Document/SmudgeLiquify.swift`) | Swift (+ Metal) | Translated line for line to C (`wasm/src/WarpPixels.c`) and compiled into the same wasm module |
 | Free Distort (`⌘`-drag a transform handle; perspective quad warp) | Swift / Core Image | New C kernel (`wasm/src/DistortPixels.c`, inverse homography + bilinear); ⌘-drag a corner with Move or Edit › Distort, Return applies, Esc cancels |
+| Gaussian / motion blur (Core Image `CIGaussianBlur`, `CIMotionBlur`) | Core Image | New C kernels (`wasm/src/BlurPixels.c`), so filters can run in workers |
 | Layer effects (`MetalLayerEffects.swift` compute kernels: stroke spread, shadow shift + blur, glows, `effects_compose`) | Swift + Metal | Translated to C (`wasm/src/EffectsPixels.c`), in the same wasm module |
 | Remove Background's matte refinement (`GuidedMatte.swift` guided filter, Shift Edge, Contrast) | Swift + Core Image | Translated to C (`wasm/src/MattePixels.c`), in the same wasm module |
 | Subject detection (Remove Background, Select Subject, Object Selection) | Apple Vision | U²-Net-p (Apache-2.0, `public/models/u2netp.onnx`) on onnxruntime-web's WebAssembly backend, loaded on first use only |
@@ -125,8 +126,12 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   effects as the Mac app does. Blurs wider than 64 px use three box passes of matching variance instead of the direct
   Gaussian loop. **Bloom / Glow** is still an approximation (a blurred copy screened over the image); Core Image's
   `CIBloom` kernel isn't public.
-- **Performance:** the wasm kernels run single-threaded (`dispatch_apply` is serial; no SharedArrayBuffer threads on
-  GitHub Pages). Adjustment layers are recomputed on the CPU and cached.
+- **Performance:** filters run in a pool of Web Workers (one per core, up to 8), each with its own copy of the wasm
+  module. Per-pixel filters and the blurs (with overlapping rows) are split into strips across the pool; filters that
+  need the whole image (Camera Raw, lens correction, vignette) run in one worker so the page stays responsive, and Dither
+  stays on the main thread. This uses transferred buffers, not SharedArrayBuffer: wasm threads need cross-origin
+  isolation headers (COOP/COEP), which GitHub Pages can't send. Each kernel call is still single-threaded
+  (`dispatch_apply` is serial), and adjustment layers are recomputed on the main thread and cached.
 - **Hue/Saturation:** all seven ranges, Invert Range and editable hue bands (drag the spectrum handles, or drag inside the band to slide it) on both the filter and adjustment layers, saved as the Mac app’s `hsvSettings`. Not ported: the panel’s eyedroppers (sample / add / remove a color from the image) and the targeted-adjustment drag.
 - `.comp` projects are saved as a `.comp.zip` (browsers can't write folder bundles). Unzip one to open it in the Mac app.
 - No Sparkle updates, Quick Look, or document-based windowing; tabs replace windows.

@@ -3,11 +3,12 @@
 import { app } from './app';
 import { h, slider, select, checkbox, colorWell, button, floatingPanel, modal, toast, type Panel } from './dom';
 import {
-  type FilterKind, type FilterSettings, defaultFilterSettings, applyFilter, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
+  type FilterKind, type FilterSettings, defaultFilterSettings, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
   curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
   rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry,
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
+import { applyFilterAsync } from '../engine/filterPool';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, bakeMask, maskInLayerGrid, setMaskPlacement, invert, apply, pixelToDoc } from '../engine/document';
 import * as Sel from '../engine/selection';
 import { view, setView, addGuide } from './guides';
@@ -560,22 +561,35 @@ export function openFilter(kind: FilterKind) {
   if (kind === 'Levels') currentHistogram = levelsHistogram(imageDataOf(original));
   let preview = true, pending = false;
   const setCanvas = (c: HTMLCanvasElement) => { if (onMask) a.mask = c; else a.canvas = c; a.rev++; app.needsRender = true; };
-  const render = () => {
+  // The preview runs in the filter workers; a result that arrives after a newer one was asked for, or after the panel
+  // closed, is dropped.
+  let generation = 0, closed = false, running = false, again = false;
+  const render = async () => {
     pending = false;
-    if (!preview) { setCanvas(original); return; }
+    if (closed) return;
+    if (!preview) { generation++; setCanvas(original); return; }
+    if (running) { again = true; return; }
+    running = true;
+    const mine = ++generation;
     try {
       const img = imageDataOf(original);
       const scale = original.width / a.transform.w;
-      const out = applyFilter(kind, s, img, { seed, scale: isFinite(scale) && scale > 0 ? scale : 1, canvasFrame: kind === 'Vignette' && app.isEmptyLayer(original) ? app.canvasFrameIn(a, original) : undefined });
+      const out = await applyFilterAsync(kind, s, img, { seed, scale: isFinite(scale) && scale > 0 ? scale : 1, canvasFrame: kind === 'Vignette' && app.isEmptyLayer(original) ? app.canvasFrameIn(a, original) : undefined });
+      if (closed || mine !== generation) return;
       let c = canvasOf(out.width, out.height); ctx2d(c).putImageData(out, 0, 0);
       if (sel) { const r = cloneCanvas(original), rx = ctx2d(r); const inside = canvasOf(c.width, c.height), ix = ctx2d(inside); ix.drawImage(c, 0, 0); ix.globalCompositeOperation = 'destination-in'; ix.drawImage(sel, 0, 0); rx.globalCompositeOperation = 'destination-out'; rx.drawImage(sel, 0, 0); rx.globalCompositeOperation = 'source-over'; rx.drawImage(inside, 0, 0); c = r; }
       setCanvas(c);
     } catch (e) { console.error(e); toast(`Preview failed: ${(e as Error).message}`, 'error'); }
+    finally {
+      running = false;
+      // Settings that changed while this preview was being made: one more, with the latest.
+      if (again && !closed) { again = false; void render(); }
+    }
   };
-  const changed = () => { if (!pending) { pending = true; requestAnimationFrame(render); } };
+  const changed = () => { if (!pending) { pending = true; requestAnimationFrame(() => void render()); } };
   const title = kind === 'Camera Raw Filter' ? 'Camera Raw Filter' : kind;
   crCtx = { layer: a, original };
-  const endHooks = () => { app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; crCtx = null; app.needsRender = true; };
+  const endHooks = () => { closed = true; generation++; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; crCtx = null; app.needsRender = true; };
   const panel = floatingPanel(title, () => { endHooks(); setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
   const body = h('div');
   const rebuild = () => body.replaceChildren(controls(kind, s, changed, rebuild));

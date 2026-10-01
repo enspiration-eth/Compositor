@@ -401,59 +401,35 @@ export function imageDataOf(c: HTMLCanvasElement): ImageData { return ctx2d(c).g
 export function canvasFromImageData(img: ImageData): HTMLCanvasElement {
   const c = canvasOf(img.width, img.height); ctx2d(c).putImageData(img, 0, 0); return c;
 }
+/** Gaussian blur with the edges extended (Core Image's clampedToExtent). In wasm, so it also runs in workers. */
 export function blurImageData(img: ImageData, sigma: number): ImageData {
-  const pad = Math.ceil(sigma * 3);
-  const src = canvasFromImageData(img);
-  const out = canvasOf(img.width, img.height);
-  const c = ctx2d(out);
   if (sigma <= 0.05) return img;
-  // Edges extend (Core Image's clampedToExtent): draw the image into a padded canvas with its edge pixels stretched.
-  const padded = canvasOf(img.width + pad * 2, img.height + pad * 2), pc = ctx2d(padded);
-  pc.drawImage(src, pad, pad);
-  pc.drawImage(src, 0, 0, 1, img.height, 0, pad, pad, img.height);
-  pc.drawImage(src, img.width - 1, 0, 1, img.height, img.width + pad, pad, pad, img.height);
-  pc.drawImage(padded, 0, pad, padded.width, 1, 0, 0, padded.width, pad);
-  pc.drawImage(padded, 0, pad + img.height - 1, padded.width, 1, 0, pad + img.height, padded.width, pad);
-  c.filter = `blur(${sigma}px)`;
-  c.drawImage(padded, -pad, -pad);
-  c.filter = 'none';
-  return c.getImageData(0, 0, img.width, img.height);
+  const out = new ImageData(new Uint8ClampedArray(img.data), img.width, img.height);
+  K.gaussBlur(out, sigma, true);
+  return out;
 }
 /** Gaussian blur that spreads past transparent edges (no edge extension), for layer content. */
 export function blurTransparent(img: ImageData, sigma: number): ImageData {
-  const src = canvasFromImageData(img), out = canvasOf(img.width, img.height), c = ctx2d(out);
-  c.filter = `blur(${sigma}px)`; c.drawImage(src, 0, 0); c.filter = 'none';
-  return c.getImageData(0, 0, img.width, img.height);
+  if (sigma <= 0.05) return img;
+  K.gaussBlur(img, sigma, false);
+  return img;
 }
-export function motionBlur(img: ImageData, angleDeg: number, distance: number, transparentEdges = true): ImageData {
-  const src = canvasFromImageData(img), out = canvasOf(img.width, img.height), c = ctx2d(out);
+export function motionBlur(img: ImageData, angleDeg: number, distance: number): ImageData {
   // Core Image's CIMotionBlur radius is distance/√12 (a box blur's standard deviation); this averages samples
   // spread evenly along the streak, which has the same spread.
-  const length = distance; void MOTION_RADIUS_PER_PIXEL;
-  const n = Math.max(2, Math.min(96, Math.ceil(length)));
-  const a = -angleDeg * Math.PI / 180, dx = Math.cos(a), dy = Math.sin(a);
-  // Accumulate in float for an exact average.
-  const acc = new Float32Array(img.data.length);
-  const tmp = ctx2d(canvasOf(img.width, img.height));
-  for (let i = 0; i < n; i++) {
-    const t = (i / (n - 1) - 0.5) * length;
-    tmp.clearRect(0, 0, img.width, img.height);
-    if (!transparentEdges) {
-      tmp.drawImage(src, Math.round(t * dx) - 0, Math.round(t * dy));
-    } else tmp.drawImage(src, t * dx, t * dy);
-    const d = tmp.getImageData(0, 0, img.width, img.height).data;
-    for (let k = 0; k < d.length; k += 4) {
-      const al = d[k + 3] / 255;
-      acc[k] += d[k] * al; acc[k + 1] += d[k + 1] * al; acc[k + 2] += d[k + 2] * al; acc[k + 3] += d[k + 3];
-    }
+  void MOTION_RADIUS_PER_PIXEL;
+  const n = Math.max(2, Math.min(96, Math.ceil(distance)));
+  return K.motionBlurInto(img, angleDeg, distance, n);
+}
+/** CIBloom, approximated: a blurred copy screened over the image at the intensity, kept to the image's own alpha. */
+function bloom(img: ImageData, sigma: number, amount: number): ImageData {
+  const blurred = blurImageData(img, sigma), k = Math.min(1, amount / 50);
+  const d = img.data, b = blurred.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const ba = b[i + 3] / 255 * k;
+    for (let c = 0; c < 3; c++) { const s = d[i + c] / 255, v = b[i + c] / 255; d[i + c] = Math.round(255 * (s + ba * v * (1 - s))); }
   }
-  const res = c.createImageData(img.width, img.height);
-  for (let k = 0; k < acc.length; k += 4) {
-    const al = acc[k + 3] / n;
-    res.data[k + 3] = al;
-    if (al > 0) { const s = 255 / (al * n); res.data[k] = acc[k] * s; res.data[k + 1] = acc[k + 1] * s; res.data[k + 2] = acc[k + 2] * s; }
-  }
-  return res;
+  return img;
 }
 
 function ditherGlyphs(chars: string, lineHeight: number) {
@@ -543,15 +519,7 @@ export function applyFilter(kind: FilterKind, s: FilterSettings, img: ImageData,
         s.vignetteColor.red, s.vignetteColor.green, s.vignetteColor.blue);
       return img;
     }
-    case 'Bloom / Glow': {
-      // CIBloom: a blurred copy added over the image at the intensity. Composited here with 'screen' so it never clips.
-      const blurred = blurImageData(img, s.bloomRadius * ctx.scale);
-      const out = canvasFromImageData(img), c = ctx2d(out);
-      c.globalCompositeOperation = 'screen'; c.globalAlpha = Math.min(1, s.bloomAmount / 50);
-      c.drawImage(canvasFromImageData(blurred), 0, 0);
-      c.globalCompositeOperation = 'destination-in'; c.globalAlpha = 1; c.drawImage(canvasFromImageData(img), 0, 0);
-      return c.getImageData(0, 0, img.width, img.height);
-    }
+    case 'Bloom / Glow': return bloom(img, s.bloomRadius * ctx.scale, s.bloomAmount);
     case 'Tonal Contrast': {
       const base = blurImageData(img, s.tonalRadius * ctx.scale);
       K.tonalContrast(img, base, s.tonalAmount, s.tonalShadows, s.tonalMidtones, s.tonalHighlights);
