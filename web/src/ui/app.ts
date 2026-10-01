@@ -632,6 +632,11 @@ export class App {
     const blob = await canvasToBlob(c, `image/${type}`, quality);
     download(blob, `${d.name || 'Untitled'}.${type === 'png' ? 'png' : 'jpg'}`);
   }
+  async exportTiff() {
+    const d = this.doc; if (!d) return;
+    const { canvasToTiff } = await import('../engine/tiff');
+    download(await canvasToTiff(this.renderer.readComposite(d)), `${d.name || 'Untitled'}.tif`, 'image/tiff');
+  }
   async copyMerged() {
     const d = this.doc; if (!d) return;
     const img = this.renderer.readComposite(d);

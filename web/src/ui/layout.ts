@@ -31,7 +31,7 @@ export function buildLayout(root: HTMLElement) {
   els.welcome = h('div', { class: 'welcome' });
   els.layers = h('div', { class: 'layers-panel' });
   els.status = h('div', { class: 'status-bar' });
-  els.fileInput = h('input', { type: 'file', multiple: true, accept: 'image/*,.psd,.psb,.zip,.comp,.svg', style: 'display:none', id: 'file-input' });
+  els.fileInput = h('input', { type: 'file', multiple: true, accept: 'image/*,.psd,.psb,.zip,.comp,.svg,.tif,.tiff,.dng,.nef,.cr2,.arw,.orf,.rw2,.raf,.pef,.srw,.heic', style: 'display:none', id: 'file-input' });
   els.folderInput = h('input', { type: 'file', style: 'display:none', id: 'folder-input' });
   (els.folderInput as HTMLInputElement).setAttribute('webkitdirectory', '');
   root.append(els.menubar, els.toolbar, els.header,
@@ -83,6 +83,7 @@ function buildMenubar() {
       { separator: true },
       { label: 'Export PNG…', shortcut: `⇧${MOD}E`, action: () => app.exportImage('png'), disabled: !app.doc },
       { label: 'Export JPEG…', shortcut: `⌥⇧${MOD}S`, action: showExportJpeg, disabled: !app.doc },
+      { label: 'Export TIFF…', action: () => app.exportTiff(), disabled: !app.doc },
       { separator: true },
       { label: 'Close Project', shortcut: `${MOD}W`, action: () => app.closeProject(), disabled: !app.doc },
     ]],

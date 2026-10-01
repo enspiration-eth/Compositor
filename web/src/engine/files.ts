@@ -1,3 +1,4 @@
+import { isTiffName, tiffToCanvas } from './tiff';
 // File formats. A Compositor project (.comp) is a folder: manifest.json + images/<UUID>.png (+ <UUID>.mask.png),
 // exactly as IO/ProjectStore.swift writes it. Browsers can't save a package folder, so the web app saves the same
 // folder zipped (Name.comp.zip, which unzips to Name.comp for the Mac app) and opens either a zip or a picked
@@ -202,9 +203,14 @@ export async function readPsdFile(bytes: ArrayBuffer, name: string): Promise<Doc
 
 export async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
   if (/\.svg$/i.test(file.name) || file.type === 'image/svg+xml') return svgToCanvas(file);
-  return bytesToCanvas(file);
+  if (isTiffName(file.name, file.type)) return tiffToCanvas(await file.arrayBuffer());
+  try { return await bytesToCanvas(file); }
+  catch (e) {
+    if (/\.hei[cf]$/i.test(file.name) || /hei[cf]/i.test(file.type)) throw new Error('This browser can\'t decode HEIC. Open it in Safari, or export it as JPEG first.');
+    throw e;
+  }
 }
-export function isImageFile(f: File) { return /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|avif|bmp|svg|ico)$/i.test(f.name); }
+export function isImageFile(f: File) { return /^image\//.test(f.type) || /\.(png|jpe?g|gif|webp|avif|bmp|svg|ico|hei[cf])$/i.test(f.name) || isTiffName(f.name, f.type); }
 export function isPsd(f: File) { return /\.ps[db]$/i.test(f.name); }
 export function isCompZip(f: File) { return /\.(comp\.zip|zip|comp)$/i.test(f.name); }
 

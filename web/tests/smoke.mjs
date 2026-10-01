@@ -251,6 +251,28 @@ try {
     const s2 = await st(); assert(s2.layers === manifest.layers.length, 'reopened layers ' + s2.layers);
   });
 
+  await step('TIFF import (LZW, Deflate+alpha, 16-bit gray) + TIFF export', async () => {
+    const fx = new URL('./fixtures/', import.meta.url);
+    for (const [name, check] of [['gradient-lzw.tif', 'rgb'], ['rgba-deflate.tif', 'alpha'], ['gray16.tif', 'gray']]) {
+      const b64 = readFileSync(new URL(name, fx)).toString('base64');
+      const r = await page.evaluate(async ([b64, name]) => {
+        const { app } = window.compositor; const n = app.projects.length;
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        await app.openFiles([new File([bytes], name, { type: 'image/tiff' })]);
+        if (app.projects.length !== n + 1) return { err: 'no project' };
+        const d = app.doc, l = d.layers.find(x => x.canvas);
+        const px = (x, y) => Array.from(l.canvas.getContext('2d').getImageData(x, y, 1, 1).data);
+        return { w: d.width, h: d.height, a: px(10, 10), b: px(80, 50) };
+      }, [b64, name]);
+      assert(!r.err && r.w === 96 && r.h === 64, name + ' ' + JSON.stringify(r));
+      if (check === 'rgb') assert(Math.abs(r.a[0] - 26) < 4 && Math.abs(r.b[1] - 199) < 4 && r.a[2] === 200, name + ' px ' + JSON.stringify(r));
+      if (check === 'alpha') assert(r.a[3] === 255 && r.b[3] === 128, name + ' alpha ' + JSON.stringify(r));
+      if (check === 'gray') assert(Math.abs(r.b[0] - 212) < 4 && r.b[0] === r.b[1], name + ' gray ' + JSON.stringify(r));
+    }
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportTiff())]);
+    assert(/\.tif$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  });
+
   assert(errors.length === 0, 'console errors:\n' + errors.join('\n'));
   console.log('\nAll smoke checks passed. Screenshots in ' + SHOTS);
 } catch (e) {

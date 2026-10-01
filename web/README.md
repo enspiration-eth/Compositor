@@ -106,7 +106,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Camera Raw:** the processing is complete, but the panel is simplified. The point curve is chosen from presets (no
   draggable editor), there's no Point Color picker, no Geometry (Upright/perspective) section, no targeted
   adjustment tool and no clipping overlays.
-- **RAW / HEIC / TIFF import:** these need ImageIO. The browser can only decode what its own image decoders support.
+- **TIFF / RAW / HEIC import:** the Mac app uses ImageIO. The web build decodes TIFF (uncompressed, LZW, Deflate, PackBits, JPEG; 8/16-bit; alpha) and TIFF-based camera RAW (DNG, NEF, CR2, ARW, …) with [UTIF](https://github.com/photopea/UTIF.js) (MIT); RAW files without a decodable RGB image fall back to their largest embedded JPEG preview, and there is no RAW develop step. HEIC opens only in browsers that decode it natively (Safari). File › Export TIFF… writes an 8-bit RGBA TIFF.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
 - **Unlinked masks:** not ported yet.
 - **Text:** styled as a single run (one font/size/color per layer, via canvas 2D instead of Core Text). Shapes and
