@@ -200,6 +200,9 @@ export function maskPlacementOf(l: Layer): Transform | undefined {
 }
 /** ImageLayer.maskTransform: where the mask's pixels sit on the document. */
 export const maskTransformOf = (l: Layer): Transform => maskPlacementOf(l) ?? l.transform;
+/** The mask seen as a layer of its own (its pixels where they sit), so brushes, fills and filters work in the mask's
+ *  own grid as the Mac app does, without resampling a placed mask into the layer's grid. */
+export const maskGridView = (l: Layer): Layer => ({ ...l, transform: maskTransformOf(l), canvas: l.mask });
 const bgCache = new WeakMap<HTMLCanvasElement, [number, number]>();
 /** LayerMask.background: white or black beyond a placed mask's pixels, whichever most of its edge is. */
 export function maskBackground(m: HTMLCanvasElement, rev = 0): number {

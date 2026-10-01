@@ -10,7 +10,7 @@ import {
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
-import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, bakeMask, maskInLayerGrid, setMaskPlacement, invert, apply, pixelToDoc } from '../engine/document';
+import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, maskGridView, maskInLayerGrid, setMaskPlacement, invert, apply, pixelToDoc } from '../engine/document';
 import * as Sel from '../engine/selection';
 import { view, setView, addGuide } from './guides';
 import { subjectMatte, matteToMask, defaultMatte, type MatteSettings } from '../engine/segment';
@@ -204,9 +204,6 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
       box.append(h('div', { class: 'row' }, button('Reset All', () => { crDisarm(); s.cameraRaw = defaultCameraRaw(); changed(); rebuild(); })));
       break;
     }
-    case 'Remove Background':
-      box.append(h('p', { class: 'note' }, 'Remove Background uses Apple’s Vision subject detection on the Mac. Browsers have no equivalent built in, so this filter isn’t available on the web yet.'));
-      break;
     case 'Exposure':
       sl('Exposure', () => s.exposure.exposure, v => s.exposure.exposure = v, -20, 20, 0.01); sl('Offset', () => s.exposure.offset, v => s.exposure.offset = v, -0.5, 0.5, 0.001);
       sl('Gamma', () => s.exposure.gamma, v => s.exposure.gamma = v, 0.01, 9.99, 0.01);
@@ -723,9 +720,10 @@ export function openFilter(kind: FilterKind) {
   if (kind === 'Levels') s.levels = defaultFilterSettings().levels;
   if (kind === 'Hue/Saturation') s.hueSat = defaultFilterSettings().hueSat;
   const seed = (Math.random() * 2 ** 32) >>> 0;
-  if (onMask) bakeMask(a);
   const original = onMask ? a.mask! : a.canvas!;
-  const sel = Sel.selectionInLayer(d, a, original.width, original.height);
+  // A mask is filtered in its own grid, where it sits (maskGridView).
+  const grid = onMask ? maskGridView(a) : a;
+  const sel = Sel.selectionInLayer(d, grid, original.width, original.height);
   if (kind === 'Levels') currentHistogram = levelsHistogram(imageDataOf(original));
   let preview = true, pending = false;
   const setCanvas = (c: HTMLCanvasElement) => { if (onMask) a.mask = c; else a.canvas = c; a.rev++; app.needsRender = true; };
@@ -741,8 +739,8 @@ export function openFilter(kind: FilterKind) {
     const mine = ++generation;
     try {
       const img = imageDataOf(original);
-      const scale = original.width / a.transform.w;
-      const out = await applyFilterAsync(kind, s, img, { seed, scale: isFinite(scale) && scale > 0 ? scale : 1, canvasFrame: kind === 'Vignette' && app.isEmptyLayer(original) ? app.canvasFrameIn(a, original) : undefined });
+      const scale = original.width / grid.transform.w;
+      const out = await applyFilterAsync(kind, s, img, { seed, scale: isFinite(scale) && scale > 0 ? scale : 1, canvasFrame: kind === 'Vignette' && app.isEmptyLayer(original) ? app.canvasFrameIn(grid, original) : undefined });
       if (closed || mine !== generation) return;
       let c = canvasOf(out.width, out.height); ctx2d(c).putImageData(out, 0, 0);
       if (sel) { const r = cloneCanvas(original), rx = ctx2d(r); const inside = canvasOf(c.width, c.height), ix = ctx2d(inside); ix.drawImage(c, 0, 0); ix.globalCompositeOperation = 'destination-in'; ix.drawImage(sel, 0, 0); rx.globalCompositeOperation = 'destination-out'; rx.drawImage(sel, 0, 0); rx.globalCompositeOperation = 'source-over'; rx.drawImage(inside, 0, 0); c = r; }
@@ -756,7 +754,7 @@ export function openFilter(kind: FilterKind) {
   };
   const changed = () => { if (!pending) { pending = true; requestAnimationFrame(() => void render()); } };
   const title = kind === 'Camera Raw Filter' ? 'Camera Raw Filter' : kind;
-  crCtx = { layer: a, original };
+  crCtx = { layer: grid, original };
   const endHooks = () => { closed = true; generation++; hsArmed = null; crArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; s.crSharpenMask = undefined; crCtx = null; app.needsRender = true; };
   const panel = floatingPanel(title, () => { endHooks(); setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
   const body = h('div');

@@ -3,7 +3,7 @@
 import {
   type Doc, type Layer, type BlendMode, type Effects, type EffectKey, type Transform, History, newDoc, newPixelLayer, uuid, cloneCanvas,
   getLayer, descendants, ancestors, childrenOf, layerMatrix, solidMask, fullTransform, renderText, rgbCss, BLEND_MODES, invert, apply, renderShape,
-  bakeMask, toggleMaskLink, maskInLayerGrid, eachTransform,
+  toggleMaskLink, maskGridView, maskTransformOf, maskInLayerGrid, eachTransform,
 } from '../engine/document';
 import { Renderer } from '../engine/render';
 import { canvasOf, ctx2d, imageDataOf, newAdjustment, type AdjustmentKind, type FilterKind, type FilterSettings, type RGB } from '../engine/adjustments';
@@ -103,7 +103,8 @@ export class App {
   undo() { if (!this.doc || !this.history) return; const l = this.history.undo(this.doc); if (l) { this.maskTarget = this.maskTarget && !!this.active?.mask; this.changed('history'); } }
   redo() { if (!this.doc || !this.history) return; const l = this.history.redo(this.doc); if (l) this.changed('history'); }
   ownPixels(l: Layer) { this.history!.ownLayer(l); return l.canvas!; }
-  ownMask(l: Layer) { bakeMask(l); this.history!.ownMask(l); return l.mask!; }
+  /** The mask's pixels, owned by this edit, in the mask's own grid (a placed mask isn't resampled). */
+  ownMask(l: Layer) { this.history!.ownMask(l); return l.mask!; }
   /** EditorSession.toggleMaskLink. */
   toggleMaskLink(l = this.active) { if (!l?.mask) return; this.edit(l.maskLinked === false ? 'Link Layer Mask' : 'Unlink Layer Mask'); toggleMaskLink(l); this.changed('layers'); }
 
@@ -394,7 +395,7 @@ export class App {
     if (target === 'pixels' && !a.canvas) { toast('Select a pixel layer first.'); return; }
     this.edit(label);
     const c = target === 'mask' ? this.ownMask(a) : this.ownPixels(a);
-    const sel = clipToSelection ? Sel.selectionInLayer(d, a, c.width, c.height) : null;
+    const sel = clipToSelection ? Sel.selectionInLayer(d, target === 'mask' ? maskGridView(a) : a, c.width, c.height) : null;
     if (!sel) { const x = ctx2d(c); x.save(); paint(x, c, a); x.restore(); }
     else {
       const work = cloneCanvas(c), wx = ctx2d(work);
@@ -439,13 +440,12 @@ export class App {
     const d = this.doc, a = this.active; if (!d || !a) return;
     const onMask = this.maskTarget && !!a.mask;
     if (!onMask && !a.canvas) { toast('Select a pixel layer first.'); return; }
-    if (onMask) bakeMask(a);
     const src = onMask ? a.mask! : a.canvas!;
-    const scale = src.width / a.transform.w;
+    const scale = src.width / (onMask ? maskTransformOf(a) : a.transform).w;
     this.filtering++; document.body.classList.add('busy');
     try {
       const out = await applyFilterAsync(kind, s, imageDataOf(src), { seed, scale: isFinite(scale) && scale > 0 ? scale : 1,
-        canvasFrame: this.isEmptyLayer(src) ? this.canvasFrameIn(a, src) : undefined });
+        canvasFrame: this.isEmptyLayer(src) ? this.canvasFrameIn(onMask ? maskGridView(a) : a, src) : undefined });
       // The layer changed while the filter ran (another edit, undo): applying the result would overwrite that.
       if (this.doc !== d || this.active !== a || (onMask ? a.mask : a.canvas) !== src) { toast(`${label} was not applied: the layer changed.`); return; }
       this.editPixels(label, x => x.putImageData(out, 0, 0));

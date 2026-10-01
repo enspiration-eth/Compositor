@@ -7,7 +7,7 @@ import type { Guide } from '../engine/document';
 // the document (engine/render.ts); a 2D overlay above it draws marching ants, transform handles, crop and cursors.
 import { app, type Tool } from './app';
 import { type Layer, type Mat, type Transform, layerMatrix, invert, apply, cloneCanvas, rgbCss, layerContains, layerCorners, renderShape,
-  isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer, maskTransformOf, bakeMask, retargetRuns, setTextColor, setTextFont } from '../engine/document';
+  isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer, maskTransformOf, bakeMask, maskGridView, retargetRuns, setTextColor, setTextFont } from '../engine/document';
 import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
 import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds, maskMorph, gaussBlur } from '../engine/kernels';
@@ -306,7 +306,8 @@ export class CanvasController {
         if (!a || (!a.canvas && !(app.maskTarget && a.mask))) { toast('Select a pixel layer to draw a gradient on.'); return; }
         app.edit('Gradient');
         const target = app.maskTarget && a.mask ? app.ownMask(a) : app.ownPixels(a);
-        this.drag = { kind: 'gradient', start: s, startDoc: dpt, data: { layer: a, target, orig: cloneCanvas(target), sel: Sel.selectionInLayer(d, a, target.width, target.height) } };
+        const grid = app.maskTarget && a.mask ? maskGridView(a) : a;
+        this.drag = { kind: 'gradient', start: s, startDoc: dpt, data: { layer: a, grid, target, orig: cloneCanvas(target), sel: Sel.selectionInLayer(d, grid, target.width, target.height) } };
         this.gradientLine = [dpt, dpt]; return;
       }
       case 'shape': this.shapeRect = { a: dpt, b: dpt }; this.drag = { kind: 'shape', start: s, startDoc: dpt }; return;
@@ -746,12 +747,14 @@ export class CanvasController {
     const label = tool === 'spotHealing' ? 'Spot Healing' : tool === 'cloneStamp' ? 'Clone Stamp' : tool === 'blur' ? (app.smearMode === 'blur' ? 'Blur' : app.smearMode === 'liquify' ? 'Liquify' : 'Smudge') : app.brush.mode === 'erase' ? 'Erase' : 'Brush';
     app.edit(label);
     const target = onMask ? app.ownMask(a) : app.ownPixels(a);
-    const m = layerMatrix(a), inv = invert(m);
+    // A mask is painted in its own grid, where it sits (maskGridView), as the Mac app does.
+    const grid = onMask ? maskGridView(a) : a;
+    const m = layerMatrix(grid), inv = invert(m);
     const scale = Math.hypot(inv[0], inv[1]);
     const kind: Stroke['kind'] = tool === 'spotHealing' ? 'heal' : tool === 'cloneStamp' ? 'clone' : tool === 'blur' ? 'smear' : onMask ? 'mask' : app.brush.mode === 'erase' ? 'erase' : 'paint';
     const color = onMask ? app.grayCss(app.brush.mode === 'erase' ? app.bg : app.fg) : rgbCss(app.fg);
     this.stroke = { layer: a, target, orig: cloneCanvas(target), buffer: canvasOf(target.width, target.height),
-      sel: Sel.selectionInLayer(d, a, target.width, target.height), inv, scale, last: null, smooth: null, kind, color, dirty: null };
+      sel: Sel.selectionInLayer(d, grid, target.width, target.height), inv, scale, last: null, smooth: null, kind, color, dirty: null };
     if (kind === 'smear' && app.smearMode !== 'blur') {
       // Smudge / Liquify: the Mac app's WarpStroke, running in wasm on the layer's own pixels.
       const r = imageDataOf(target);
@@ -923,7 +926,7 @@ export class CanvasController {
   // ---------- gradient ----------
   paintGradient(data: Record<string, unknown>) {
     const line = this.gradientLine!, l = data.layer as Layer, target = data.target as HTMLCanvasElement, orig = data.orig as HTMLCanvasElement, sel = data.sel as HTMLCanvasElement | null;
-    const inv = invert(layerMatrix(l));
+    const inv = invert(layerMatrix((data.grid as Layer | undefined) ?? l));
     const [x0, y0] = apply(inv, ...line[0]), [x1, y1] = apply(inv, ...line[1]);
     const onMask = app.maskTarget && !!l.mask;
     const c0 = onMask ? app.grayCss(app.fg) : rgbCss(app.fg), c1 = app.gradient.toTransparent ? rgbCss(app.fg, 0) : onMask ? app.grayCss(app.bg) : rgbCss(app.bg);

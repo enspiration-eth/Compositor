@@ -557,6 +557,17 @@ try {
       const back = await page.evaluate(() => window.compositor.app.active.maskPlacement);
       assert(Math.abs(back.w - p.w) < 0.01 && !back.rotation, 'undo restores the mask placement ' + JSON.stringify(back));
     }
+    // Painting the moved mask happens in its own grid: it stays placed (not resampled into the layer's grid).
+    {
+      await page.evaluate(() => { const { app } = window.compositor; app.deselect(); app.fg = { red: 0, green: 0, blue: 0 }; app.brush.mode = 'paint'; app.brush.opacity = 1; app.brush.size = 60; });
+      await page.click('.rail-btn[data-tool="brush"]');
+      await drag([850, 700], [950, 800]);
+      const m = await page.evaluate(() => { const { app } = window.compositor; const a = app.active, x = a.mask.getContext('2d');
+        return { p: a.maskPlacement, w: a.mask.width, inside: Array.from(x.getImageData(500, 750, 1, 1).data), untouched: Array.from(x.getImageData(300, 900, 1, 1).data), label: app.history.undoLabel }; });
+      assert(m.label === 'Brush' && Math.abs(m.p.x - r.p.x) < 0.01 && m.w === 1600 && m.inside[0] < 40 && m.untouched[0] > 200, 'painted in the mask grid ' + JSON.stringify(m));
+      await page.evaluate(() => window.compositor.app.undo());
+      await page.click('.rail-btn[data-tool="move"]');
+    }
     // Now move the layer: the unlinked mask stays put on the document.
     await page.click('.layer-row.active .layer-name');
     await drag([500, 800], [500, 700]);
