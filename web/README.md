@@ -77,7 +77,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   (`manifest.json` v11 + `images/*.png` + masks, see `docs/project-format.md`); opening an unzipped `.comp` folder; drag
   and drop; paste; import PNG/JPEG/WebP/GIF/SVG/PSD (PSD layers via `ag-psd`); export PNG/JPEG with a quality preview
 - **Layers:** pixel, text, shape and adjustment layers; folders, including pass-through; visibility, rename, reorder by
-  drag, duplicate, layer via copy/cut, merge down/selected/group, delete
+  drag, Move Out of Folder, duplicate, layer via copy/cut, merge down/selected/group, delete
 - **Compositing:** all 24 blend modes; opacity; layer masks (reveal/hide all, from selection, invert, apply, disable,
   delete); clipping masks; folder masks
 - **Layer effects:** stroke, drop shadow, inner shadow, outer glow, inner glow, color overlay
@@ -86,7 +86,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   Liquify/Blur/Smudge (Liquify and Smudge run the Mac app's warp algorithm in wasm; Blur paints a softened copy of the
   layer, made at the start of the stroke with the Radius setting, through the brush, as `BlurTool.swift` does), gradient, shape, type, eyedropper, hand, zoom
 - **Selections:** add/subtract/intersect, all, deselect, inverse, expand/contract (round corners via a Euclidean distance
-  transform in wasm, as the Mac app's stroked-band path ops), feather (Gaussian of feather/2, edges extended), layer pixels, marching ants
+  transform in wasm, as the Mac app's stroked-band path ops), feather (Gaussian of feather/2, edges extended), layer pixels, Color Range… (eyedroppers, Fuzziness, Invert, live preview; the wasm `color_range_mask`), Mask's Black Areas, marching ants
   (traced by the wasm `wand_trace`), Content-Aware Fill (wasm), Select Subject and Object Selection (on-device ML)
 - **Image adjustments, destructive or as adjustment layers:** Levels (histogram from wasm), Curves, Hue/Saturation, Exposure,
   Gradient Map, Black & White, Color Balance, Grain, Invert
@@ -97,7 +97,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Rulers, guides and grid:** rulers you drag guides out of (⌘R); guides saved in the project's manifest, moved
   or deleted with the Move tool, locked or cleared, or added by position; a layout grid with Grid Settings (⌘'); Snap
   (⇧⌘;) to guides, grid, layers and document bounds for move, marquee, crop and shape
-- **Canvas:** canvas size with anchor, image size, trim, crop to selection, flip canvas, zoom/fit/100%, pixel grid at
+- **Canvas:** canvas size with anchor, image size, Trim… (transparent pixels or the top-left/bottom-right color, per edge), crop to selection, flip canvas, zoom/fit/100%, pixel grid at
   high zoom, checkerboard transparency
 - **Undo/redo** with copy-on-write pixel snapshots; Mac keyboard shortcuts (⌘ on Mac, Ctrl elsewhere)
 

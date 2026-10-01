@@ -5,7 +5,7 @@ import { applyFilter, defaultFilterSettings } from '../engine/adjustments';
 import { app, TOOLS, type Tool } from './app';
 import { CanvasController } from './tools';
 import { h, icon, slider, select, checkbox, button, showMenu, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
-import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel } from './dialogs';
+import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel, openColorRange, showTrim } from './dialogs';
 import { fileToCanvas } from '../engine/files';
 import { view, setView, clearGuides } from './guides';
 import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
@@ -118,7 +118,7 @@ function buildMenubar() {
       { separator: true },
       { label: 'Canvas Size…', shortcut: `⌥${MOD}C`, action: showCanvasSize, disabled: !app.doc },
       { label: 'Image Size…', shortcut: `⌥${MOD}I`, action: showImageSize, disabled: !app.doc },
-      { label: 'Trim', action: () => app.trim(), disabled: !app.doc },
+      { label: 'Trim…', action: () => showTrim(), disabled: !app.doc },
       { label: 'Crop to Selection', action: () => { selectTool('crop'); ctl.startCropFromSelection(); }, disabled: !app.doc },
       { separator: true },
       { label: 'Flip Canvas Horizontal', action: () => app.flipCanvas(true), disabled: !app.doc },
@@ -139,6 +139,7 @@ function buildMenubar() {
         { separator: true },
         { label: 'Group Selected Layers', shortcut: `${MOD}G`, action: () => app.groupSelected(), disabled: !app.doc },
         { label: 'Ungroup Layers', shortcut: `⇧${MOD}G`, action: () => app.ungroup(), disabled: !a?.isGroup },
+        { label: 'Move Out of Folder', action: () => app.moveOutOfFolder(), disabled: !a?.parentId },
         { label: a?.clipTo ? 'Release Clipping Mask' : 'Create Clipping Mask', shortcut: `⌥${MOD}G`, action: () => app.toggleClip(), disabled: !a || a.isGroup },
         { separator: true },
         { label: 'Layer Mask', submenu: [
@@ -169,6 +170,8 @@ function buildMenubar() {
       { label: 'Inverse', shortcut: `⇧${MOD}I`, action: () => app.inverseSelection(), disabled: !app.doc },
       { separator: true },
       { label: "Layer's Pixels", action: () => app.selectLayerPixels(), disabled: !app.active?.canvas },
+      { label: 'Color Range…', action: () => openColorRange(), disabled: !app.doc },
+      { label: "Mask's Black Areas", action: () => app.selectMaskBlack(), disabled: !app.active?.mask },
       { separator: true },
       { label: 'Expand…', action: () => showSelectionAmount('expand'), disabled: !app.doc?.selection },
       { label: 'Contract…', action: () => showSelectionAmount('contract'), disabled: !app.doc?.selection },

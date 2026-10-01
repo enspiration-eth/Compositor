@@ -8,7 +8,7 @@ import {
   rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry, bandCentered, bandInclude, bandExclude, sampledHue,
   crNeutralize, srgbDecode, crAutoBalance, crMixerWeights, crCurveRegion,
 } from '../engine/adjustments';
-import { levelsHistogram } from '../engine/kernels';
+import { levelsHistogram, colorRangeMask } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, maskGridView, maskInLayerGrid, setMaskPlacement, invert, apply, pixelToDoc } from '../engine/document';
 import * as Sel from '../engine/selection';
@@ -889,6 +889,20 @@ export function showCanvasSize() {
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh, h('span', { class: 'unit' }, 'px')), h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Anchor'), grid)),
     [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => { const W = Math.round(+w.value), H = Math.round(+hh.value); if (!(W >= 1 && H >= 1 && W <= 30000 && H <= 30000)) return false; app.canvasSize(W, H, anchor[0], anchor[1]); } }]);
 }
+/** Image › Trim… (TrimSheet.swift): what to trim by, and which edges. */
+export function showTrim() {
+  if (!app.doc) return;
+  const opts = { basedOn: 'Transparent Pixels' as 'Transparent Pixels' | 'Top Left Pixel Color' | 'Bottom Right Pixel Color', top: true, bottom: true, left: true, right: true };
+  const radios = h('div', { class: 'trim-based-on' }, ...(['Transparent Pixels', 'Top Left Pixel Color', 'Bottom Right Pixel Color'] as const).map(v => {
+    const r = h('input', { type: 'radio', name: 'trim-based-on', value: v, checked: v === opts.basedOn }) as HTMLInputElement;
+    r.addEventListener('change', () => { if (r.checked) opts.basedOn = v; });
+    return h('label', { class: 'check' }, r, v);
+  }));
+  const side = (k: 'top' | 'bottom' | 'left' | 'right', label: string) => checkbox(label, true, v => { opts[k] = v; }, `trim-${k}`);
+  modal('Trim', h('div', {}, h('div', { class: 'group-title' }, 'Based On'), radios, h('div', { class: 'group-title' }, 'Trim Away'),
+    h('div', { class: 'row' }, side('top', 'Top'), side('left', 'Left')), h('div', { class: 'row' }, side('bottom', 'Bottom'), side('right', 'Right'))),
+    [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => { if (!opts.top && !opts.bottom && !opts.left && !opts.right) return false; app.trim(opts); } }]);
+}
 export function showImageSize() {
   const d = app.doc; if (!d) return;
   const w = h('input', { type: 'number', value: d.width, class: 'dim' }) as HTMLInputElement, hh = h('input', { type: 'number', value: d.height, class: 'dim' }) as HTMLInputElement;
@@ -962,6 +976,76 @@ export function showNewGuide() {
 // Remove Background (SubjectRemoval.swift): a layer mask that hides everything but the subject. Basic is the model's
 // mask as it comes; Advanced refines it (Refine Edges = guided filter, Contrast, Shift Edge), all in wasm.
 let lastMatte: MatteSettings = defaultMatte();
+// Select › Color Range (ColorRangeSelection.swift + ColorRangeSheet.swift): every pixel near the colors clicked on the
+// canvas, anywhere in the image (all layers as shown). The selection updates live; OK keeps it as one undo step,
+// Cancel puts back the one there was.
+export function openColorRange() {
+  closeOpenPanel();
+  const d = app.doc; if (!d) return;
+  const image = app.renderer.readComposite(d), original = d.selection;
+  const st = { fuzziness: 40, invert: false, mode: 'Replace' as 'Replace' | 'Add' | 'Remove', include: [] as number[], exclude: [] as number[] };
+  const PW = 292, PH = 200, k = Math.min(PW / d.width, PH / d.height);
+  const pv = h('canvas', { width: Math.max(1, Math.round(d.width * k * 2)), height: Math.max(1, Math.round(d.height * k * 2)), id: 'color-range-preview',
+    style: `width:${Math.round(d.width * k)}px;height:${Math.round(d.height * k)}px;background:#000;display:block;margin:0 auto;border:1px solid #ffffff33` }) as HTMLCanvasElement;
+  const hint = h('p', { class: 'hint' });
+  let mask: Uint8Array | null = null;
+  const setSel = (c: HTMLCanvasElement | null) => { d.selection = c; d.selRev++; app.emit('selection'); };
+  const update = () => {
+    hint.textContent = st.include.length ? 'Shift-click adds a color, Option-click takes one away.' : 'Click the image to pick the color to select.';
+    const px = ctx2d(pv); px.fillStyle = '#000'; px.fillRect(0, 0, pv.width, pv.height);
+    if (!st.include.length) { mask = null; setSel(original); return; }
+    mask = colorRangeMask(image, st.include, st.exclude, st.fuzziness, st.invert);
+    const full = canvasOf(d.width, d.height), fx = ctx2d(full), img = fx.createImageData(d.width, d.height);
+    for (let i = 0; i < mask.length; i++) { const v = mask[i]; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255; }
+    fx.putImageData(img, 0, 0); px.imageSmoothingQuality = 'medium'; px.drawImage(full, 0, 0, pv.width, pv.height);
+    setSel(mask.some(v => v) ? Sel.maskBytesToCanvas(d, mask) : null);
+  };
+  // The straight color under the click, averaged over the 3 × 3 pixels around it.
+  const colorAt = (dpt: [number, number]): number[] | null => {
+    const x = Math.floor(dpt[0]), y = Math.floor(dpt[1]);
+    if (x < 0 || y < 0 || x >= d.width || y >= d.height) return null;
+    const sums = [0, 0, 0, 0];
+    for (let j = y - 1; j <= y + 1; j++) for (let i = x - 1; i <= x + 1; i++) {
+      if (i < 0 || j < 0 || i >= d.width || j >= d.height) continue;
+      const o = (j * d.width + i) * 4, a = image.data[o + 3];
+      for (let c = 0; c < 3; c++) sums[c] += image.data[o + c] * a / 255; sums[3] += a;
+    }
+    return sums[3] > 0 ? [0, 1, 2].map(c => Math.min(255, Math.round(sums[c] * 255 / sums[3]))) : null;
+  };
+  const prevHook = app.canvasHook;
+  app.canvasHook = { cursor: 'crosshair', down: (dpt, e) => {
+    const c = colorAt(dpt); if (!c) return;
+    const mode = e.altKey ? 'Remove' : e.shiftKey ? 'Add' : st.mode;
+    if (mode === 'Replace') { st.include = c; st.exclude = []; } else if (mode === 'Add') st.include = [...st.include, ...c]; else st.exclude = [...st.exclude, ...c];
+    update();
+  } };
+  let done = false;
+  const finish = (keep: boolean) => {
+    if (done) return; done = true;
+    app.canvasHook = prevHook; openPanel = null;
+    const result = d.selection;
+    d.selection = original; d.selRev++;
+    if (keep && st.include.length) { app.edit('Color Range'); d.selection = result; d.selRev++; }
+    app.emit('selection');
+  };
+  const panel = floatingPanel('Color Range', () => finish(false), { width: 340, id: 'color-range-panel' });
+  const modes = h('div', { class: 'row hs-samplers' });
+  const drawModes = () => {
+    modes.replaceChildren(...(['Replace', 'Add', 'Remove'] as const).map(m => button(m === 'Replace' ? '⊙ Pick' : m === 'Add' ? '⊕ Add' : '⊖ Remove', () => { st.mode = m; drawModes(); },
+      { class: `btn small${st.mode === m ? ' on' : ''}`, id: `cr-range-${m.toLowerCase()}`, title: m === 'Replace' ? 'Click the image to select that color' : m === 'Add' ? 'Click the image to add that color to the selection' : 'Click the image to take that color out of the selection' })));
+  };
+  drawModes();
+  const fz = slider({ label: 'Fuzziness', min: 0, max: 200, step: 1, value: st.fuzziness, onInput: v => { st.fuzziness = Math.round(v); update(); } });
+  fz.title = 'How far a color may be from the picked ones and still be selected';
+  const inv = checkbox('Invert', false, v => { st.invert = v; update(); }, 'color-range-invert');
+  inv.title = 'Select everything except those colors, such as all but a green screen';
+  const ok = button('OK', () => { finish(true); panel.close(); }, { class: 'btn primary', id: 'color-range-ok' });
+  const cancel = button('Cancel', () => { finish(false); panel.close(); });
+  panel.body.append(h('div', { class: 'controls' }, modes, pv, hint, fz, inv), h('div', { class: 'panel-footer' }, h('span', { class: 'spacer' }), cancel, ok));
+  openPanel = { panel, cancel: () => finish(false) };
+  update();
+}
+
 export function openRemoveBackground() {
   const d = app.doc, a = app.active;
   if (!d || !a?.canvas || a.adjustment || a.isGroup) { toast('Select a pixel layer first.'); return; }

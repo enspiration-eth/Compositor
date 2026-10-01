@@ -164,6 +164,18 @@ export function wandMask(img: ImageData, x: number, y: number, radius: number, t
     return kernels().HEAPU8.slice(mask, mask + img.width * img.height);
   });
 }
+/** Select › Color Range (`color_range_mask`): 255 where a pixel is within `fuzziness` of an included color (and not
+ *  nearer an excluded one), 0 elsewhere; colors are straight RGB triples. */
+export function colorRangeMask(img: ImageData, include: number[], exclude: number[], fuzziness: number, invert: boolean): Uint8Array {
+  return withHeap((heap, m) => {
+    const p = heap.alloc(img.data.length);
+    premultiplyInto(img.data, m.HEAPU8, p);
+    const inc = heap.bytes(Uint8Array.from(include.length ? include : [0])), exc = heap.bytes(Uint8Array.from(exclude.length ? exclude : [0]));
+    const mask = heap.alloc(img.width * img.height);
+    m._color_range_mask(p, img.width, img.height, img.width * 4, inc, include.length / 3, exc, exclude.length / 3, Math.round(fuzziness), invert ? 1 : 0, mask);
+    return kernels().HEAPU8.slice(mask, mask + img.width * img.height);
+  });
+}
 /** Outline loops of a mask's nonzero pixels, along pixel edges (marching ants). */
 export function traceMask(mask: Uint8Array, w: number, h: number): number[][] | null {
   return withHeap((heap, m) => {

@@ -177,6 +177,11 @@ export class App {
     d.activeId = g.id; d.selectedIds = [g.id];
     this.changed('layers');
   }
+  /** Layer › Move Out of Folder (moveActiveLayerOutOfGroup): just above its folder, in the folder's parent. */
+  moveOutOfFolder() {
+    const d = this.doc, a = this.active; if (!d || !a?.parentId) return;
+    this.edit('Move Out of Folder'); this.reorder(a.id, a.parentId, 'above');
+  }
   ungroup() {
     const d = this.doc, a = this.active; if (!d || !a?.isGroup) return;
     this.edit('Ungroup Layers');
@@ -472,6 +477,18 @@ export class App {
   selectAll() { const d = this.doc; if (!d) return; this.edit('Select All'); Sel.selectAll(d); this.emit('selection'); }
   deselect() { const d = this.doc; if (!d?.selection) return; this.edit('Deselect'); d.selection = null; d.selRev++; this.emit('selection'); }
   inverseSelection() { const d = this.doc; if (!d) return; this.edit('Inverse'); Sel.invertSelection(d); this.emit('selection'); }
+  /** Select › Mask's Black Areas (loadMaskSelection): the mask's pixels darker than 50% gray, where the mask sits. */
+  selectMaskBlack(l = this.active) {
+    const d = this.doc; if (!d || !l?.mask) return;
+    const m = l.mask, md = ctx2d(m).getImageData(0, 0, m.width, m.height);
+    let any = false;
+    for (let i = 0; i < md.data.length; i += 4) { const dark = md.data[i] < 128; any ||= dark; md.data[i] = md.data[i + 1] = md.data[i + 2] = 255; md.data[i + 3] = dark ? 255 : 0; }
+    if (!any) { toast('The mask has no black areas.'); return; }
+    const src = canvasOf(m.width, m.height); ctx2d(src).putImageData(md, 0, 0);
+    const c = canvasOf(d.width, d.height), x = ctx2d(c), t = pixelToDoc(maskTransformOf(l), m.width, m.height);
+    x.imageSmoothingEnabled = false; x.setTransform(t[0], t[1], t[2], t[3], t[4], t[5]); x.drawImage(src, 0, 0);
+    this.edit('Load Mask Selection'); d.selection = c; d.selRev++; this.emit('selection');
+  }
   selectLayerPixels() { const d = this.doc, a = this.active; if (!d || !a) return; this.edit("Select Layer's Pixels"); Sel.layerPixelsSelection(d, a); this.emit('selection'); }
   modifySelection(op: 'expand' | 'contract' | 'feather', amount: number) {
     const d = this.doc; if (!d?.selection) return;
@@ -620,13 +637,32 @@ export class App {
     d.width = w; d.height = h;
     this.fit(); this.changed('canvas');
   }
-  trim() {
+  /** Image › Trim… (ImageTrim.calculateTrimRect): cut away the edges that are transparent, or the color of the top
+   *  left or bottom right pixel, on the chosen sides. */
+  trim(o: { basedOn?: 'Transparent Pixels' | 'Top Left Pixel Color' | 'Bottom Right Pixel Color'; top?: boolean; bottom?: boolean; left?: boolean; right?: boolean; tolerance?: number } = {}) {
     const d = this.doc; if (!d) return;
-    const img = this.renderer.readComposite(d);
-    const [x0, y0, x1, y1] = alphaBounds(img);
-    if (x1 <= x0 || y1 <= y0) { toast('The canvas is empty.'); return; }
-    if (x0 === 0 && y0 === 0 && x1 === d.width && y1 === d.height) { toast('Nothing to trim.'); return; }
-    this.cropTo({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    const basedOn = o.basedOn ?? 'Transparent Pixels', sides = { top: o.top ?? true, bottom: o.bottom ?? true, left: o.left ?? true, right: o.right ?? true };
+    const img = this.renderer.readComposite(d), W = img.width, H = img.height, p = img.data;
+    let x0: number, y0: number, x1: number, y1: number;
+    if (basedOn === 'Transparent Pixels') [x0, y0, x1, y1] = alphaBounds(img);
+    else {
+      // Premultiplied, as the Mac app compares them.
+      const s = basedOn === 'Top Left Pixel Color' ? 0 : (W * H - 1) * 4, tol = o.tolerance ?? 0;
+      const pm = (i: number, c: number) => c === 3 ? p[i + 3] : Math.round(p[i + c] * p[i + 3] / 255);
+      const t = [0, 1, 2, 3].map(c => pm(s, c));
+      const match = (x: number, y: number) => { const i = (y * W + x) * 4; for (let c = 0; c < 4; c++) if (Math.abs(pm(i, c) - t[c]) > tol) return false; return true; };
+      x0 = W; x1 = 0; y0 = H; y1 = 0;
+      for (let y = 0; y < H; y++) {
+        let first = 0; while (first < W && match(first, y)) first++;
+        if (first === W) continue;
+        let last = W; while (last > first && match(last - 1, y)) last--;
+        x0 = Math.min(x0, first); x1 = Math.max(x1, last); y0 = Math.min(y0, y); y1 = y + 1;
+      }
+    }
+    if (x1 <= x0 || y1 <= y0) { toast('No content remained after trimming.'); return; }
+    const r = { x: sides.left ? x0 : 0, y: sides.top ? y0 : 0, x1: sides.right ? x1 : W, y1: sides.bottom ? y1 : H };
+    if (r.x === 0 && r.y === 0 && r.x1 === W && r.y1 === H) { toast('Nothing to trim.'); return; }
+    this.cropTo({ x: r.x, y: r.y, w: r.x1 - r.x, h: r.y1 - r.y });
   }
 
   // ---------- effects ----------

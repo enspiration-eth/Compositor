@@ -612,6 +612,34 @@ try {
     await page.click('.rail-btn[data-tool="move"]');
   });
 
+  await step("Select › Color Range… (wasm color_range_mask) and Mask's Black Areas", async () => {
+    const area = () => page.evaluate(() => { const s = window.compositor.app.doc.selection; if (!s) return 0; const d = s.getContext('2d').getImageData(0, 0, s.width, s.height).data; let n = 0; for (let i = 3; i < d.length; i += 16) n += d[i] > 127; return n; });
+    await menu('Select', 'Color Range…');
+    await page.waitForSelector('#color-range-panel');
+    const [x, y] = await toScreen(1400, 200); await page.mouse.click(x, y);
+    await page.waitForTimeout(150);
+    const a1 = await area();
+    assert(a1 > 0, 'live selection from the picked color');
+    const fz = page.locator('#color-range-panel .slider-row input[type=number]').first(); await fz.fill('120'); await fz.press('Enter');
+    await page.waitForTimeout(150);
+    const a2 = await area();
+    assert(a2 > a1, `more fuzziness selects more ${a1} -> ${a2}`);
+    await page.screenshot({ path: `${SHOTS}/17-color-range.png` });
+    await page.click('#color-range-ok');
+    assert(await page.evaluate(() => window.compositor.app.history.undoLabel === 'Color Range' && !window.compositor.app.canvasHook), 'Color Range kept as one step');
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Hills').id); });
+    await menu('Select', "Mask's Black Areas");
+    const a3 = await area();
+    assert(a3 > 0 && await page.evaluate(() => window.compositor.app.history.undoLabel === 'Load Mask Selection'), "mask's black areas " + a3);
+    await page.evaluate(() => window.compositor.app.deselect());
+    // Layer › Move Out of Folder.
+    const mo = await page.evaluate(() => { const { app } = window.compositor; const id = app.active.id; app.groupSelected(); const g = app.doc.activeId;
+      app.setActive(id); const inside = app.active.parentId === g; app.moveOutOfFolder(); const l = app.active, d = app.doc;
+      const r = { inside, out: l.parentId === null, above: d.layers.indexOf(l) === d.layers.findIndex(x => x.id === g) + 1, label: app.history.undoLabel };
+      app.undo(); app.undo(); return r; });
+    assert(mo.inside && mo.out && mo.above && mo.label === 'Move Out of Folder', 'move out of folder ' + JSON.stringify(mo));
+  });
+
   await step('export PNG + save .comp', async () => {
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportImage('png'))]);
     assert(/\.png$/.test(dl.suggestedFilename()), dl.suggestedFilename());
@@ -672,6 +700,18 @@ try {
     }
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportTiff())]);
     assert(/\.tif$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  });
+
+  await step('Image › Trim… (transparent pixels / corner color, chosen edges)', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.newCanvas(200, 100, 'Trim Test');
+      const c = app.active.canvas, x = c.getContext('2d'); x.fillStyle = '#ffffff'; x.fillRect(0, 0, 200, 100); x.fillStyle = '#ff0000'; x.fillRect(50, 20, 60, 30); app.active.rev++; app.needsRender = true; });
+    await menu('Image', 'Trim…');
+    await page.click('input[name=trim-based-on][value="Top Left Pixel Color"]');
+    await page.click('#trim-right');
+    await page.locator('.modal button', { hasText: 'OK' }).click();
+    const r = await page.evaluate(() => ({ w: window.compositor.app.doc.width, h: window.compositor.app.doc.height, label: window.compositor.app.history.undoLabel }));
+    assert(r.w === 150 && r.h === 30, 'trimmed by the corner color, right edge kept ' + JSON.stringify(r));
+    await page.evaluate(() => { const { app } = window.compositor; app.doc.dirty = false; app.closeProject(); });
   });
 
   assert(errors.length === 0, 'console errors:\n' + errors.join('\n'));
