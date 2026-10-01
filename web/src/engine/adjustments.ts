@@ -209,12 +209,55 @@ export const DITHER_STYLES = ['Atkinson (Classic Mac)', 'Floyd–Steinberg', 'Ba
 export const defaultDither = (): DitherSettings => ({ style: 0, pixelSize: 2, pixelShape: 'Square', cellSize: 8, textSize: 14, lineSpacing: 4, glow: 35, dots: 0,
   wobble: 0, angle: 45, levels: 2, diffusion: 100, density: 0, contrast: 0, colors: 'Black & White', dark: { red: 0, green: 0, blue: 0 },
   light: { red: 1, green: 1, blue: 1 }, lightOnDark: true, characters: ' .:-=+*#%@' });
+export interface CRPoint { x: number; y: number }
+export interface CRCurve { shadows: number; darks: number; lights: number; highlights: number; shadowSplit: number; darkSplit: number; lightSplit: number;
+  rgb: CRPoint[]; red: CRPoint[]; green: CRPoint[]; blue: CRPoint[]; refineSaturation: number }
+export interface CRWheel { hue: number; saturation: number; luminance: number }
+export interface CRGrading { shadows: CRWheel; midtones: CRWheel; highlights: CRWheel; global: CRWheel; blending: number; balance: number }
+export interface CRDetail { sharpenAmount: number; sharpenRadius: number; sharpenDetail: number; sharpenMasking: number; noiseLuminance: number;
+  noiseLuminanceDetail: number; noiseLuminanceContrast: number; noiseColor: number; noiseColorDetail: number; noiseColorSmoothness: number }
+export interface CROptics { removeChromaticAberration: boolean; enableLensProfile: boolean; profileDistortion: number; profileVignetting: number; distortion: number;
+  purpleAmount: number; purpleHueLow: number; purpleHueHigh: number; greenAmount: number; greenHueLow: number; greenHueHigh: number; vignetteAmount: number; vignetteMidpoint: number }
+export interface CRCalibration { process: number; shadowTint: number; redHue: number; redSaturation: number; greenHue: number; greenSaturation: number; blueHue: number; blueSaturation: number }
 export interface CameraRawSettings { temperature: number; tint: number; exposure: number; contrast: number; highlights: number; shadows: number; whites: number;
   blacks: number; vibrance: number; saturation: number; texture: number; clarity: number; dehaze: number; vignetteAmount: number; vignetteMidpoint: number;
-  vignetteRoundness: number; vignetteFeather: number; vignetteHighlights: number; grainAmount: number; grainSize: number; grainRoughness: number }
+  vignetteRoundness: number; vignetteFeather: number; vignetteHighlights: number; vignetteStyle: number; grainAmount: number; grainSize: number; grainRoughness: number;
+  glow: number; glowStyle: number; glowRange: number; glowSpread: number; glowWarmth: number;
+  curve: CRCurve; mixer: { hue: number[]; saturation: number[]; luminance: number[] }; grading: CRGrading; detail: CRDetail; optics: CROptics; calibration: CRCalibration }
+const linearCR = (): CRPoint[] => [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+const wheel = (): CRWheel => ({ hue: 0, saturation: 0, luminance: 0 });
+export const CR_MIXER_NAMES = ['Reds', 'Oranges', 'Yellows', 'Greens', 'Aquas', 'Blues', 'Purples', 'Magentas'];
 export const defaultCameraRaw = (): CameraRawSettings => ({ temperature: 0, tint: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0,
   vibrance: 0, saturation: 0, texture: 0, clarity: 0, dehaze: 0, vignetteAmount: 0, vignetteMidpoint: 50, vignetteRoundness: 0, vignetteFeather: 50,
-  vignetteHighlights: 0, grainAmount: 0, grainSize: 25, grainRoughness: 50 });
+  vignetteHighlights: 0, vignetteStyle: 0, grainAmount: 0, grainSize: 25, grainRoughness: 50, glow: 0, glowStyle: 0, glowRange: 0, glowSpread: 0, glowWarmth: 0,
+  curve: { shadows: 0, darks: 0, lights: 0, highlights: 0, shadowSplit: 25, darkSplit: 50, lightSplit: 75, rgb: linearCR(), red: linearCR(), green: linearCR(), blue: linearCR(), refineSaturation: 0 },
+  mixer: { hue: Array(8).fill(0), saturation: Array(8).fill(0), luminance: Array(8).fill(0) },
+  grading: { shadows: wheel(), midtones: wheel(), highlights: wheel(), global: wheel(), blending: 50, balance: 0 },
+  detail: { sharpenAmount: 0, sharpenRadius: 10, sharpenDetail: 25, sharpenMasking: 0, noiseLuminance: 0, noiseLuminanceDetail: 50, noiseLuminanceContrast: 0,
+    noiseColor: 0, noiseColorDetail: 50, noiseColorSmoothness: 50 },
+  optics: { removeChromaticAberration: false, enableLensProfile: false, profileDistortion: 100, profileVignetting: 100, distortion: 0, purpleAmount: 0,
+    purpleHueLow: 270, purpleHueHigh: 310, greenAmount: 0, greenHueLow: 60, greenHueHigh: 120, vignetteAmount: 0, vignetteMidpoint: 50 },
+  calibration: { process: 6, shadowTint: 0, redHue: 0, redSaturation: 0, greenHue: 0, greenSaturation: 0, blueHue: 0, blueSaturation: 0 } });
+
+// CameraRawCurveSettings (CameraRawColor.swift): the parametric curve fitted to Photoshop's, then the point curves.
+const isLinearCR = (p: CRPoint[]) => p.length === 2 && p[0].x === 0 && p[0].y === 0 && p[1].x === 1 && p[1].y === 1;
+function crPoint(x: number, pts: CRPoint[]) { return pts.length < 2 ? x : curveValue(pts.map(q => ({ x: q.x * 255, y: q.y * 255 })), x * 255) / 255; }
+function crBend(tone: number, lower: number, low: number, upper: number, high: number) {
+  const strength = 1.66;
+  if (tone < lower && lower > 0) return lower * Math.pow(tone / lower, Math.pow(2, -low / 100 * strength));
+  if (tone > upper && upper < 1) { const rest = 1 - upper; return 1 - rest * Math.pow((1 - tone) / rest, Math.pow(2, high / 100 * strength)); }
+  return tone;
+}
+function crParametric(c: CRCurve, tone: number) {
+  if (!c.shadows && !c.darks && !c.lights && !c.highlights) return tone;
+  const anchors: CRPoint[] = [];
+  for (let i = 0; i <= 32; i++) {
+    const x = i / 32;
+    anchors.push({ x, y: crBend(crBend(x, c.shadowSplit / 100, c.shadows, c.lightSplit / 100, c.highlights), c.darkSplit / 100, c.darks, c.darkSplit / 100, c.lights) });
+  }
+  return crPoint(tone, anchors);
+}
+const crAdjustsCurve = (c: CRCurve) => !!(c.shadows || c.darks || c.lights || c.highlights || c.refineSaturation) || !isLinearCR(c.rgb) || !isLinearCR(c.red) || !isLinearCR(c.green) || !isLinearCR(c.blue);
 
 export interface FilterSettings {
   radius: number; angle: number; distance: number; amount: number; gaussian: boolean; monochromatic: boolean;
@@ -405,12 +448,32 @@ export function applyFilter(kind: FilterKind, s: FilterSettings, img: ImageData,
     case 'Lens Correction': K.lensDistort(img, s.distortion / 100 * LENS_STRENGTH); return img;
     case 'Dither': return applyDither(img, s.dither);
     case 'Camera Raw Filter': {
-      const cr = s.cameraRaw, warm = cr.temperature / 100, mag = cr.tint / 100;
-      K.cameraRaw(img, { gains: [1 + 0.35 * warm + 0.15 * mag, 1 - 0.30 * mag, 1 - 0.35 * warm + 0.15 * mag], exposure: cr.exposure, contrast: cr.contrast,
-        highlights: cr.highlights, shadows: cr.shadows, whites: cr.whites, blacks: cr.blacks, vibrance: cr.vibrance, saturation: cr.saturation });
-      if (cr.texture || cr.clarity || cr.dehaze || cr.vignetteAmount)
-        K.cameraRawEffects(img, cr, ctx.scale);
+      // CameraRawSettings.apply: calibration, the basic grade, Curve + Color Mixer + Color Grading, effects and grain,
+      // then optics and detail, each the Mac app's own C kernel.
+      const cr = { ...defaultCameraRaw(), ...s.cameraRaw }, warm = cr.temperature / 100, mag = cr.tint / 100;
+      const cal = cr.calibration;
+      if (cal.shadowTint || cal.redHue || cal.redSaturation || cal.greenHue || cal.greenSaturation || cal.blueHue || cal.blueSaturation) K.cameraRawCalibration(img, cal);
+      if (cr.temperature || cr.tint || cr.exposure || cr.contrast || cr.highlights || cr.shadows || cr.whites || cr.blacks || cr.vibrance || cr.saturation)
+        K.cameraRaw(img, { gains: [1 + 0.35 * warm + 0.15 * mag, 1 - 0.30 * mag, 1 - 0.35 * warm + 0.15 * mag], exposure: cr.exposure, contrast: cr.contrast,
+          highlights: cr.highlights, shadows: cr.shadows, whites: cr.whites, blacks: cr.blacks, vibrance: cr.vibrance, saturation: cr.saturation });
+      const g = cr.grading, wheels = [g.shadows, g.midtones, g.highlights, g.global];
+      const adjustsMixer = [...cr.mixer.hue, ...cr.mixer.saturation, ...cr.mixer.luminance].some(v => v !== 0);
+      const adjustsGrading = wheels.some(w => w.saturation !== 0 || w.luminance !== 0);
+      if (crAdjustsCurve(cr.curve) || adjustsMixer || adjustsGrading) {
+        const c = cr.curve, table = (f: (x: number) => number) => Array.from({ length: 256 }, (_, i) => f(i / 255));
+        K.cameraRawCurveColor(img, { tone: table(x => crPoint(crParametric(c, x), c.rgb)), red: table(x => crPoint(x, c.red)), green: table(x => crPoint(x, c.green)),
+          blue: table(x => crPoint(x, c.blue)), refineSaturation: c.refineSaturation / 100, mixer: [...cr.mixer.hue, ...cr.mixer.saturation, ...cr.mixer.luminance].map(v => v / 100),
+          points: [], pointCount: 0, grade: wheels.flatMap(w => [w.hue / 360, w.saturation / 100, w.luminance / 100]), blending: g.blending / 100, balance: g.balance / 100 });
+      }
+      if (cr.texture || cr.clarity || cr.dehaze || cr.glow || cr.vignetteAmount) K.cameraRawEffectsFull(img, cr, ctx.scale);
       if (cr.grainAmount > 0) K.grain(img, cr.grainAmount, 0.5 + (cr.grainSize / 100) * 19.5, cr.grainRoughness, ctx.seed, 0, 0, 1 / ctx.scale);
+      const o = cr.optics;
+      if (o.removeChromaticAberration || o.enableLensProfile || o.distortion || o.purpleAmount || o.greenAmount || o.vignetteAmount) {
+        const distortionK = o.distortion / 100 * LENS_STRENGTH + (o.enableLensProfile ? o.profileDistortion / 100 * LENS_STRENGTH : 0);
+        K.cameraRawOptics(img, { ...o, purpleHueLow: Math.min(o.purpleHueLow, o.purpleHueHigh), purpleHueHigh: Math.max(o.purpleHueLow, o.purpleHueHigh),
+          greenHueLow: Math.min(o.greenHueLow, o.greenHueHigh), greenHueHigh: Math.max(o.greenHueLow, o.greenHueHigh), distortionK }, ctx.scale);
+      }
+      if (cr.detail.sharpenAmount || cr.detail.noiseLuminance || cr.detail.noiseColor) K.cameraRawDetail(img, cr.detail, ctx.scale);
       return img;
     }
     case 'Content-Aware Fill': case 'Remove Background': return img;

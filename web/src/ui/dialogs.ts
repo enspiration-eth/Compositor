@@ -4,7 +4,7 @@ import { app } from './app';
 import { h, slider, select, checkbox, colorWell, button, floatingPanel, modal, toast, type Panel } from './dom';
 import {
   type FilterKind, type FilterSettings, defaultFilterSettings, applyFilter, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
-  curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName,
+  curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas } from '../engine/document';
@@ -13,6 +13,7 @@ import { view, setView, addGuide } from './guides';
 import { subjectMatte, matteToMask, defaultMatte, type MatteSettings } from '../engine/segment';
 
 let openPanel: { panel: Panel; cancel: () => void } | null = null;
+const crOpen = new Set<string>(['Basic']);
 export function closeOpenPanel() { if (openPanel) { openPanel.cancel(); openPanel.panel.close(); openPanel = null; } }
 export function hasOpenPanel() { return !!openPanel; }
 let lastSettings = defaultFilterSettings();
@@ -69,17 +70,84 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
       break;
     }
     case 'Camera Raw Filter': {
-      const cr = s.cameraRaw;
-      const group = (title: string) => box.append(h('div', { class: 'group-title' }, title));
-      const c = (label: string, key: keyof typeof cr, min: number, max: number, step = 1) => sl(label, () => cr[key] as number, v => { (cr[key] as number) = v; }, min, max, step);
-      group('White Balance'); c('Temperature', 'temperature', -100, 100); c('Tint', 'tint', -100, 100);
-      group('Light'); c('Exposure', 'exposure', -5, 5, 0.05); c('Contrast', 'contrast', -100, 100); c('Highlights', 'highlights', -100, 100);
-      c('Shadows', 'shadows', -100, 100); c('Whites', 'whites', -100, 100); c('Blacks', 'blacks', -100, 100);
-      group('Presence'); c('Texture', 'texture', -100, 100); c('Clarity', 'clarity', -100, 100); c('Dehaze', 'dehaze', -100, 100);
-      c('Vibrance', 'vibrance', -100, 100); c('Saturation', 'saturation', -100, 100);
-      group('Vignette'); c('Amount', 'vignetteAmount', -100, 100); c('Midpoint', 'vignetteMidpoint', 0, 100); c('Roundness', 'vignetteRoundness', -100, 100);
-      c('Feather', 'vignetteFeather', 0, 100); c('Highlights', 'vignetteHighlights', 0, 100);
-      group('Grain'); c('Amount', 'grainAmount', 0, 100); c('Size', 'grainSize', 0, 100); c('Roughness', 'grainRoughness', 0, 100);
+      // Camera Raw's panel sections (CameraRawPanel.swift): Basic, Curve, Color Mixer, Color Grading, Detail, Optics,
+      // Effects and Calibration, each driving the Mac app's C kernels.
+      const cr = s.cameraRaw = { ...defaultCameraRaw(), ...s.cameraRaw };
+      const section = (title: string, build: (add: (el: HTMLElement) => void) => void) => {
+        const d = h('details', { class: 'cr-section' }) as HTMLDetailsElement;
+        d.open = crOpen.has(title);
+        d.addEventListener('toggle', () => { if (d.open) crOpen.add(title); else crOpen.delete(title); });
+        d.append(h('summary', {}, title));
+        const inner = h('div', { class: 'controls' }); build(el => inner.append(el)); d.append(inner); box.append(d);
+      };
+      const S = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step = 1, unit = '') =>
+        slider({ label, min, max, step, unit, value: get(), onInput: v => { set(v); changed(); } });
+      const sub = (t: string) => h('div', { class: 'group-title' }, t);
+      const k = <T extends object>(o: T, key: keyof T, label: string, min: number, max: number, step = 1, unit = '') =>
+        S(label, () => o[key] as unknown as number, v => { (o[key] as unknown as number) = v; }, min, max, step, unit);
+      section('Basic', add => {
+        add(sub('White Balance')); add(k(cr, 'temperature', 'Temperature', -100, 100)); add(k(cr, 'tint', 'Tint', -100, 100));
+        add(sub('Light')); add(k(cr, 'exposure', 'Exposure', -5, 5, 0.05)); add(k(cr, 'contrast', 'Contrast', -100, 100)); add(k(cr, 'highlights', 'Highlights', -100, 100));
+        add(k(cr, 'shadows', 'Shadows', -100, 100)); add(k(cr, 'whites', 'Whites', -100, 100)); add(k(cr, 'blacks', 'Blacks', -100, 100));
+        add(sub('Presence')); add(k(cr, 'texture', 'Texture', -100, 100)); add(k(cr, 'clarity', 'Clarity', -100, 100)); add(k(cr, 'dehaze', 'Dehaze', -100, 100));
+        add(k(cr, 'vibrance', 'Vibrance', -100, 100)); add(k(cr, 'saturation', 'Saturation', -100, 100));
+      });
+      section('Curve', add => {
+        const c = cr.curve;
+        add(sub('Parametric')); add(k(c, 'highlights', 'Highlights', -100, 100)); add(k(c, 'lights', 'Lights', -100, 100)); add(k(c, 'darks', 'Darks', -100, 100)); add(k(c, 'shadows', 'Shadows', -100, 100));
+        add(k(c, 'shadowSplit', 'Shadow split', 5, 90)); add(k(c, 'darkSplit', 'Midtone split', 7, 95)); add(k(c, 'lightSplit', 'Light split', 9, 98));
+        add(sub('Point curve'));
+        const presets: Record<string, CRPoint[]> = { Linear: [{ x: 0, y: 0 }, { x: 1, y: 1 }], 'Medium Contrast': [{ x: 0, y: 0 }, { x: 0.25, y: 0.18 }, { x: 0.75, y: 0.82 }, { x: 1, y: 1 }],
+          'Strong Contrast': [{ x: 0, y: 0 }, { x: 0.25, y: 0.10 }, { x: 0.75, y: 0.90 }, { x: 1, y: 1 }] };
+        add(h('div', { class: 'row' }, select(Object.keys(presets), 'Linear', v => { c.rgb = presets[v].map(q => ({ ...q })); changed(); })));
+        add(k(c, 'refineSaturation', 'Refine saturation', -100, 100));
+      });
+      section('Color Mixer', add => {
+        const m = cr.mixer;
+        for (const [tab, arr] of [['Hue', m.hue], ['Saturation', m.saturation], ['Luminance', m.luminance]] as const) {
+          add(sub(tab)); CR_MIXER_NAMES.forEach((n, i) => add(S(n, () => arr[i], v => { arr[i] = v; }, -100, 100)));
+        }
+      });
+      section('Color Grading', add => {
+        const g = cr.grading;
+        for (const [name, w] of [['Shadows', g.shadows], ['Midtones', g.midtones], ['Highlights', g.highlights], ['Global', g.global]] as const) {
+          add(sub(name)); add(k(w, 'hue', 'Hue', 0, 360, 1, '°')); add(k(w, 'saturation', 'Saturation', 0, 100)); add(k(w, 'luminance', 'Luminance', -100, 100));
+        }
+        add(sub('Wheels')); add(k(g, 'blending', 'Blending', 0, 100)); add(k(g, 'balance', 'Balance', -100, 100));
+      });
+      section('Detail', add => {
+        const d = cr.detail;
+        add(sub('Sharpening')); add(k(d, 'sharpenAmount', 'Amount', 0, 150)); add(k(d, 'sharpenRadius', 'Radius', 0, 100)); add(k(d, 'sharpenDetail', 'Detail', 0, 100)); add(k(d, 'sharpenMasking', 'Masking', 0, 100));
+        add(sub('Noise Reduction')); add(k(d, 'noiseLuminance', 'Luminance', 0, 100)); add(k(d, 'noiseLuminanceDetail', 'Detail', 0, 100)); add(k(d, 'noiseLuminanceContrast', 'Contrast', 0, 100));
+        add(k(d, 'noiseColor', 'Color', 0, 100)); add(k(d, 'noiseColorDetail', 'Color detail', 0, 100)); add(k(d, 'noiseColorSmoothness', 'Smoothness', 0, 100));
+      });
+      section('Optics', add => {
+        const o = cr.optics;
+        add(h('div', { class: 'row' }, checkbox('Remove Chromatic Aberration', o.removeChromaticAberration, v => { o.removeChromaticAberration = v; changed(); })));
+        add(h('div', { class: 'row' }, checkbox('Use Profile Corrections', o.enableLensProfile, v => { o.enableLensProfile = v; changed(); })));
+        add(k(o, 'profileDistortion', 'Profile distortion', 0, 100)); add(k(o, 'profileVignetting', 'Profile vignetting', 0, 100));
+        add(k(o, 'distortion', 'Distortion', -100, 100));
+        add(sub('Defringe')); add(k(o, 'purpleAmount', 'Purple amount', 0, 100)); add(k(o, 'purpleHueLow', 'Purple hue from', 0, 360, 1, '°')); add(k(o, 'purpleHueHigh', 'Purple hue to', 0, 360, 1, '°'));
+        add(k(o, 'greenAmount', 'Green amount', 0, 100)); add(k(o, 'greenHueLow', 'Green hue from', 0, 360, 1, '°')); add(k(o, 'greenHueHigh', 'Green hue to', 0, 360, 1, '°'));
+        add(sub('Vignette')); add(k(o, 'vignetteAmount', 'Amount', -100, 100)); add(k(o, 'vignetteMidpoint', 'Midpoint', 0, 100));
+      });
+      section('Effects', add => {
+        add(sub('Glow')); add(h('div', { class: 'row' }, select(['Diffusion', 'Bloom', 'Halation'], ['Diffusion', 'Bloom', 'Halation'][cr.glowStyle] ?? 'Diffusion', v => { cr.glowStyle = ['Diffusion', 'Bloom', 'Halation'].indexOf(v); changed(); })));
+        add(k(cr, 'glow', 'Amount', 0, 100)); add(k(cr, 'glowRange', 'Range', -100, 100)); add(k(cr, 'glowSpread', 'Spread', -100, 100)); add(k(cr, 'glowWarmth', 'Warmth', -100, 100));
+        add(sub('Post-Crop Vignetting')); add(h('div', { class: 'row' }, select(['Highlight Priority', 'Color Priority', 'Paint Overlay'], ['Highlight Priority', 'Color Priority', 'Paint Overlay'][cr.vignetteStyle] ?? 'Highlight Priority', v => { cr.vignetteStyle = ['Highlight Priority', 'Color Priority', 'Paint Overlay'].indexOf(v); changed(); })));
+        add(k(cr, 'vignetteAmount', 'Amount', -100, 100)); add(k(cr, 'vignetteMidpoint', 'Midpoint', 0, 100)); add(k(cr, 'vignetteRoundness', 'Roundness', -100, 100));
+        add(k(cr, 'vignetteFeather', 'Feather', 0, 100)); add(k(cr, 'vignetteHighlights', 'Highlights', 0, 100));
+        add(sub('Grain')); add(k(cr, 'grainAmount', 'Amount', 0, 100)); add(k(cr, 'grainSize', 'Size', 0, 100)); add(k(cr, 'grainRoughness', 'Roughness', 0, 100));
+      });
+      section('Calibration', add => {
+        const c = cr.calibration;
+        add(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Process'), select(['Version 1', 'Version 2', 'Version 3', 'Version 4', 'Version 5', 'Version 6'], `Version ${c.process}`, v => { c.process = +v.slice(-1); changed(); })));
+        add(k(c, 'shadowTint', 'Shadows tint', -100, 100));
+        add(sub('Red Primary')); add(k(c, 'redHue', 'Hue', -100, 100)); add(k(c, 'redSaturation', 'Saturation', -100, 100));
+        add(sub('Green Primary')); add(k(c, 'greenHue', 'Hue', -100, 100)); add(k(c, 'greenSaturation', 'Saturation', -100, 100));
+        add(sub('Blue Primary')); add(k(c, 'blueHue', 'Hue', -100, 100)); add(k(c, 'blueSaturation', 'Saturation', -100, 100));
+      });
+      box.append(h('div', { class: 'row' }, button('Reset All', () => { s.cameraRaw = defaultCameraRaw(); changed(); rebuild(); })));
       break;
     }
     case 'Remove Background':

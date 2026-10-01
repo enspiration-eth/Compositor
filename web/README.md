@@ -85,7 +85,8 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Image adjustments, destructive or as adjustment layers:** Levels (histogram from wasm), Curves, Hue/Saturation, Exposure,
   Gradient Map, Black & White, Color Balance, Grain, Invert
 - **Filters:** Gaussian Blur, Motion Blur, Add Noise, Vignette, Bloom/Glow, Dither, Tonal Contrast, Lens Correction,
-  Camera Raw (basic, presence, color and effects sections), Remove Background (Basic/Advanced with Refine Edges,
+  Camera Raw with all of the Mac panel's processing sections (Basic, Curve, Color Mixer, Color Grading, Detail, Optics, Effects with Glow, Calibration), each
+  running the Mac app's C kernel, Remove Background (Basic/Advanced with Refine Edges,
   Contrast, Shift Edge; adds a layer mask)
 - **Rulers, guides and grid:** rulers you drag guides out of (⌘R); guides saved in the project's manifest, moved
   or deleted with the Move tool, locked or cleared, or added by position; a layout grid with Grid Settings (⌘'); Snap
@@ -101,8 +102,9 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   Object Selection takes the connected part of the subject mask under the click, with closer looks around the
   click as a fallback, and diffuse things such as glows aren't detected. The first use downloads about 4.5 MB of
   model plus a 14 MB runtime (about 3.5 MB gzipped).
-- **Camera Raw:** only the sliders the shared C kernel implements in one pass. Curves, mixer, grading, detail and optics
-  are absent.
+- **Camera Raw:** the processing is complete, but the panel is simplified. The point curve is chosen from presets (no
+  draggable editor), there's no Point Color picker, no Geometry (Upright/perspective) section, no targeted
+  adjustment tool and no clipping overlays.
 - **RAW / HEIC / TIFF import:** these need ImageIO. The browser can only decode what its own image decoders support.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
 - **Unlinked masks, perspective/free distort:** not ported yet.

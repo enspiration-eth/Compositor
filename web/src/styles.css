@@ -176,3 +176,11 @@ kbd { font-family: inherit; color: var(--text2); }
 .ruler-corner { position: absolute; left: 0; top: 0; width: 18px; height: 18px; background: #262626; border-right: 1px solid #1a1a1a; border-bottom: 1px solid #1a1a1a; z-index: 2; }
 .modal .lbl { min-width: 110px; }
 body.busy, body.busy * { cursor: progress !important; }
+.cr-section { border-top: 1px solid #3a3a3a; padding: 6px 0; }
+.cr-section > summary { cursor: default; font-weight: 600; padding: 4px 0; list-style: none; display: flex; align-items: center; gap: 6px; }
+.cr-section > summary::before { content: '▸'; color: var(--text2); font-size: 10px; transition: transform .1s; }
+.cr-section[open] > summary::before { transform: rotate(90deg); }
+.cr-section > .controls { padding: 4px 0 6px; }
+.floating-panel { max-height: calc(100vh - 150px); }
+.tool-header .slider-label { flex: none; margin-right: 4px; }
+.tool-header .slider-row { flex: none; }

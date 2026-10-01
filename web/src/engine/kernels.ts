@@ -266,3 +266,34 @@ export class WarpSession {
   }
   dispose() { if (this.ptr) { kernels()._free(this.ptr); this.ptr = 0; } }
 }
+
+// ---- Camera Raw's later stages (CameraRawColor.swift, CameraRawDetailOptics.swift, CameraRawGeometryCalibration.swift) ----
+export function cameraRawCurveColor(img: ImageData, a: { tone: number[]; red: number[]; green: number[]; blue: number[]; refineSaturation: number;
+  mixer: number[]; points: number[]; pointCount: number; grade: number[]; blending: number; balance: number }) {
+  onPremultiplied(img, (p, w, h, s, heap, m) => m._adjust_camera_raw_curve_color(p, w, h, s, heap.floats(a.tone), heap.floats(a.red), heap.floats(a.green),
+    heap.floats(a.blue), a.refineSaturation, heap.floats(a.mixer), a.pointCount, heap.floats(a.points.length ? a.points : [0]), heap.floats(a.grade),
+    a.blending, a.balance, -1));
+}
+export function cameraRawEffectsFull(img: ImageData, e: { texture: number; clarity: number; dehaze: number; glow: number; glowStyle: number; glowRange: number;
+  glowSpread: number; glowWarmth: number; vignetteAmount: number; vignetteMidpoint: number; vignetteRoundness: number; vignetteFeather: number;
+  vignetteHighlights: number; vignetteStyle: number }, scale = 1) {
+  onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_effects(p, w, h, s, e.texture, e.clarity, e.dehaze, e.glow, e.glowStyle, e.glowRange,
+    e.glowSpread, e.glowWarmth, e.vignetteAmount, e.vignetteMidpoint, e.vignetteRoundness, e.vignetteFeather, e.vignetteHighlights, e.vignetteStyle, scale));
+}
+export function cameraRawDetail(img: ImageData, d: { sharpenAmount: number; sharpenRadius: number; sharpenDetail: number; sharpenMasking: number;
+  noiseLuminance: number; noiseLuminanceDetail: number; noiseLuminanceContrast: number; noiseColor: number; noiseColorDetail: number; noiseColorSmoothness: number }, scale = 1) {
+  onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_detail(p, w, h, s, d.sharpenAmount, d.sharpenRadius, d.sharpenDetail, d.sharpenMasking,
+    d.noiseLuminance, d.noiseLuminanceDetail, d.noiseLuminanceContrast, d.noiseColor, d.noiseColorDetail, d.noiseColorSmoothness, scale));
+}
+export function cameraRawOptics(img: ImageData, o: { removeChromaticAberration: boolean; enableLensProfile: boolean; profileDistortion: number;
+  profileVignetting: number; distortionK: number; purpleAmount: number; purpleHueLow: number; purpleHueHigh: number; greenAmount: number;
+  greenHueLow: number; greenHueHigh: number; vignetteAmount: number; vignetteMidpoint: number }, scale = 1) {
+  onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_optics(p, w, h, s, o.removeChromaticAberration ? 1 : 0, o.enableLensProfile ? 1 : 0,
+    o.profileDistortion, o.profileVignetting, o.distortionK, o.purpleAmount, o.purpleHueLow, o.purpleHueHigh, o.greenAmount, o.greenHueLow, o.greenHueHigh,
+    o.vignetteAmount, o.vignetteMidpoint, scale));
+}
+export function cameraRawCalibration(img: ImageData, c: { shadowTint: number; redHue: number; redSaturation: number; greenHue: number; greenSaturation: number;
+  blueHue: number; blueSaturation: number; process: number }) {
+  onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_calibration(p, w, h, s, c.shadowTint, c.redHue, c.redSaturation, c.greenHue,
+    c.greenSaturation, c.blueHue, c.blueSaturation, c.process));
+}

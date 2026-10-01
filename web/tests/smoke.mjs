@@ -93,6 +93,23 @@ try {
     assert(before.join() !== after.join(), `hue changed ${before} -> ${after}`);
   });
 
+  await step('Camera Raw: Color Grading + Detail + Calibration (wasm)', async () => {
+    const before = await pixel(100, 100);
+    await menu('Filter', 'Camera Raw Filter');
+    await page.waitForSelector('#filter-panel');
+    const sec = name => page.locator(`#filter-panel .cr-section:has(summary:text-is("${name}"))`);
+    await sec('Color Grading').locator('summary').click();
+    const setRow = async (section, i, v) => { const n = sec(section).locator('.slider-row').nth(i).locator('input[type=number]'); await n.fill(String(v)); await n.press('Enter'); };
+    await setRow('Color Grading', 0, 200); await setRow('Color Grading', 1, 80);   // shadows hue / saturation
+    await sec('Detail').locator('summary').click(); await setRow('Detail', 0, 120); // sharpen amount
+    await sec('Calibration').locator('summary').click(); await setRow('Calibration', 5, -60); // blue saturation
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `${SHOTS}/02b-camera-raw.png` });
+    await page.click('#filter-ok');
+    const after = await pixel(100, 100);
+    assert(before.join() !== after.join(), `camera raw changed ${before} -> ${after}`);
+  });
+
   await step('Gaussian Blur filter', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers[2].id); });
     await menu('Filter', 'Gaussian Blur');
