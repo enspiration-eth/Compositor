@@ -223,6 +223,42 @@ try {
     await page.evaluate(() => { const { app } = window.compositor; app.active.visible = false; app.changed('layers'); });
   });
 
+  await step('Hue/Saturation eyedroppers (Sample / Add / Remove) and targeted drag', async () => {
+    await page.evaluate(() => window.compositor.app.addAdjustmentLayer('Hue/Saturation'));
+    await page.dblclick('.layer-row.active .layer-name');
+    await page.waitForSelector('#filter-panel #hs-range');
+    await page.selectOption('#hs-range', 'Blues');
+    const hsv = () => page.evaluate(() => window.compositor.app.active.adjustment.hsvSettings);
+    const sky = await pixel(800, 60);
+    await page.click('#hs-sample');
+    { const [x, y] = await toScreen(800, 60); await page.mouse.click(x, y); }
+    const a = await hsv();
+    const b = a.bands.Blues, mid = ((b[1] + ((b[2] - b[1] + 360) % 360) / 2) % 360);
+    // The sky's own hue (from the composite below the adjustment).
+    const max = Math.max(...sky.slice(0, 3)), min = Math.min(...sky.slice(0, 3)), d = max - min;
+    let hue = max === sky[0] ? (sky[1] - sky[2]) / d : max === sky[1] ? 2 + (sky[2] - sky[0]) / d : 4 + (sky[0] - sky[1]) / d; hue = (hue * 60 + 360) % 360;
+    assert(Math.abs(mid - hue) < 3, `Sample centered Blues on ${hue.toFixed(1)}: ${b}`);
+    await page.click('#hs-remove');
+    { const [x, y] = await toScreen(800, 60); await page.mouse.click(x, y); }
+    const r = (await hsv()).bands.Blues;
+    assert(JSON.stringify(r) !== JSON.stringify(b), 'Remove narrowed the band ' + r);
+    await page.click('#hs-add');
+    { const [x, y] = await toScreen(800, 60); await page.mouse.click(x, y); }
+    const ad = (await hsv()).bands.Blues;
+    assert(JSON.stringify(ad) !== JSON.stringify(r), 'Add widened it again ' + ad);
+    // Targeted: drag right on the sky raises the saturation of the range that owns its color.
+    await page.click('#hs-target');
+    { const [x, y] = await toScreen(800, 60); await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 60, y, { steps: 5 }); await page.mouse.up(); }
+    const t = await hsv();
+    const owner = Object.entries(t.adjustments).find(([, v]) => v.saturation > 20);
+    assert(owner && t.range === owner[0], 'targeted saturation ' + JSON.stringify(t.adjustments) + ' range ' + t.range);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/13-hue-sat-eyedroppers.png` });
+    await page.click('#filter-panel button:has-text("Cancel")');
+    assert(await page.evaluate(() => !window.compositor.app.canvasHook), 'eyedropper released');
+    await page.evaluate(() => { const { app } = window.compositor; app.deleteLayers(); });
+  });
+
   await step('adjustment layers recompute in the workers while the canvas keeps the last result', async () => {
     const r = await page.evaluate(async () => {
       const { app } = window.compositor;

@@ -191,3 +191,6 @@ body.busy, body.busy * { cursor: progress !important; }
 .pc-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #555; padding: 0; cursor: pointer; }
 .pc-swatch.sel { border-color: #fff; box-shadow: 0 0 0 1px #4c8dff; }
 .hue-spectrum { display: block; margin: 4px 0; }
+.hs-samplers { gap: 4px; flex-wrap: wrap; }
+.hs-samplers .btn.small { padding: 2px 7px; font-size: 11px; }
+.btn.on { background: #2f6fde; border-color: #4c8dff; color: #fff; }

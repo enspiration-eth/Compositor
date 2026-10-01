@@ -5,7 +5,7 @@ import { h, slider, select, checkbox, colorWell, button, floatingPanel, modal, t
 import {
   type FilterKind, type FilterSettings, defaultFilterSettings, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
   curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
-  rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry,
+  rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry, bandCentered, bandInclude, bandExclude, sampledHue,
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
@@ -218,7 +218,8 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         spec.draw();
       };
       const spec = hueSpectrum(hs, () => { changed(); });
-      if (!hs.colorize) box.append(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Range'), select(COLOR_RANGES, hs.range, v => { hs.range = v as ColorRangeName; draw(); }, { id: 'hs-range' })));
+      if (!hs.colorize) box.append(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Range'), select(COLOR_RANGES, hs.range, v => { hs.range = v as ColorRangeName; draw(); rebuild(); }, { id: 'hs-range' })),
+        hueSamplers(hs, () => { changed(); spec.draw(); }, () => { rebuild(); }));
       box.append(inner, checkbox('Colorize', hs.colorize, v => {
         hs.colorize = v; if (v) { hs.range = 'Master'; hs.adjustments = { Master: { hue: 0, saturation: 25, lightness: 0 } }; } else hs.adjustments = {};
         changed(); rebuild();
@@ -391,6 +392,74 @@ function crGeometry(cr: NonNullable<FilterSettings['cameraRaw']>, changed: () =>
   };
   draw();
   return box;
+}
+
+/** What Hue/Saturation's eyedroppers read: the filtered layer's own pixels, or (editing an adjustment layer) the
+ *  composite below it. */
+let hsSampleBelow: ImageData | null = null;
+function hueAt(dpt: [number, number]): number | null {
+  let px: Uint8ClampedArray;
+  if (crCtx) {
+    const uv = layerUV(dpt); if (!uv) return null;
+    const o = crCtx.original, x = Math.min(o.width - 1, Math.floor(uv[0] * o.width)), y = Math.min(o.height - 1, Math.floor(uv[1] * o.height));
+    px = ctx2d(o).getImageData(x, y, 1, 1).data;
+  } else if (hsSampleBelow) {
+    const x = Math.floor(dpt[0]), y = Math.floor(dpt[1]);
+    if (x < 0 || y < 0 || x >= hsSampleBelow.width || y >= hsSampleBelow.height) return null;
+    const i = (y * hsSampleBelow.width + x) * 4; px = hsSampleBelow.data.subarray(i, i + 4);
+  } else return null;
+  return px[3] ? sampledHue(px[0] / 255, px[1] / 255, px[2] / 255) : null;
+}
+/** HueSaturationSheet's eyedroppers (Sample / Add / Remove: re-center, widen or narrow the selected range's band from
+ *  a color in the image) and the targeted-adjustment tool (drag on the image: the range owning that color's
+ *  saturation, or its hue with ⌘/Ctrl). One stays armed until clicked again. */
+let hsArmed: 'Sample' | 'Add' | 'Remove' | 'Target' | null = null;
+function hueSamplers(hs: FilterSettings['hueSat'], changed: () => void, rebuild: () => void): HTMLElement {
+  const row = h('div', { class: 'row hs-samplers' });
+  const disarm = () => { hsArmed = null; if (app.canvasHook?.cursor === 'crosshair' || app.canvasHook?.cursor === 'ew-resize') app.canvasHook = null; };
+  const arm = (mode: NonNullable<typeof hsArmed>) => {
+    if (hsArmed === mode) { disarm(); rebuild(); return; }
+    hsArmed = mode;
+    if (mode === 'Target') {
+      let drag: { range: ColorRangeName; hue: number; sat: number; x: number } | null = null;
+      app.canvasHook = { cursor: 'ew-resize',
+        down: (dpt, e) => {
+          const hue = hueAt(dpt); if (hue === null) { toast('That color has no hue to target.'); return; }
+          const range = (COLOR_RANGES.filter(r => r !== 'Master') as ColorRangeName[]).reduce((a, b) => rangeWeight(hs, b, hue) > rangeWeight(hs, a, hue) ? b : a, 'Reds' as ColorRangeName);
+          hs.range = range;
+          const adj = hs.adjustments[range] ?? (hs.adjustments[range] = { hue: 0, saturation: 0, lightness: 0 });
+          drag = { range, hue: adj.hue, sat: adj.saturation, x: e.clientX };
+          changed(); rebuild();
+        },
+        move: (_dpt, e) => {
+          if (!drag) return;
+          const adj = hs.adjustments[drag.range]!, delta = (e.clientX - drag.x) / 2;
+          if (e.metaKey || e.ctrlKey) adj.hue = Math.min(180, Math.max(-180, drag.hue + delta));
+          else adj.saturation = Math.min(100, Math.max(-100, drag.sat + delta));
+          changed();
+        },
+        up: () => { if (drag) { drag = null; rebuild(); } } };
+    } else {
+      app.canvasHook = { cursor: 'crosshair', down: dpt => {
+        if (hs.range === 'Master' || hs.colorize) { toast('Choose a color range first.'); return; }
+        const hue = hueAt(dpt); if (hue === null) { toast('That color is too close to gray to have a hue.'); return; }
+        const b = bandOf(hs, hs.range);
+        const next = hsArmed === 'Sample' ? bandCentered(b, hue) : hsArmed === 'Add' ? bandInclude(b, hue) : bandExclude(b, hue);
+        hs.bands = { ...(hs.bands ?? {}), [hs.range]: next };
+        changed();
+      } };
+    }
+    rebuild();
+  };
+  const tip: Record<string, string> = { Sample: 'Click the image to center this range on that color', Add: 'Click the image to widen this range to include that color',
+    Remove: 'Click the image to narrow this range to exclude that color', Target: 'Drag on the image: right raises the saturation of the range under the pointer (⌘/Ctrl: hue)' };
+  for (const [mode, label] of [['Sample', '⊙ Sample'], ['Add', '⊕ Add'], ['Remove', '⊖ Remove'], ['Target', '↔ Targeted']] as const) {
+    const disabled = mode !== 'Target' && hs.range === 'Master';
+    const b = button(label, () => arm(mode), { class: `btn small${hsArmed === mode ? ' on' : ''}`, title: tip[mode], id: `hs-${mode.toLowerCase()}` });
+    if (disabled) (b as HTMLButtonElement).disabled = true;
+    row.append(b);
+  }
+  return row;
 }
 
 /** The Hue/Saturation spectrum (UI/HueSaturationSheet.swift): the input hues over what they become, with the selected
@@ -589,7 +658,7 @@ export function openFilter(kind: FilterKind) {
   const changed = () => { if (!pending) { pending = true; requestAnimationFrame(() => void render()); } };
   const title = kind === 'Camera Raw Filter' ? 'Camera Raw Filter' : kind;
   crCtx = { layer: a, original };
-  const endHooks = () => { closed = true; generation++; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; crCtx = null; app.needsRender = true; };
+  const endHooks = () => { closed = true; generation++; hsArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; crCtx = null; app.needsRender = true; };
   const panel = floatingPanel(title, () => { endHooks(); setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
   const body = h('div');
   const rebuild = () => body.replaceChildren(controls(kind, s, changed, rebuild));
@@ -621,15 +690,22 @@ export function editAdjustment(l: Layer) {
     app.renderer.invalidate();
     currentHistogram = levelsHistogram(img);
   }
+  if (kind === 'Hue/Saturation') {
+    // The eyedroppers read the image below the adjustment.
+    const d = app.doc!, idx = d.layers.indexOf(l);
+    hsSampleBelow = app.renderer.readComposite({ ...d, layers: d.layers.map((x, i) => i < idx ? x : { ...x, visible: false }) });
+    app.renderer.invalidate();
+  }
+  const release = () => { hsSampleBelow = null; hsArmed = null; app.canvasHook = null; app.needsRender = true; };
   const changed = () => { filterToAdjustment(kind, settings, l.adjustment!); l.adjustment = { ...l.adjustment! }; app.needsRender = true; };
-  const panel = floatingPanel(rec.kind, () => { l.adjustment = before; app.history?.undoStack.pop(); app.changed('layers'); openPanel = null; }, { id: 'filter-panel' });
+  const panel = floatingPanel(rec.kind, () => { release(); l.adjustment = before; app.history?.undoStack.pop(); app.changed('layers'); openPanel = null; }, { id: 'filter-panel' });
   const body = h('div');
   const rebuild = () => body.replaceChildren(controls(kind, settings, changed, rebuild, true));
   rebuild();
   panel.body.append(body, h('div', { class: 'panel-footer' }, h('span', { class: 'spacer' }),
-    button('Cancel', () => { l.adjustment = before; app.history?.undoStack.pop(); openPanel = null; panel.close(); app.changed('layers'); }),
-    button('OK', () => { openPanel = null; panel.close(); app.changed('layers'); }, { class: 'btn primary', id: 'filter-ok' })));
-  openPanel = { panel, cancel: () => { l.adjustment = before; } };
+    button('Cancel', () => { release(); l.adjustment = before; app.history?.undoStack.pop(); openPanel = null; panel.close(); app.changed('layers'); }),
+    button('OK', () => { release(); openPanel = null; panel.close(); app.changed('layers'); }, { class: 'btn primary', id: 'filter-ok' })));
+  openPanel = { panel, cancel: () => { release(); l.adjustment = before; } };
 }
 
 export function openEffects(l: Layer, focus?: EffectKey) {

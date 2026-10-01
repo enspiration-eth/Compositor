@@ -108,6 +108,38 @@ export function setBandHandle(b: Band, i: number, deg: number): Band {
 }
 /** HueBand.centered: the band moved whole so its middle sits at `deg`. */
 export function shiftBand(b: Band, delta: number): Band { return b.map(v => (((v + delta) % 360) + 360) % 360) as Band; }
+const wrap360 = (v: number) => { const r = v % 360; return r < 0 ? r + 360 : r; };
+/** HueBand.normalize: all four handles in 0…360 and the band under a full circle. */
+function normalizeBand(b: Band): Band {
+  const u = b.map(wrap360) as Band;
+  if (fwd(u[0], u[3]) > 350) u[3] = wrap360(u[0] + 350);
+  return u;
+}
+/** HueBand.centered(on:): the band re-centered on `hue`, keeping its core and shoulder widths (the Sample eyedropper). */
+export function bandCentered(b: Band, hue: number): Band {
+  const core = fwd(b[1], b[2]), leading = fwd(b[0], b[1]), trailing = fwd(b[2], b[3]);
+  const start = wrap360(hue - core / 2);
+  return [wrap360(start - leading), start, wrap360(start + core), wrap360(start + core + trailing)];
+}
+/** HueBand.include: widened so `hue` is fully inside, moving whichever edge is nearer (the Add eyedropper). */
+export function bandInclude(b: Band, hue: number): Band {
+  if (bandWeight(b, hue) >= 1) return b;
+  const [fs, rs, re, fe] = b, shoulderIn = fwd(fs, rs), shoulderOut = fwd(re, fe);
+  return fwd(hue, rs) <= fwd(re, hue) ? normalizeBand([hue - shoulderIn, hue, re, fe]) : normalizeBand([fs, rs, hue, hue + shoulderOut]);
+}
+/** HueBand.exclude: narrowed so `hue` falls outside entirely, shoulder included (the Remove eyedropper). */
+export function bandExclude(b: Band, hue: number): Band {
+  if (bandWeight(b, hue) <= 0) return b;
+  const [fs, rs, re, fe] = b, shoulderIn = fwd(fs, rs), shoulderOut = fwd(re, fe);
+  return fwd(fs, hue) <= fwd(hue, fe) ? normalizeBand([hue + 1, hue + 1 + shoulderIn, re, fe]) : normalizeBand([fs, rs, hue - 1 - shoulderOut, hue - 1]);
+}
+/** The hue of a color as the Mac app's eyedroppers read it (PickerHSB), or null when it is too near neutral. */
+export function sampledHue(r: number, g: number, b: number): number | null {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (max <= 0 || d / max <= 0.02) return null;
+  let hue = max === r ? (g - b) / d : max === g ? 2 + (b - r) / d : 4 + (r - g) / d;
+  hue *= 60; return hue < 0 ? hue + 360 : hue;
+}
 /** HueSaturationSettings.weight(of:hue:). */
 export function rangeWeight(s: HueSaturationSettings, r: ColorRangeName, hue: number) {
   if (r === 'Master') return 1;
