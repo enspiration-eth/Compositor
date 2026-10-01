@@ -179,7 +179,10 @@ export class CanvasController {
     } else if (app.tool === 'move' && a && a.mask && app.maskTarget && a.maskLinked === false) {
       // The unlinked mask's own box (dashed): what the Move tool drags.
       const cs = layerCorners({ ...a, transform: maskTransformOf(a) }).map(([u, v]) => S(u, v));
-      x.save(); x.setLineDash([5, 4]); x.strokeStyle = '#ff9f2e'; x.lineWidth = 1.5; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke(); x.restore();
+      x.save(); x.setLineDash([5, 4]); x.strokeStyle = '#ff9f2e'; x.lineWidth = 1.5; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
+      x.setLineDash([]); x.lineWidth = 1;
+      for (const hp of this.handles({ ...a, transform: maskTransformOf(a) })) { x.fillStyle = '#fff'; x.beginPath(); if (hp.kind === 'rotate') x.arc(hp.s[0], hp.s[1], 5, 0, Math.PI * 2); else x.rect(hp.s[0] - 4, hp.s[1] - 4, 8, 8); x.fill(); x.stroke(); }
+      x.restore();
     } else if (app.tool === 'move' && a && !a.isGroup && !a.adjustment && isEffectivelyVisible(d, a)) {
       const cs = layerCorners(a).map(([u, v]) => S(u, v));
       x.save(); x.strokeStyle = '#4c8dff'; x.lineWidth = 1; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
@@ -244,6 +247,12 @@ export class CanvasController {
     return out;
   }
 
+  /** Is a Move-tool handle (the active layer's, or its unlinked mask's while the mask is selected) within 8 px? */
+  handleNear(s: Pt): boolean {
+    const a = app.active; if (!a || a.isGroup || a.adjustment) return false;
+    const box = a.mask && app.maskTarget && a.maskLinked === false ? { ...a, transform: maskTransformOf(a) } : a;
+    return this.handles(box).some(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8);
+  }
   // ---------- pointer ----------
   down(e: PointerEvent) {
     if (this.textEditor && e.target !== this.textEditor) { this.commitText(); }
@@ -258,7 +267,8 @@ export class CanvasController {
     if (e.button !== 0) return;
     if (app.canvasHook) { this.drag = { kind: 'hook', start: s, startDoc: dpt }; app.canvasHook.down?.(dpt, e); app.needsRender = true; return; }
     if (app.tool === 'move' && !e.altKey) {
-      const g = guideAt(s[0], s[1]);
+      // A transform handle under the pointer wins over a guide running through it.
+      const g = this.handleNear(s) ? null : guideAt(s[0], s[1]);
       if (g) { this.guideDrag = { guide: g, isNew: false, startPos: g.position }; return; }
     }
     const d = p.doc, mode: Sel.SelMode = e.shiftKey && e.altKey ? 'intersect' : e.shiftKey ? 'add' : e.altKey ? 'subtract' : 'replace';
@@ -450,8 +460,10 @@ export class CanvasController {
     }
     if (a && app.maskTarget && a.mask && a.maskLinked === false && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // An unlinked mask, selected, moves on its own (EditorSession.commitMaskTransform).
+      // Its own handles scale and rotate it (the Mac app's mask transform box).
+      const mhit = this.handles({ ...a, transform: maskTransformOf(a) }).find(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8) ?? null;
       app.edit('Transform Layer Mask');
-      this.drag = { kind: 'move', start: s, startDoc: dpt, data: { maskOnly: true, layer: a, startP: { ...maskTransformOf(a) }, moved: false } };
+      this.drag = { kind: 'move', start: s, startDoc: dpt, data: { maskOnly: true, hit: mhit, layer: a, startP: { ...maskTransformOf(a) }, moved: false } };
       return;
     }
     const hit = a && !a.isGroup ? this.handles(a).find(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8) : null;
@@ -472,7 +484,8 @@ export class CanvasController {
   moveDrag(dr: NonNullable<CanvasController['drag']>, dpt: Pt, e: PointerEvent) {
     const data = dr.data!; data.moved = true;
     if (data.maskOnly) {
-      const l = data.layer as Layer, p0 = data.startP as Transform;
+      const l = data.layer as Layer, p0 = data.startP as Transform, mh = data.hit as { kind: string; u: number; v: number } | null;
+      if (mh) { l.maskPlacement = this.handleTransform(p0, mh, dr.startDoc, dpt, e); l.rev++; app.needsRender = true; return; }
       let dx = dpt[0] - dr.startDoc[0], dy = dpt[1] - dr.startDoc[1];
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       l.maskPlacement = { ...p0, x: Math.round(p0.x + dx), y: Math.round(p0.y + dy) }; l.rev++;
@@ -494,32 +507,32 @@ export class CanvasController {
       layers.forEach((l, i) => { l.transform = { ...starts[i], x: Math.round(starts[i].x + dx), y: Math.round(starts[i].y + dy) }; });
     } else {
       const l = data.layer as Layer, t0 = starts[layers.indexOf(l)] ?? (l.transform);
-      const c0: Pt = [t0.x + t0.w / 2, t0.y + t0.h / 2], r = t0.rotation * Math.PI / 180;
-      if (hit.kind === 'rotate') {
-        const a0 = Math.atan2(dr.startDoc[1] - c0[1], dr.startDoc[0] - c0[0]), a1 = Math.atan2(dpt[1] - c0[1], dpt[0] - c0[0]);
-        let deg = t0.rotation + (a1 - a0) * 180 / Math.PI;
-        if (e.shiftKey) deg = Math.round(deg / 15) * 15;
-        l.transform = { ...t0, rotation: Math.round(deg * 10) / 10 };
-      } else {
-        const loc = (q: Pt): Pt => { const dx = q[0] - c0[0], dy = q[1] - c0[1]; return [dx * Math.cos(r) + dy * Math.sin(r) + t0.w / 2, -dx * Math.sin(r) + dy * Math.cos(r) + t0.h / 2]; };
-        const lp = loc(dpt), ax = 1 - hit.u, ay = 1 - hit.v, A: Pt = [ax * t0.w, ay * t0.h];
-        let w = hit.u === 0.5 ? t0.w : Math.max(1, hit.u > ax ? lp[0] - A[0] : A[0] - lp[0]);
-        let hh = hit.v === 0.5 ? t0.h : Math.max(1, hit.v > ay ? lp[1] - A[1] : A[1] - lp[1]);
-        const corner = hit.u !== 0.5 && hit.v !== 0.5;
-        if (corner && !e.shiftKey) { const k = Math.max(w / t0.w, hh / t0.h); w = t0.w * k; hh = t0.h * k; }
-        if (e.altKey) { // from the center
-          const nl = (t0.w - w) / 2, nt = (t0.h - hh) / 2; void nl; void nt;
-          l.transform = { ...t0, x: c0[0] - w / 2, y: c0[1] - hh / 2, w, h: hh };
-        } else {
-          const left = hit.u === 0.5 ? (t0.w - w) / 2 : hit.u > ax ? A[0] : A[0] - w;
-          const top = hit.v === 0.5 ? (t0.h - hh) / 2 : hit.v > ay ? A[1] : A[1] - hh;
-          const cl: Pt = [left + w / 2 - t0.w / 2, top + hh / 2 - t0.h / 2];
-          const nc: Pt = [c0[0] + cl[0] * Math.cos(r) - cl[1] * Math.sin(r), c0[1] + cl[0] * Math.sin(r) + cl[1] * Math.cos(r)];
-          l.transform = { ...t0, x: nc[0] - w / 2, y: nc[1] - hh / 2, w, h: hh };
-        }
-      }
+      l.transform = this.handleTransform(t0, hit, dr.startDoc, dpt, e);
     }
     app.needsRender = true; app.emit('transform-live');
+  }
+  /** A scale or rotate handle dragged from `startDoc` to `dpt`: the new transform from `t0` (Shift keeps 15° steps or
+   *  frees the corner aspect, Option scales from the center). */
+  handleTransform(t0: Transform, hit: { kind: string; u: number; v: number }, startDoc: Pt, dpt: Pt, e: PointerEvent): Transform {
+    const c0: Pt = [t0.x + t0.w / 2, t0.y + t0.h / 2], r = t0.rotation * Math.PI / 180;
+    if (hit.kind === 'rotate') {
+      const a0 = Math.atan2(startDoc[1] - c0[1], startDoc[0] - c0[0]), a1 = Math.atan2(dpt[1] - c0[1], dpt[0] - c0[0]);
+      let deg = t0.rotation + (a1 - a0) * 180 / Math.PI;
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+      return { ...t0, rotation: Math.round(deg * 10) / 10 };
+    }
+    const loc = (q: Pt): Pt => { const dx = q[0] - c0[0], dy = q[1] - c0[1]; return [dx * Math.cos(r) + dy * Math.sin(r) + t0.w / 2, -dx * Math.sin(r) + dy * Math.cos(r) + t0.h / 2]; };
+    const lp = loc(dpt), ax = 1 - hit.u, ay = 1 - hit.v, A: Pt = [ax * t0.w, ay * t0.h];
+    let w = hit.u === 0.5 ? t0.w : Math.max(1, hit.u > ax ? lp[0] - A[0] : A[0] - lp[0]);
+    let hh = hit.v === 0.5 ? t0.h : Math.max(1, hit.v > ay ? lp[1] - A[1] : A[1] - lp[1]);
+    const corner = hit.u !== 0.5 && hit.v !== 0.5;
+    if (corner && !e.shiftKey) { const k = Math.max(w / t0.w, hh / t0.h); w = t0.w * k; hh = t0.h * k; }
+    if (e.altKey) return { ...t0, x: c0[0] - w / 2, y: c0[1] - hh / 2, w, h: hh }; // from the center
+    const left = hit.u === 0.5 ? (t0.w - w) / 2 : hit.u > ax ? A[0] : A[0] - w;
+    const top = hit.v === 0.5 ? (t0.h - hh) / 2 : hit.v > ay ? A[1] : A[1] - hh;
+    const cl: Pt = [left + w / 2 - t0.w / 2, top + hh / 2 - t0.h / 2];
+    const nc: Pt = [c0[0] + cl[0] * Math.cos(r) - cl[1] * Math.sin(r), c0[1] + cl[0] * Math.sin(r) + cl[1] * Math.cos(r)];
+    return { ...t0, x: nc[0] - w / 2, y: nc[1] - hh / 2, w, h: hh };
   }
   // ---------- Free Distort ----------
   startDistort(l: Layer | null = app.active): boolean {

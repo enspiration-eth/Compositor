@@ -426,11 +426,14 @@ try {
     await page.click('.rail-btn[data-tool="type"]');
     { const [x, y] = await toScreen(300, 900); await page.mouse.click(x, y); }
     await page.waitForSelector('textarea.text-editor');
+    // Keys typed before the editor takes focus would be tool shortcuts (slow CI machines).
+    await page.waitForFunction(() => document.activeElement?.classList.contains('text-editor'));
     await page.keyboard.type('Live Type');
     await page.keyboard.press('Control+Enter');
     const t = await page.evaluate(() => window.compositor.app.active.transform);
     const [x, y] = await toScreen(t.x + t.w / 2, t.y + t.h / 2); await page.mouse.click(x, y);
     await page.waitForSelector('textarea.text-editor');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('text-editor'));
     assert(await page.evaluate(() => { const ta = document.querySelector('textarea.text-editor'); ta.setSelectionRange(0, 4); return ta.value === 'Live Type' && !!ta._ctx.layer; }), 'editing the existing text layer');
     await page.evaluate(() => { const w = document.getElementById('type-color'); w.value = '#ff2a2a'; w.dispatchEvent(new Event('change')); });
     await page.waitForTimeout(100);
@@ -538,6 +541,22 @@ try {
     assert(r.label === 'Transform Layer Mask' && r.t === t0 && Math.abs(r.p.x - (JSON.parse(t0).x + 400)) <= 2, 'mask moved alone ' + JSON.stringify(r));
     await page.waitForTimeout(250);
     await page.screenshot({ path: `${SHOTS}/08-unlinked-mask.png` });
+    // The unlinked mask's own handles: scale from a corner, then rotate; the layer stays put.
+    {
+      const p = r.p, [cx, cy] = await toScreen(p.x, p.y), [ex, ey] = await toScreen(p.x + 300, p.y + 200);
+      await page.mouse.move(cx, cy); await page.mouse.down(); await page.mouse.move(ex, ey, { steps: 6 }); await page.mouse.up();
+      const s1 = await page.evaluate(() => { const a = window.compositor.app.active; return { p: a.maskPlacement, t: JSON.stringify(a.transform) }; });
+      assert(s1.t === t0 && s1.p.w < p.w - 150 && Math.abs(s1.p.w / s1.p.h - p.w / p.h) < 0.02, 'mask scaled alone ' + JSON.stringify(s1));
+      const [tx, ty] = await toScreen(s1.p.x + s1.p.w / 2, s1.p.y), [rx, ry] = await toScreen(s1.p.x + s1.p.w / 2 + 300, s1.p.y + s1.p.h / 2 - 200);
+      await page.mouse.move(tx, ty - 24); await page.mouse.down(); await page.mouse.move(rx, ry, { steps: 8 }); await page.mouse.up();
+      const s2 = await page.evaluate(() => { const a = window.compositor.app.active; return { p: a.maskPlacement, t: JSON.stringify(a.transform), label: window.compositor.app.history.undoLabel }; });
+      assert(s2.t === t0 && Math.abs(s2.p.rotation) > 20 && s2.label === 'Transform Layer Mask', 'mask rotated alone ' + JSON.stringify(s2));
+      await page.waitForTimeout(250);
+      await page.screenshot({ path: `${SHOTS}/15-mask-scale-rotate.png` });
+      await page.evaluate(() => { window.compositor.app.undo(); window.compositor.app.undo(); });
+      const back = await page.evaluate(() => window.compositor.app.active.maskPlacement);
+      assert(Math.abs(back.w - p.w) < 0.01 && !back.rotation, 'undo restores the mask placement ' + JSON.stringify(back));
+    }
     // Now move the layer: the unlinked mask stays put on the document.
     await page.click('.layer-row.active .layer-name');
     await drag([500, 800], [500, 700]);
