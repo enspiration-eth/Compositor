@@ -1,0 +1,24 @@
+{
+  "name": "compositor-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Compositor in the browser: the Photoshop alternative for Mac, ported to the web (TypeScript + WebGL2 + the original C pixel kernels compiled to WebAssembly).",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "build:wasm": "bash wasm/build.sh",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173",
+    "test:e2e": "node tests/smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "ag-psd": "^22.0.0",
+    "fflate": "^0.8.2"
+  }
+}
