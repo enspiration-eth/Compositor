@@ -97,6 +97,9 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Rulers, guides and grid:** rulers you drag guides out of (⌘R); guides saved in the project's manifest, moved
   or deleted with the Move tool, locked or cleared, or added by position; a layout grid with Grid Settings (⌘'); Snap
   (⇧⌘;) to guides, grid, layers and document bounds for move, marquee, crop and shape
+- **Open Recent:** File › Open Recent (and the welcome card) lists the last ten projects opened or saved. They're kept
+  in IndexedDB: the file handle where the browser provides one (Chromium's pickers, so Save writes back to that file),
+  otherwise a copy of the project as last opened or saved. Clear Menu empties it.
 - **Canvas:** canvas size with anchor, image size, Trim… (transparent pixels or the top-left/bottom-right color, per edge), crop to selection, flip canvas, zoom/fit/100%, pixel grid at
   high zoom, checkerboard transparency
 - **Undo/redo** with copy-on-write pixel snapshots; Mac keyboard shortcuts (⌘ on Mac, Ctrl elsewhere)
@@ -119,7 +122,10 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   it's the original kernel's `clipping` mode). White Balance Auto (gray-world) and the eyedropper (`neutralize`), the
   Defringe eyedropper, the targeted-adjustment drags for the Curve (parametric region or nearest point) and the Color
   Mixer (Hue/Saturation/Luminance families weighted by hue), and the sharpening mask (Option/Alt-drag Masking, the
-  original `adjust_camera_raw_sharpen_mask_overlay` kernel) are ported too.
+  original `adjust_camera_raw_sharpen_mask_overlay` kernel) are ported too. The panel's scope sits on top: the RGB
+  histogram of the grade or, on right-click, the hue/saturation vectorscope (`camera_raw_vectorscope`, translated to C),
+  the shadow/highlight clipping indicator triangles (`adjust_camera_raw_clip_overlay`), the R G B readout under the
+  pointer, and an eye on each section that hides that group from the preview and the result.
 - **TIFF / RAW / HEIC import:** the Mac app uses ImageIO. The web build decodes TIFF (uncompressed, LZW, Deflate, PackBits, JPEG; 8/16-bit; alpha) and TIFF-based camera RAW (DNG, NEF, CR2, ARW, …) with [UTIF](https://github.com/photopea/UTIF.js) (MIT); RAW files without a decodable RGB image fall back to their largest embedded JPEG preview, and there is no RAW develop step. HEIC opens only in browsers that decode it natively (Safari). File › Export TIFF… writes an 8-bit RGBA TIFF.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
 - **Unlinked / placed masks:** ported (link button between the thumbnails, Layer › Mask › Unlink Mask; with the mask selected the Move tool and arrow keys move it alone, and its own dashed box has scale and rotate handles; `maskPlacement`/`maskLinked` are read and written in `.comp`). Brushes, gradients, fills and filters work on a mask in its own grid, where it sits, as the Mac app does (no resampling into the layer’s grid).

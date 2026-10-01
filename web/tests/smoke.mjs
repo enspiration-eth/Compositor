@@ -23,7 +23,11 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
-const step = async (name, fn) => { process.stdout.write(`• ${name} … `); const t0 = Date.now(); await fn(); console.log(process.env.TIMING ? `ok (${Date.now() - t0} ms)` : 'ok'); };
+// STOP=text ends the run (successfully) after the first step whose name contains it, for quicker iteration.
+const step = async (name, fn) => {
+  process.stdout.write(`• ${name} … `); const t0 = Date.now(); await fn(); console.log(process.env.TIMING ? `ok (${Date.now() - t0} ms)` : 'ok');
+  if (process.env.STOP && name.includes(process.env.STOP)) { console.log('Stopped early (STOP).'); await browser.close(); if (server) try { process.kill(-server.pid); } catch {} process.exit(0); }
+};
 const assert = (c, msg) => { if (!c) throw new Error('assertion failed: ' + msg); };
 const st = () => page.evaluate(() => {
   const { app } = window.compositor; const d = app.doc;
@@ -195,6 +199,33 @@ try {
     await page.waitForFunction(() => { const c = window.compositor.app.active.canvas, d = c.getContext('2d').getImageData(c.width >> 1, 40, 1, 1).data; return !(d[0] === d[1] && d[1] === d[2]); }, null, { timeout: 20000 });
     await open('Detail', false); await open('Color Mixer');
     await page.screenshot({ path: `${SHOTS}/14b-camera-raw-targeted.png` });
+    await open('Color Mixer', false);
+    // Scope: histogram of the grade, right-click for the vectorscope, R G B readout, clipping indicator triangles.
+    const inked = () => page.evaluate(() => { const c = document.getElementById('cr-scope'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 60) n++; return n; });
+    await page.waitForFunction(() => !!document.getElementById('cr-scope'));
+    await page.waitForTimeout(300);
+    assert((await inked()) > 500, 'histogram drawn');
+    await page.click('#cr-scope', { button: 'right' });
+    assert((await page.getAttribute('#cr-scope', 'data-mode')) === 'Vectorscope' && (await inked()) > 20, 'vectorscope drawn');
+    await page.mouse.move(sx, sy + 5); await page.mouse.move(sx, sy);
+    assert(/^R \d+ {3}G \d+ {3}B \d+$/.test(await page.textContent('#cr-readout')), 'readout ' + await page.textContent('#cr-readout'));
+    await page.click('#cr-scope', { button: 'right' });
+    await open('Basic');
+    const expo = sec('Basic').locator('.slider-row').nth(2).locator('input[type=number]');
+    await expo.fill('3'); await expo.press('Enter');
+    await page.click('#cr-clip-highlights');
+    await page.waitForFunction(() => { const c = window.compositor.app.active.canvas, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 120 && d[i + 2] < 120) n++; return n > 1000; }, null, { timeout: 20000 });
+    await page.screenshot({ path: `${SHOTS}/18-camera-raw-scope.png` });
+    // The Basic section's eye hides Light and Color from the preview: Exposure +3 no longer clips.
+    const reds = () => page.evaluate(() => { const c = window.compositor.app.active.canvas, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 120 && d[i + 2] < 120) n++; return n; });
+    const before = await reds();
+    await page.click('#filter-panel .cr-eye[data-group="Basic"]');
+    await page.waitForFunction(() => document.querySelector('#filter-panel .cr-eye[data-group="Basic"]').classList.contains('off'));
+    await page.waitForTimeout(1500);
+    const hidden = await reds();
+    assert(hidden < before / 2, `hiding Basic removed the clipping ${before} → ${hidden}`);
+    await page.click('#filter-panel .cr-eye[data-group="Basic"]');
+    await page.click('#cr-clip-highlights');
     await page.locator('#filter-panel button:text-is("Cancel")').click();
     assert(!(await page.evaluate(() => !!window.compositor.app.canvasHook)), 'canvas hook released');
   });
@@ -678,6 +709,17 @@ try {
     const s2 = await st(); assert(s2.layers === manifest.layers.length, 'reopened layers ' + s2.layers);
     assert(await page.evaluate(() => window.compositor.app.doc.layers.some(l => l.maskLinked === false && l.maskPlacement)), 'reopened unlinked mask');
     assert(await page.evaluate(() => window.compositor.app.doc.layers.some(l => l.adjustment?.hsvSettings?.adjustments?.Greens?.hue === 180)), 'reopened hsv ranges');
+    // File › Open Recent (kept in IndexedDB): close the reopened copy, then open the saved project from the menu.
+    await page.evaluate(() => { const { app } = window.compositor; app.doc.dirty = false; app.closeProject(); });
+    await page.waitForFunction(() => window.compositor.app.projects.length === 1);
+    await page.click('.menubar-item[data-menu="File"]');
+    await page.hover('.menu .menu-item[data-id="open-recent"]');
+    await page.click('.menu .menu-item[data-id="recent-Sample"]');
+    await page.waitForFunction(() => window.compositor.app.projects.length === 2, null, { timeout: 15000 });
+    const s3 = await st(); assert(s3.layers === manifest.layers.length, 'opened from Open Recent ' + s3.layers);
+    await page.click('.menubar-item[data-menu="File"]'); await page.hover('.menu .menu-item[data-id="open-recent"]');
+    assert(await page.locator('.menu .menu-item[data-id="Clear Menu"]:not(.disabled)').count() === 1, 'Clear Menu enabled');
+    await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
   });
 
   await step('TIFF import (LZW, Deflate+alpha, 16-bit gray) + TIFF export', async () => {

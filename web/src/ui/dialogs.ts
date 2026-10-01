@@ -4,11 +4,11 @@ import { app } from './app';
 import { h, slider, select, checkbox, colorWell, button, floatingPanel, modal, toast, type Panel } from './dom';
 import {
   type FilterKind, type FilterSettings, defaultFilterSettings, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
-  curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
+  curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, crApplying, type CRGroup, CR_MIXER_NAMES, type CRPoint,
   rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry, bandCentered, bandInclude, bandExclude, sampledHue,
   crNeutralize, srgbDecode, crAutoBalance, crMixerWeights, crCurveRegion,
 } from '../engine/adjustments';
-import { levelsHistogram, colorRangeMask } from '../engine/kernels';
+import { levelsHistogram, colorRangeMask, cameraRawScope, cameraRawClipOverlay, SCOPE_SIDE } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, maskGridView, maskInLayerGrid, setMaskPlacement, invert, apply, pixelToDoc } from '../engine/document';
 import * as Sel from '../engine/selection';
@@ -77,11 +77,22 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
       // Effects and Calibration, each driving the Mac app's C kernels.
       // Filled in place, so canvas tools armed before a rebuild keep editing the live settings.
       const cr = s.cameraRaw = Object.assign(s.cameraRaw ?? {}, { ...defaultCameraRaw(), ...s.cameraRaw });
+      box.append(crScopeView(changed));
       const section = (title: string, build: (add: (el: HTMLElement) => void) => void) => {
         const d = h('details', { class: 'cr-section' }) as HTMLDetailsElement;
         d.open = crOpen.has(title);
         d.addEventListener('toggle', () => { if (d.open) crOpen.add(title); else crOpen.delete(title); });
-        d.append(h('summary', {}, title));
+        const sum = h('summary', {}, title);
+        // The eye beside a section that changes something hides that group from the preview (and the result).
+        const groups = CR_SECTION_GROUPS[title] ?? [];
+        if (groups.length) {
+          const shown = !groups.some(g => crHidden.has(g));
+          const eye = h('button', { class: `cr-eye${shown ? '' : ' off'}`, title: `${shown ? 'Hide' : 'Show'} ${title} in the preview`, 'aria-label': `${shown ? 'Hide' : 'Show'} ${title}`,
+            'data-group': title });
+          eye.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); for (const g of groups) if (shown) crHidden.add(g); else crHidden.delete(g); changed(); rebuild(); });
+          sum.append(h('span', { class: 'spacer' }), eye);
+        }
+        d.append(sum);
         const inner = h('div', { class: 'controls' }); build(el => inner.append(el)); d.append(inner); box.append(d);
       };
       const S = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step = 1, unit = '', clip = 0) => {
@@ -271,7 +282,85 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
 }
 
 /** The open filter's layer and its untouched pixels, for panels that sample or draw on the canvas. */
-let crCtx: { layer: Layer; original: HTMLCanvasElement } | null = null;
+const CR_SECTION_GROUPS: Record<string, CRGroup[]> = { Basic: ['Light', 'Color'], Curve: ['Curve'], 'Color Mixer': ['Color Mixer'], 'Point Color': ['Color Mixer'],
+  'Color Grading': ['Color Grading'], Detail: ['Detail'], Optics: ['Optics'], Geometry: ['Geometry'], Effects: ['Effects'], Calibration: ['Calibration'] };
+let crCtx: { layer: Layer; original: HTMLCanvasElement; current: () => HTMLCanvasElement } | null = null;
+// Camera Raw's scope (CameraRawControls.histogram): histogram or vectorscope of the grade, the two clipping
+// indicator triangles, and the RGB readout under the pointer.
+let crScope: ReturnType<typeof cameraRawScope> | null = null;
+let crScopeMode: 'Histogram' | 'Vectorscope' = 'Histogram';
+let crShowShadows = false, crShowHighlights = false;
+/** Panel groups hidden with their eye buttons (FilterEdit.showsCameraRaw…): left out of the preview and the result. */
+const crHidden = new Set<CRGroup>();
+let crScopeCanvas: HTMLCanvasElement | null = null, crReadoutEl: HTMLElement | null = null;
+/** At most about a million pixels are counted; larger previews are sampled on a regular grid. */
+function scopeSample(img: ImageData): ImageData {
+  const n = img.width * img.height; if (n <= 1 << 20) return img;
+  const step = Math.ceil(Math.sqrt(n / (1 << 20))), w = Math.ceil(img.width / step), hh = Math.ceil(img.height / step), o = new ImageData(w, hh);
+  for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) { const si = ((y * step) * img.width + x * step) * 4, di = (y * w + x) * 4; o.data[di] = img.data[si]; o.data[di + 1] = img.data[si + 1]; o.data[di + 2] = img.data[si + 2]; o.data[di + 3] = img.data[si + 3]; }
+  return o;
+}
+function histPeak(bins: number[]) {
+  const peak = Math.max(0, ...bins.filter(v => isFinite(v) && v > 0)); if (!peak) return 0;
+  const interior = bins.slice(1, -1).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
+  return interior.length ? Math.min(peak, interior[Math.floor((interior.length - 1) * 0.95)] * 4) : peak;
+}
+function drawCrScope() {
+  const cv = crScopeCanvas; if (!cv) return;
+  const x = ctx2d(cv), W = cv.width, H = cv.height;
+  x.clearRect(0, 0, W, H); x.fillStyle = 'rgba(0,0,0,0.35)'; x.fillRect(0, 0, W, H);
+  cv.title = crScopeMode === 'Histogram'
+    ? 'Tones from black on the left to white on the right: blacks, shadows, midtones, highlights, whites. Right-click to show the vectorscope.'
+    : 'Hue around the wheel, saturation outward from the center. Right-click to show the histogram.';
+  cv.setAttribute('aria-label', crScopeMode === 'Histogram' ? 'RGB histogram' : 'Vectorscope');
+  cv.dataset.mode = crScopeMode;
+  const sc = crScope; if (!sc) return;
+  if (crScopeMode === 'Histogram') {
+    const peak = Math.max(histPeak(sc.red), histPeak(sc.green), histPeak(sc.blue)); if (!(peak > 0)) return;
+    x.globalCompositeOperation = 'lighter';
+    for (const [bins, col] of [[sc.red, 'rgba(255,40,40,0.55)'], [sc.green, 'rgba(40,220,60,0.55)'], [sc.blue, 'rgba(60,100,255,0.55)']] as const) {
+      x.beginPath(); x.moveTo(0, H);
+      bins.forEach((v, i) => x.lineTo(i * W / bins.length, H - H * Math.min(1, Math.max(0, v / peak))));
+      x.lineTo(W, H); x.closePath(); x.fillStyle = col; x.fill();
+    }
+    x.globalCompositeOperation = 'source-over';
+  } else {
+    let peak = 0; for (const v of sc.vectorscope) if (v > peak) peak = v;
+    // The square plot, centered; rows count up from the bottom as in the Mac app.
+    const side = Math.min(W, H), ox = (W - side) / 2, cell = side / SCOPE_SIDE;
+    x.strokeStyle = 'rgba(255,255,255,0.18)'; x.beginPath(); x.arc(ox + side / 2, side / 2, side * 0.48, 0, Math.PI * 2); x.stroke();
+    if (!(peak > 0)) return;
+    sc.vectorscope.forEach((v, i) => {
+      if (v <= 0) return;
+      const col = i % SCOPE_SIDE, row = Math.floor(i / SCOPE_SIDE);
+      x.fillStyle = `rgba(255,255,255,${0.15 + 0.85 * Math.min(1, v / peak)})`;
+      x.fillRect(ox + col * cell, side - (row + 1) * cell, cell + 0.2, cell + 0.2);
+    });
+  }
+}
+/** Histogram, the clipping indicator triangles and the R G B readout, above Camera Raw's sections. */
+function crScopeView(changed: () => void): HTMLElement {
+  const cv = h('canvas', { width: 576, height: 220, id: 'cr-scope', style: 'width:100%;height:110px;display:block;border-radius:4px' }) as HTMLCanvasElement;
+  cv.addEventListener('contextmenu', e => { e.preventDefault(); crScopeMode = crScopeMode === 'Histogram' ? 'Vectorscope' : 'Histogram'; drawCrScope(); });
+  crScopeCanvas = cv;
+  const tri = (shadows: boolean) => {
+    const on = shadows ? crShowShadows : crShowHighlights;
+    const b = button('▲', () => {
+      if (shadows) crShowShadows = !crShowShadows; else crShowHighlights = !crShowHighlights;
+      b.style.color = (shadows ? crShowShadows : crShowHighlights) ? (shadows ? '#3d7bff' : '#ff3b30') : 'rgba(255,255,255,0.55)';
+      b.classList.toggle('on', shadows ? crShowShadows : crShowHighlights); changed();
+    }, { class: `cr-clip-tri${on ? ' on' : ''}`, id: shadows ? 'cr-clip-shadows' : 'cr-clip-highlights',
+      title: shadows ? 'Show clipped shadows in blue on the preview.' : 'Show clipped highlights in red on the preview.',
+      'aria-label': shadows ? 'Shadow Clipping Indicator' : 'Highlight Clipping Indicator' });
+    b.style.color = on ? (shadows ? '#3d7bff' : '#ff3b30') : 'rgba(255,255,255,0.55)';
+    return b;
+  };
+  crReadoutEl = h('div', { class: 'cr-readout', id: 'cr-readout', title: 'Red, green, and blue of the pixel under the pointer.' }, 'R —   G —   B —');
+  const wrap = h('div', { class: 'cr-scope' }, cv, h('div', { class: 'cr-scope-tris' }, tri(true), tri(false)));
+  queueMicrotask(drawCrScope);
+  return h('div', {}, wrap, crReadoutEl);
+}
+
 /** Document point → normalized 0…1 position on the filtered layer (y down), or null outside it. */
 function layerUV(dpt: [number, number]): [number, number] | null {
   if (!crCtx) return null;
@@ -740,8 +829,13 @@ export function openFilter(kind: FilterKind) {
     try {
       const img = imageDataOf(original);
       const scale = original.width / grid.transform.w;
-      const out = await applyFilterAsync(kind, s, img, { seed, scale: isFinite(scale) && scale > 0 ? scale : 1, canvasFrame: kind === 'Vignette' && app.isEmptyLayer(original) ? app.canvasFrameIn(grid, original) : undefined });
+      const out = await applyFilterAsync(kind, kind === 'Camera Raw Filter' ? { ...s, cameraRaw: crApplying(s.cameraRaw, crHidden) } : s, img, { seed, scale: isFinite(scale) && scale > 0 ? scale : 1, canvasFrame: kind === 'Vignette' && app.isEmptyLayer(original) ? app.canvasFrameIn(grid, original) : undefined });
       if (closed || mine !== generation) return;
+      if (kind === 'Camera Raw Filter') {
+        // The scope counts the grade itself, without the Option-drag views or the indicator paint.
+        if (!s.crClipping && !s.crSharpenMask && s.crVisualize === undefined) { crScope = cameraRawScope(scopeSample(out)); drawCrScope(); }
+        cameraRawClipOverlay(out, crShowShadows, crShowHighlights);
+      }
       let c = canvasOf(out.width, out.height); ctx2d(c).putImageData(out, 0, 0);
       if (sel) { const r = cloneCanvas(original), rx = ctx2d(r); const inside = canvasOf(c.width, c.height), ix = ctx2d(inside); ix.drawImage(c, 0, 0); ix.globalCompositeOperation = 'destination-in'; ix.drawImage(sel, 0, 0); rx.globalCompositeOperation = 'destination-out'; rx.drawImage(sel, 0, 0); rx.globalCompositeOperation = 'source-over'; rx.drawImage(inside, 0, 0); c = r; }
       setCanvas(c);
@@ -754,8 +848,20 @@ export function openFilter(kind: FilterKind) {
   };
   const changed = () => { if (!pending) { pending = true; requestAnimationFrame(() => void render()); } };
   const title = kind === 'Camera Raw Filter' ? 'Camera Raw Filter' : kind;
-  crCtx = { layer: grid, original };
-  const endHooks = () => { closed = true; generation++; hsArmed = null; crArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; s.crSharpenMask = undefined; crCtx = null; app.needsRender = true; };
+  crCtx = { layer: grid, original, current: () => (onMask ? a.mask : a.canvas) ?? original };
+  crScope = null; crHidden.clear();
+  // The R G B readout follows the pointer over the preview.
+  const stageEl = document.getElementById('stage');
+  const onHover = (e: PointerEvent) => {
+    if (!crReadoutEl || !crCtx || kind !== 'Camera Raw Filter') return;
+    const r = stageEl!.getBoundingClientRect(), uv = layerUV(app.toDoc(e.clientX - r.left, e.clientY - r.top));
+    const c = crCtx.current();
+    if (!uv) { crReadoutEl.textContent = 'R —   G —   B —'; return; }
+    const px = ctx2d(c).getImageData(Math.min(c.width - 1, Math.floor(uv[0] * c.width)), Math.min(c.height - 1, Math.floor(uv[1] * c.height)), 1, 1).data;
+    crReadoutEl.textContent = px[3] ? `R ${px[0]}   G ${px[1]}   B ${px[2]}` : 'R —   G —   B —';
+  };
+  if (kind === 'Camera Raw Filter') stageEl?.addEventListener('pointermove', onHover);
+  const endHooks = () => { stageEl?.removeEventListener('pointermove', onHover); crScopeCanvas = null; crReadoutEl = null; closed = true; generation++; hsArmed = null; crArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; s.crSharpenMask = undefined; crCtx = null; app.needsRender = true; };
   const panel = floatingPanel(title, () => { endHooks(); setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
   const body = h('div');
   const rebuild = () => body.replaceChildren(controls(kind, s, changed, rebuild));
@@ -765,7 +871,7 @@ export function openFilter(kind: FilterKind) {
     setCanvas(original);
     openPanel = null; panel.close();
     lastSettings = structuredClone(s);
-    app.runFilter(kind, s, seed);
+    app.runFilter(kind, kind === 'Camera Raw Filter' ? { ...s, cameraRaw: crApplying(s.cameraRaw, crHidden) } : s, seed);
   }, { class: 'btn primary', id: 'filter-ok' });
   const cancel = button('Cancel', () => { endHooks(); setCanvas(original); openPanel = null; panel.close(); });
   panel.body.append(body, h('div', { class: 'panel-footer' }, checkbox('Preview', true, v => { preview = v; changed(); }), h('span', { class: 'spacer' }), cancel, ok));

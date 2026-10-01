@@ -7,6 +7,7 @@ import { CanvasController } from './tools';
 import { h, icon, slider, select, checkbox, button, showMenu, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
 import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel, openColorRange, showTrim } from './dialogs';
 import { fileToCanvas } from '../engine/files';
+import { recentProjects, clearRecent, loadRecent, onRecentChange } from '../engine/recent';
 import { view, setView, clearGuides } from './guides';
 import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
 import { ADJUSTMENT_KINDS, FILTER_MENU, IMAGE_ADJUSTMENTS, type FilterKind } from '../engine/adjustments';
@@ -17,6 +18,7 @@ let ctl: CanvasController;
 const els: Record<string, HTMLElement> = {};
 
 export function buildLayout(root: HTMLElement) {
+  void loadRecent();
   els.menubar = h('div', { class: 'menubar' });
   els.tabs = h('div', { class: 'tabs' });
   els.toolbar = h('div', { class: 'toolbar' },
@@ -78,6 +80,11 @@ function buildMenubar() {
       { label: 'New Canvas…', shortcut: `${MOD}N`, action: showNewCanvas },
       { label: 'Open…', shortcut: `${MOD}O`, action: () => openFileDialog('open') },
       { label: 'Open Project Folder (.comp)…', action: () => els.folderInput.click() },
+      { label: 'Open Recent', id: 'open-recent', submenu: [
+        ...recentProjects().map(e => ({ label: e.name, id: `recent-${e.name}`, action: () => void app.openRecent(e) })),
+        ...(recentProjects().length ? [{ separator: true }] : []),
+        { label: 'Clear Menu', action: () => void clearRecent(), disabled: !recentProjects().length },
+      ] },
       { label: 'Import Images…', shortcut: `⇧${MOD}O`, action: () => openFileDialog('import'), disabled: !app.doc },
       { separator: true },
       { label: 'Save', shortcut: `${MOD}S`, action: () => app.save(), disabled: !app.doc },
@@ -421,9 +428,18 @@ function renderWelcome() {
   const extra = h('div', { class: 'welcome-actions' },
     button('Open project', () => openFileDialog('open')), button('Import image', () => openFileDialog('open')),
     button('Try a sample', () => loadSample()));
-  w.append(h('div', { class: 'welcome-card' }, newCanvasForm((W, H) => { app.newCanvas(W, H); app.fit(); }, extra),
+  w.append(h('div', { class: 'welcome-card' }, newCanvasForm((W, H) => { app.newCanvas(W, H); app.fit(); }, extra), welcomeRecent,
     h('p', { class: 'hint center' }, 'Drop images, PSDs or .comp.zip projects anywhere.')));
+  fillWelcomeRecent();
 }
+// The browser has no Dock menu, so the welcome card lists File › Open Recent too.
+const welcomeRecent = h('div', { class: 'welcome-recent', id: 'welcome-recent' });
+function fillWelcomeRecent() {
+  const list = recentProjects().slice(0, 5);
+  welcomeRecent.replaceChildren(...(list.length ? [h('div', { class: 'group-title' }, 'Recent'),
+    ...list.map(e => h('button', { class: 'recent-item', title: e.handle ? `Open ${e.fileName}` : `Open the copy of ${e.fileName} kept by this browser`, onclick: () => void app.openRecent(e) }, e.name))] : []));
+}
+onRecentChange(fillWelcomeRecent);
 export async function loadSample() {
   // A generated sample: a sky gradient, a sun, hills and type, as separate layers.
   app.newCanvas(1600, 1000, 'Sample');

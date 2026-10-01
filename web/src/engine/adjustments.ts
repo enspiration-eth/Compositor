@@ -381,6 +381,24 @@ export const defaultCameraRaw = (): CameraRawSettings => ({ temperature: 0, tint
     purpleHueLow: 270, purpleHueHigh: 310, greenAmount: 0, greenHueLow: 60, greenHueHigh: 120, vignetteAmount: 0, vignetteMidpoint: 50 },
   calibration: { process: 6, shadowTint: 0, redHue: 0, redSaturation: 0, greenHue: 0, greenSaturation: 0, blueHue: 0, blueSaturation: 0 } });
 
+export type CRGroup = 'Light' | 'Color' | 'Effects' | 'Curve' | 'Color Mixer' | 'Color Grading' | 'Detail' | 'Optics' | 'Geometry' | 'Calibration';
+/** CameraRawSettings.applying(shows…): a hidden panel group contributes nothing to the render. */
+export function crApplying(cr: CameraRawSettings, hidden: ReadonlySet<CRGroup>): CameraRawSettings {
+  if (!hidden.size) return cr;
+  const d = defaultCameraRaw(), r: CameraRawSettings = structuredClone(cr);
+  if (hidden.has('Light')) Object.assign(r, { exposure: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0 });
+  if (hidden.has('Color')) Object.assign(r, { temperature: 0, tint: 0, vibrance: 0, saturation: 0 });
+  if (hidden.has('Effects')) Object.assign(r, { texture: 0, clarity: 0, dehaze: 0, glow: 0, vignetteAmount: 0, grainAmount: 0 });
+  if (hidden.has('Curve')) r.curve = d.curve;
+  if (hidden.has('Color Mixer')) r.mixer = d.mixer;
+  if (hidden.has('Color Grading')) r.grading = d.grading;
+  if (hidden.has('Detail')) r.detail = d.detail;
+  if (hidden.has('Optics')) r.optics = d.optics;
+  if (hidden.has('Geometry')) r.geometry = undefined;
+  if (hidden.has('Calibration')) r.calibration = d.calibration;
+  return r;
+}
+
 // CameraRawCurveSettings (CameraRawColor.swift): the parametric curve fitted to Photoshop's, then the point curves.
 const isLinearCR = (p: CRPoint[]) => p.length === 2 && p[0].x === 0 && p[0].y === 0 && p[1].x === 1 && p[1].y === 1;
 function crPoint(x: number, pts: CRPoint[]) { return pts.length < 2 ? x : curveValue(pts.map(q => ({ x: q.x * 255, y: q.y * 255 })), x * 255) / 255; }

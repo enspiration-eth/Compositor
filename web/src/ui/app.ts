@@ -1,5 +1,6 @@
 // The editor session: the web counterpart of Document/EditorSession.swift and ProjectWorkspace.swift. Holds the open
 // projects (tabs), tool state, colors, and every editing action the menus, keys and panels call.
+import { noteRecent, recentFile, forgetRecent, type RecentEntry } from '../engine/recent';
 import {
   type Doc, type Layer, type BlendMode, type Effects, type EffectKey, type Transform, History, newDoc, newPixelLayer, uuid, cloneCanvas,
   getLayer, descendants, ancestors, childrenOf, layerMatrix, solidMask, fullTransform, renderText, rgbCss, BLEND_MODES, invert, apply, renderShape,
@@ -743,11 +744,15 @@ export class App {
   toScreen(x: number, y: number): [number, number] { const p = this.project!; return [x * p.zoom + p.ox, y * p.zoom + p.oy]; }
 
   // ---------- files ----------
-  async openFiles(files: File[], asLayers = false) {
+  /** `handle`: the file's handle when it came from one (Open Recent), so Save writes back to it. */
+  async openFiles(files: File[], asLayers = false, handle?: FileSystemFileHandle) {
     for (const f of files) {
       try {
-        if (isCompZip(f)) { const doc = await readCompZip(new Uint8Array(await f.arrayBuffer()), f.name); this.addProject(doc); this.fit(); }
-        else if (isPsd(f)) { const doc = await readPsdFile(await f.arrayBuffer(), f.name); this.addProject(doc); this.fit(); }
+        if (isCompZip(f)) {
+          const doc = await readCompZip(new Uint8Array(await f.arrayBuffer()), f.name); if (handle) doc.fileHandle = handle;
+          this.addProject(doc); this.fit(); void noteRecent(f.name, handle ? { handle } : { blob: f });
+        }
+        else if (isPsd(f)) { const doc = await readPsdFile(await f.arrayBuffer(), f.name); this.addProject(doc); this.fit(); void noteRecent(f.name, { blob: f }); }
         else if (isImageFile(f)) {
           const c = await fileToCanvas(f);
           const name = f.name.replace(/\.[^.]+$/, '');
@@ -760,6 +765,13 @@ export class App {
         } else toast(`Can’t open ${f.name}: unsupported format.`, 'error');
       } catch (e) { console.warn(e); toast(`Couldn’t open ${f.name}: ${(e as Error).message}`, 'error'); }
     }
+  }
+  /** File › Open Recent. An entry whose file is gone is dropped from the list. */
+  async openRecent(e: RecentEntry) {
+    let f: File;
+    try { f = await recentFile(e); }
+    catch (err) { console.warn(err); toast(`Couldn’t open “${e.name}”. It may have been moved or deleted.`, 'error'); await forgetRecent(e.key); return; }
+    await this.openFiles([f], false, e.handle);
   }
   async openFolder(list: FileList) {
     try { const doc = await readCompFolder(list); this.addProject(doc); this.fit(); }
@@ -787,9 +799,9 @@ export class App {
       try {
         const handle = (d.fileHandle as FileSystemFileHandle | undefined) ?? await w.showSaveFilePicker({ suggestedName: name, types: [{ description: 'Compositor project (zipped)', accept: { 'application/zip': ['.zip'] } }] });
         const wr = await handle.createWritable(); await wr.write(bytes as unknown as BufferSource); await wr.close();
-        d.fileHandle = handle;
-      } catch (e) { if ((e as Error).name === 'AbortError') return; download(bytes, name, 'application/zip'); }
-    } else download(bytes, name, 'application/zip');
+        d.fileHandle = handle; void noteRecent(handle.name, { handle });
+      } catch (e) { if ((e as Error).name === 'AbortError') return; download(bytes, name, 'application/zip'); void noteRecent(name, { blob: new Blob([bytes as BlobPart], { type: 'application/zip' }) }); }
+    } else { download(bytes, name, 'application/zip'); void noteRecent(name, { blob: new Blob([bytes as BlobPart], { type: 'application/zip' }) }); }
     d.dirty = false; toast(`Saved ${name}`); this.emit('saved');
   }
   /** File › Save as .comp Folder… (Chromium): the Mac app's package layout written into a picked directory. */

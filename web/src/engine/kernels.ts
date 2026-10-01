@@ -300,6 +300,27 @@ export function cameraRawDetail(img: ImageData, d: { sharpenAmount: number; shar
 export function cameraRawSharpenMask(img: ImageData, d: { sharpenRadius: number; sharpenDetail: number; sharpenMasking: number }, scale = 1) {
   onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_sharpen_mask_overlay(p, w, h, s, d.sharpenRadius, d.sharpenDetail, d.sharpenMasking, scale));
 }
+/** Clipping indicators (adjust_camera_raw_clip_overlay): clipped shadows blue, clipped highlights red. */
+export function cameraRawClipOverlay(img: ImageData, shadows: boolean, highlights: boolean) {
+  if (!shadows && !highlights) return;
+  onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_clip_overlay(p, w, h, s, shadows ? 1 : 0, highlights ? 1 : 0));
+}
+export const SCOPE_SIDE = 64;
+/** CameraRawScope.make: RGB histogram (levels_histogram) and the hue/saturation vectorscope of the graded pixels. */
+export function cameraRawScope(img: ImageData): { red: number[]; green: number[]; blue: number[]; vectorscope: Float64Array } {
+  return withHeap((heap, m) => {
+    const n = img.width * img.height, side = SCOPE_SIDE;
+    const p = heap.alloc(n * 4);
+    premultiplyInto(img.data, m.HEAPU8, p);
+    const bins = heap.alloc(1024 * 8), vs = heap.alloc(side * side * 8);
+    m.HEAPF64.fill(0, bins >> 3, (bins >> 3) + 1024);
+    m.HEAPF64.fill(0, vs >> 3, (vs >> 3) + side * side);
+    m._levels_histogram(p, 0, n, bins);
+    m._camera_raw_vectorscope(p, n, side, vs);
+    const H = kernels().HEAPF64, all = Array.from(H.subarray(bins >> 3, (bins >> 3) + 1024));
+    return { red: all.slice(256, 512), green: all.slice(512, 768), blue: all.slice(768, 1024), vectorscope: H.slice(vs >> 3, (vs >> 3) + side * side) };
+  });
+}
 export function cameraRawOptics(img: ImageData, o: { removeChromaticAberration: boolean; enableLensProfile: boolean; profileDistortion: number;
   profileVignetting: number; distortionK: number; purpleAmount: number; purpleHueLow: number; purpleHueHigh: number; greenAmount: number;
   greenHueLow: number; greenHueHigh: number; vignetteAmount: number; vignetteMidpoint: number }, scale = 1) {

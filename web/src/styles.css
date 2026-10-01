@@ -194,3 +194,15 @@ body.busy, body.busy * { cursor: progress !important; }
 .hs-samplers { gap: 4px; flex-wrap: wrap; }
 .hs-samplers .btn.small { padding: 2px 7px; font-size: 11px; }
 .btn.on { background: #2f6fde; border-color: #4c8dff; color: #fff; }
+.cr-scope { position: relative; margin: 4px 0; }
+.cr-scope-tris { position: absolute; left: 4px; right: 4px; top: 4px; display: flex; justify-content: space-between; pointer-events: none; }
+.cr-clip-tri { pointer-events: auto; background: none; border: none; padding: 0 2px; font-size: 10px; cursor: pointer; }
+.cr-readout { font: 11px ui-monospace, monospace; color: var(--text2); white-space: pre; margin-bottom: 4px; }
+.cr-section > summary .spacer { flex: 1; }
+.cr-eye { background: none; border: none; color: var(--text2); cursor: pointer; font-size: 12px; padding: 0 4px; }
+.cr-eye.off { color: #ff9f0a; }
+.cr-eye::before { content: '◉'; }
+.cr-eye.off::before { content: '⊘'; }
+.welcome-recent { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.welcome-recent .recent-item { background: none; border: none; color: var(--accent, #4c8dff); text-align: left; padding: 3px 0; cursor: pointer; font: inherit; }
+.welcome-recent .recent-item:hover { text-decoration: underline; }
