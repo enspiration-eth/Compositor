@@ -262,7 +262,7 @@ function renderHeader() {
     case 'brush': case 'spotHealing': case 'cloneStamp': case 'blur': {
       hd.append(title(t === 'brush' ? (app.brush.mode === 'erase' ? 'Eraser' : 'Brush') : t === 'spotHealing' ? 'Spot Healing' : t === 'cloneStamp' ? 'Clone Stamp' : 'Smear'));
       if (t === 'brush') hd.append(seg([['paint', 'Paint'], ['erase', 'Erase']], app.brush.mode, v => app.brush.mode = v));
-      if (t === 'blur') hd.append(seg([['blur', 'Blur'], ['smudge', 'Smudge']], app.smearMode, v => app.smearMode = v));
+      if (t === 'blur') hd.append(seg([['liquify', 'Liquify'], ['blur', 'Blur'], ['smudge', 'Smudge']], app.smearMode, v => app.smearMode = v));
       hd.append(slider({ label: 'Size', min: 1, max: 1000, value: app.brush.size, unit: 'px', width: 210, onInput: v => { app.brush.size = v; app.needsRender = true; }, id: 'brush-size' }),
         slider({ label: 'Hardness', min: 0, max: 100, value: Math.round(app.brush.hardness * 100), unit: '%', width: 190, onInput: v => app.brush.hardness = v / 100 }));
       if (t === 'blur') hd.append(slider({ label: 'Strength', min: 1, max: 100, value: Math.round(app.smearStrength * 100), unit: '%', width: 190, onInput: v => app.smearStrength = v / 100 }));
@@ -330,7 +330,7 @@ function renderStatus() {
     lasso: app.lassoKind === 'freehand' ? 'Drag to select · Drag inside to move · Shift add · Option subtract · ⌘D deselect' : 'Click corners · Click start, double-click or Enter to close · Escape cancel',
     wand: 'Click to select similar colors · Shift add · Option subtract · ⌘D deselect',
     brush: (app.brush.mode === 'erase' ? 'Drag to erase' : 'Drag to paint') + ' · [ ] size · Shift-[ ] hardness · 1–0 opacity · Shift-click straight line · Space to pan',
-    blur: (app.smearMode === 'blur' ? 'Drag to soften' : 'Drag to smudge') + ' · [ ] size · Space to pan',
+    blur: (app.smearMode === 'blur' ? 'Drag to soften' : app.smearMode === 'liquify' ? 'Drag to push pixels' : 'Drag to smudge') + ' · [ ] size · Space to pan',
     cloneStamp: 'Option-click to set the source · Drag to clone · [ ] size · Space to pan',
     spotHealing: 'Drag over blemishes to heal · [ ] size · Space to pan',
     type: 'Click to add text · Click text to edit · ⌘Return finish · Escape cancel',
@@ -642,7 +642,7 @@ function setupKeys() {
       return run(() => ctl.nudge(dx, dy));
     }
     if (e.key === 'Tab' && app.tool === 'shape') return run(() => { app.shape.kind = app.shape.kind === 'Rectangle' ? 'Ellipse' : app.shape.kind === 'Ellipse' ? 'Line' : 'Rectangle'; app.emit('tool'); });
-    if (e.key === 'Tab' && app.tool === 'blur') return run(() => { app.smearMode = app.smearMode === 'blur' ? 'smudge' : 'blur'; app.emit('tool'); });
+    if (e.key === 'Tab' && app.tool === 'blur') return run(() => { app.smearMode = app.smearMode === 'liquify' ? 'blur' : app.smearMode === 'blur' ? 'smudge' : 'liquify'; app.emit('tool'); });
     if (k === '[' || k === ']' || e.key === '{' || e.key === '}') {
       const up = k === ']' || e.key === '}';
       if (e.shiftKey) app.brush.hardness = Math.min(1, Math.max(0, app.brush.hardness + (up ? 0.25 : -0.25)));

@@ -11,6 +11,7 @@ re-implements the platform layers (AppKit/SwiftUI, Metal, Core Image) with web A
 | Layer | Mac app | Web build |
 |---|---|---|
 | Pixel kernels (levels, hue/sat cube, gradient map, B&W, color balance, grain, noise, vignette, tonal contrast, lens correction, Camera Raw, magic wand flood fill + contour tracing, spot healing, content-aware fill, dither, alpha bounds) | C in `Compositor/Rendering/*.c` | **The same C files, compiled unchanged to WebAssembly** with Emscripten (`wasm/build.sh` → `src/wasm/pixels.{mjs,wasm}`) |
+| Smudge and Liquify (`WarpStroke` CPU path in `Document/SmudgeLiquify.swift`) | Swift (+ Metal) | Translated line for line to C (`wasm/src/WarpPixels.c`) and compiled into the same wasm module |
 | libdispatch / Blocks (used by `DitherPixels.c`) | system | Small shims in `wasm/shim/`: a serial `dispatch_apply` and the Blocks runtime symbols, so the C sources compile as-is |
 | Settings, table builders (Levels, Curves Hermite spline, Hue/Sat cube, Exposure, Dither…) | Swift | Line-by-line TypeScript ports (`src/engine/adjustments.ts`) feeding the wasm kernels |
 | Document model (layers, folders, masks, clipping, transforms, effects, text/shape metadata) | Swift + CoreGraphics | TypeScript (`src/engine/document.ts`), same field names as `manifest.json` |
@@ -57,7 +58,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Layer effects:** stroke, drop shadow, inner shadow, outer glow, inner glow, color overlay
 - **Tools:** move/free transform (scale, rotate, flip), rectangle/ellipse marquee, lasso and polygonal lasso, magic wand
   (wasm), crop, brush/eraser (size, hardness, opacity, smoothing; paints on masks too), spot healing (wasm), clone stamp,
-  blur/smudge, gradient, shape, type, eyedropper, hand, zoom
+  Liquify/Blur/Smudge (Liquify and Smudge run the Mac app's warp algorithm in wasm), gradient, shape, type, eyedropper, hand, zoom
 - **Selections:** add/subtract/intersect, all, deselect, inverse, expand, contract, feather, layer pixels, marching ants
   (traced by the wasm `wand_trace`), Content-Aware Fill (wasm)
 - **Image adjustments, destructive or as adjustment layers:** Levels (histogram from wasm), Curves, Hue/Saturation, Exposure,
@@ -76,7 +77,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   are absent.
 - **RAW / HEIC / TIFF import:** these need ImageIO. The browser can only decode what its own image decoders support.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
-- **Liquify, rulers/guides/grid, unlinked masks, perspective/free distort:** not ported yet.
+- **Rulers/guides/grid, unlinked masks, perspective/free distort:** not ported yet.
 - **Text:** styled as a single run (one font/size/color per layer, via canvas 2D instead of Core Text). Shapes and
   gradients are rasterized.
 - **Layer effects and Bloom** are close approximations drawn with canvas 2D filters, not the Core Image pipeline.

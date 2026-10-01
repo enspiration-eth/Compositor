@@ -16,7 +16,7 @@ export const TOOLS: { id: Tool; label: string; key: string }[] = [
   { id: 'move', label: 'Move / Transform (V)', key: 'v' }, { id: 'marquee', label: 'Marquee (M)', key: 'm' }, { id: 'lasso', label: 'Lasso (L)', key: 'l' },
   { id: 'wand', label: 'Magic Wand (W)', key: 'w' }, { id: 'crop', label: 'Crop (C)', key: 'c' }, { id: 'brush', label: 'Brush (B) · Eraser (E)', key: 'b' },
   { id: 'spotHealing', label: 'Spot Healing Brush (J)', key: 'j' }, { id: 'cloneStamp', label: 'Clone Stamp (S) · Option-click sets the source', key: 's' },
-  { id: 'blur', label: 'Smear (R)', key: 'r' }, { id: 'gradient', label: 'Gradient (G)', key: 'g' }, { id: 'shape', label: 'Shape (U) · Shift-U switches shape', key: 'u' },
+  { id: 'blur', label: 'Liquify · Blur · Smudge (R)', key: 'r' }, { id: 'gradient', label: 'Gradient (G)', key: 'g' }, { id: 'shape', label: 'Shape (U) · Shift-U switches shape', key: 'u' },
   { id: 'type', label: 'Type (T)', key: 't' }, { id: 'eyedropper', label: 'Eyedropper (I)', key: 'i' }, { id: 'hand', label: 'Hand (H)', key: 'h' },
   { id: 'zoom', label: 'Zoom (Z)', key: 'z' },
 ];
@@ -35,7 +35,7 @@ export class App {
   marqueeFeather = 0;
   lassoKind: 'freehand' | 'polygonal' = 'freehand';
   wand = { tolerance: 32, contiguous: true, sampleAll: true };
-  smearMode: 'blur' | 'smudge' = 'blur';
+  smearMode: 'liquify' | 'blur' | 'smudge' = 'blur';
   smearStrength = 0.5;
   clone = { aligned: true, sampleAll: false };
   gradient = { kind: 'linear' as 'linear' | 'radial', opacity: 1, toTransparent: false };

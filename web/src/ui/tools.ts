@@ -1,4 +1,5 @@
 import { Renderer } from '../engine/render';
+import { WarpSession } from '../engine/kernels';
 // The canvas and its tools: the web counterpart of Rendering/EditorCanvas.swift, BrushStroke.swift, CloneStamp.swift,
 // BlurTool.swift, Gradient.swift, ShapeTool.swift, TypeTool.swift, Crop.swift and the selection tools. The GPU draws
 // the document (engine/render.ts); a 2D overlay above it draws marching ants, transform handles, crop and cursors.
@@ -15,6 +16,7 @@ interface Stroke {
   layer: Layer; target: HTMLCanvasElement; orig: HTMLCanvasElement; buffer: HTMLCanvasElement; sel: HTMLCanvasElement | null;
   inv: Mat; scale: number; last: Pt | null; smooth: Pt | null; kind: 'paint' | 'erase' | 'mask' | 'heal' | 'clone' | 'smear';
   color: string; cloneOffset?: Pt; dirty: [number, number, number, number] | null; lastLayerPt?: Pt;
+  warp?: WarpSession; warpLast?: Pt;
 }
 
 export class CanvasController {
@@ -482,7 +484,7 @@ export class CanvasController {
     if (!onMask && !a.canvas) return;
     const tool = app.tool;
     if (tool === 'cloneStamp' && !this.cloneSource) { toast('Option-click to set the clone source first.'); return; }
-    const label = tool === 'spotHealing' ? 'Spot Healing' : tool === 'cloneStamp' ? 'Clone Stamp' : tool === 'blur' ? (app.smearMode === 'blur' ? 'Blur' : 'Smudge') : app.brush.mode === 'erase' ? 'Erase' : 'Brush';
+    const label = tool === 'spotHealing' ? 'Spot Healing' : tool === 'cloneStamp' ? 'Clone Stamp' : tool === 'blur' ? (app.smearMode === 'blur' ? 'Blur' : app.smearMode === 'liquify' ? 'Liquify' : 'Smudge') : app.brush.mode === 'erase' ? 'Erase' : 'Brush';
     app.edit(label);
     const target = onMask ? app.ownMask(a) : app.ownPixels(a);
     const m = layerMatrix(a), inv = invert(m);
@@ -491,6 +493,16 @@ export class CanvasController {
     const color = onMask ? app.grayCss(app.brush.mode === 'erase' ? app.bg : app.fg) : rgbCss(app.fg);
     this.stroke = { layer: a, target, orig: cloneCanvas(target), buffer: canvasOf(target.width, target.height),
       sel: Sel.selectionInLayer(d, a, target.width, target.height), inv, scale, last: null, smooth: null, kind, color, dirty: null };
+    if (kind === 'smear' && app.smearMode !== 'blur') {
+      // Smudge / Liquify: the Mac app's WarpStroke, running in wasm on the layer's own pixels.
+      const r = imageDataOf(target);
+      this.stroke.warp = new WarpSession(r, app.smearMode, Math.max(2, app.brush.size * scale), Math.min(0.98, Math.max(0, app.brush.hardness)), Math.min(1, Math.max(0.01, app.smearStrength)));
+      const [lx, ly] = apply(inv, dpt[0], dpt[1]);
+      this.stroke.warpLast = [lx, ly];
+      if (app.smearMode === 'smudge') this.stroke.warp.pickUp(lx, ly);
+      this.stroke.last = dpt; this.stroke.smooth = dpt;
+      return;
+    }
     if (kind === 'clone') {
       if (!this.cloneOffset || !app.clone.aligned) this.cloneOffset = [this.cloneSource![0] - dpt[0], this.cloneSource![1] - dpt[1]];
       this.stroke.cloneOffset = this.cloneOffset;
@@ -506,6 +518,7 @@ export class CanvasController {
   }
   strokeTo(dpt: Pt, first = false) {
     const st = this.stroke!;
+    if (st.warp) { this.warpTo(dpt); return; }
     // Smoothing: the brush trails the pointer, as Compositor's smoothing slider does.
     const k = 1 - Math.min(0.95, app.brush.smoothing * 0.9);
     st.smooth = !st.smooth || first ? dpt : [st.smooth[0] + (dpt[0] - st.smooth[0]) * k, st.smooth[1] + (dpt[1] - st.smooth[1]) * k];
@@ -513,6 +526,27 @@ export class CanvasController {
     if (!st.last) { this.dab(p); st.last = p; }
     else this.dabLine(st.last, p);
     this.recomposite();
+  }
+  /** WarpStroke.append: dabs from the last point to this one, a fixed fraction of the brush apart. */
+  warpTo(dpt: Pt) {
+    const st = this.stroke!, w = st.warp!, from = st.warpLast!;
+    const [px, py] = apply(st.inv, dpt[0], dpt[1]);
+    const distance = Math.hypot(px - from[0], py - from[1]);
+    const spacing = Math.max(1, w.diameter * (w.mode === 'smudge' ? 0.005 : 0.025));
+    if (distance < spacing) return;
+    const steps = Math.ceil(distance / spacing);
+    let prev = from;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps, next: Pt = [from[0] + (px - from[0]) * t, from[1] + (py - from[1]) * t];
+      if (w.mode === 'smudge') w.smudge(next[0], next[1]); else w.push(prev[0], prev[1], next[0], next[1]);
+      prev = next;
+    }
+    st.warpLast = [px, py];
+    const r = w.radius + Math.ceil(w.diameter * w.strength) + 4;
+    const x0 = Math.min(from[0], px) - r, y0 = Math.min(from[1], py) - r, x1 = Math.max(from[0], px) + r, y1 = Math.max(from[1], py) + r;
+    const img = w.read(x0, y0, x1, y1);
+    ctx2d(st.target).putImageData(img, Math.max(0, Math.floor(x0)), Math.max(0, Math.floor(y0)));
+    st.layer.rev++; app.needsRender = true;
   }
   dabLine(from: Pt, to: Pt) {
     const st = this.stroke!;
@@ -595,6 +629,18 @@ export class CanvasController {
   }
   endStroke() {
     const st = this.stroke!; this.stroke = null;
+    if (st.warp) {
+      st.warp.dispose();
+      if (st.sel) {
+        // Only what's inside the selection moves, as the Mac app's raster edit is clipped to it.
+        const moved = cloneCanvas(st.target), mx = ctx2d(moved);
+        mx.globalCompositeOperation = 'destination-in'; mx.drawImage(st.sel, 0, 0);
+        const t = ctx2d(st.target); t.save(); t.globalCompositeOperation = 'copy'; t.drawImage(st.orig, 0, 0); t.restore();
+        const inv = cloneCanvas(st.sel), ix = ctx2d(inv); ix.globalCompositeOperation = 'source-out'; ix.fillRect(0, 0, inv.width, inv.height);
+        t.save(); t.globalCompositeOperation = 'destination-in'; t.drawImage(inv, 0, 0); t.restore();
+        t.drawImage(moved, 0, 0);
+      }
+    }
     this.lastStrokeEnd = st.smooth;
     if (st.kind === 'heal') {
       const img = imageDataOf(st.target), bd = ctx2d(st.buffer).getImageData(0, 0, st.buffer.width, st.buffer.height).data;

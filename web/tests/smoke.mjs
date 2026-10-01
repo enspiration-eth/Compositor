@@ -108,6 +108,20 @@ try {
     assert((await st()).layers === n + 1, 'adjustment added');
   });
 
+  await step('Liquify push (wasm warp kernel)', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Hills').id); app.smearMode = 'liquify'; app.smearStrength = 0.6; app.brush.size = 220; });
+    await page.click('.rail-btn[data-tool="blur"]');
+    const alphaAt = () => page.evaluate(() => { const { app } = window.compositor; return app.active.canvas.getContext('2d').getImageData(800, 640, 1, 1).data[3]; });
+    const before = await alphaAt();
+    const [x0, y0] = await toScreen(800, 800), [x1, y1] = await toScreen(800, 600);
+    await page.mouse.move(x0, y0); await page.mouse.down();
+    for (let i = 1; i <= 15; i++) await page.mouse.move(x0, y0 + (y1 - y0) * i / 15);
+    await page.mouse.up();
+    const after = await alphaAt();
+    assert(before === 0 && after > 0, `hill pushed up: alpha ${before} -> ${after}`);
+    assert((await st()).undo > 0, 'liquify recorded');
+  });
+
   await step('magic wand selection (wasm flood fill + trace)', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers[0].id); });
     await page.click('.rail-btn[data-tool="wand"]');

@@ -233,3 +233,36 @@ export function dither(img: ImageData, d: DitherParamsJS): boolean {
 export function ditherDots(img: ImageData, block: number, gap: number[]) {
   onPremultiplied(img, (p, w, h, s, heap, m) => m._dither_dots(p, w, h, s, block, heap.bytes(gap)));
 }
+
+/** A Smudge or Liquify stroke over one layer's pixels, held premultiplied in the wasm heap for the stroke's length
+ *  (WarpStroke in SmudgeLiquify.swift, whose CPU path wasm/src/WarpPixels.c translates). */
+export class WarpSession {
+  private ptr: number;
+  readonly width: number; readonly height: number;
+  constructor(img: ImageData, readonly mode: 'smudge' | 'liquify', readonly diameter: number, readonly hardness: number, readonly strength: number) {
+    const m = kernels();
+    this.width = img.width; this.height = img.height;
+    this.ptr = m._malloc(img.width * img.height * 4);
+    if (!this.ptr) throw new Error('Out of memory in WebAssembly heap');
+    premultiplyInto(img.data, m.HEAPU8, this.ptr);
+  }
+  get radius() { return Math.ceil(this.diameter / 2); }
+  pickUp(x: number, y: number) { kernels()._warp_pick_up(this.ptr, this.width, this.height, x, y, this.radius); }
+  smudge(x: number, y: number) { kernels()._warp_smudge(this.ptr, this.width, this.height, x, y, this.radius, this.diameter, this.hardness, this.strength); }
+  push(ax: number, ay: number, bx: number, by: number) {
+    kernels()._warp_push(this.ptr, this.width, this.height, ax, ay, bx, by, this.radius, this.diameter, this.hardness, this.strength);
+  }
+  /** The working copy's pixels in [x0, y0, x1, y1), straight alpha. */
+  read(x0: number, y0: number, x1: number, y1: number): ImageData {
+    x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0));
+    x1 = Math.min(this.width, Math.ceil(x1)); y1 = Math.min(this.height, Math.ceil(y1));
+    const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0), out = new ImageData(w, h), heap = kernels().HEAPU8;
+    const row = new Uint8ClampedArray(w * 4);
+    for (let y = 0; y < h && y0 + y < this.height; y++) {
+      unpremultiplyFrom(heap, this.ptr + ((y0 + y) * this.width + x0) * 4, row);
+      out.data.set(row, y * w * 4);
+    }
+    return out;
+  }
+  dispose() { if (this.ptr) { kernels()._free(this.ptr); this.ptr = 0; } }
+}
