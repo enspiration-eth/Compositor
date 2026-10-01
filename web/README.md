@@ -65,6 +65,9 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   Gradient Map, Black & White, Color Balance, Grain, Invert
 - **Filters:** Gaussian Blur, Motion Blur, Add Noise, Vignette, Bloom/Glow, Dither, Tonal Contrast, Lens Correction,
   Camera Raw (basic, presence, color and effects sections)
+- **Rulers, guides and grid:** rulers you drag guides out of (⌘R); guides saved in the project's manifest, moved
+  or deleted with the Move tool, locked or cleared, or added by position; a layout grid with Grid Settings (⌘'); Snap
+  (⇧⌘;) to guides, grid, layers and document bounds for move, marquee, crop and shape
 - **Canvas:** canvas size with anchor, image size, trim, crop to selection, flip canvas, zoom/fit/100%, pixel grid at
   high zoom, checkerboard transparency
 - **Undo/redo** with copy-on-write pixel snapshots; Mac keyboard shortcuts (⌘ on Mac, Ctrl elsewhere)
@@ -77,7 +80,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   are absent.
 - **RAW / HEIC / TIFF import:** these need ImageIO. The browser can only decode what its own image decoders support.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
-- **Rulers/guides/grid, unlinked masks, perspective/free distort:** not ported yet.
+- **Unlinked masks, perspective/free distort:** not ported yet.
 - **Text:** styled as a single run (one font/size/color per layer, via canvas 2D instead of Core Text). Shapes and
   gradients are rasterized.
 - **Layer effects and Bloom** are close approximations drawn with canvas 2D filters, not the Core Image pipeline.

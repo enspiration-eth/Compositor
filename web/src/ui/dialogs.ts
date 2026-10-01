@@ -9,6 +9,7 @@ import {
 import { levelsHistogram } from '../engine/kernels';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas } from '../engine/document';
 import * as Sel from '../engine/selection';
+import { view, setView, addGuide } from './guides';
 
 let openPanel: { panel: Panel; cancel: () => void } | null = null;
 export function closeOpenPanel() { if (openPanel) { openPanel.cancel(); openPanel.panel.close(); openPanel = null; } }
@@ -438,4 +439,29 @@ export function showShortcuts() {
     ['Canvas Size / Image Size', '⌥⌘C / ⌥⌘I'], ['Free Transform', '⌘T'], ['Blend mode next / previous', '⇧= / ⇧−'],
   ];
   modal('Keyboard Shortcuts', h('div', { class: 'shortcut-list' }, ...rows.map(([a, b]) => h('div', { class: 'shortcut-row' }, h('span', {}, a), h('kbd', {}, b)))), [{ label: 'Done', primary: true, onClick: () => {} }]);
+}
+
+// GridSettingsSheet.swift: the layout grid's spacing and subdivisions.
+export function showGridSettings() {
+  const sp = h('input', { type: 'number', value: view.gridSpacing, min: 1, max: 10000, class: 'dim', id: 'grid-spacing' }) as HTMLInputElement;
+  const sub = h('input', { type: 'number', value: view.gridSubdivisions, min: 1, max: 100, class: 'dim', id: 'grid-subdivisions' }) as HTMLInputElement;
+  modal('Grid Settings', h('div', {},
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Gridline every'), sp, h('span', { class: 'unit' }, 'px')),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Subdivisions'), sub)),
+    [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => {
+      setView('gridSpacing', Math.min(10000, Math.max(1, Math.round(+sp.value || 64))));
+      setView('gridSubdivisions', Math.min(100, Math.max(1, Math.round(+sub.value || 1))));
+      if (!view.grid) setView('grid', true);
+    } }]);
+}
+export function showNewGuide() {
+  const d = app.doc; if (!d) return;
+  let axis: 'horizontal' | 'vertical' = 'vertical';
+  const pos = h('input', { type: 'number', value: Math.round(d.width / 2), class: 'dim' }) as HTMLInputElement;
+  const seg = h('div', { class: 'segmented' });
+  const draw = () => { seg.replaceChildren(...(['horizontal', 'vertical'] as const).map(a => h('button', { class: a === axis ? 'on' : '', onclick: () => { axis = a; pos.value = String(Math.round((a === 'vertical' ? d.width : d.height) / 2)); draw(); } }, a === 'vertical' ? 'Vertical' : 'Horizontal'))); };
+  draw();
+  modal('New Guide', h('div', {}, h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Orientation'), seg),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Position'), pos, h('span', { class: 'unit' }, 'px'))),
+    [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => { addGuide(axis, +pos.value || 0); } }]);
 }

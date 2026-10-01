@@ -170,3 +170,8 @@ kbd { font-family: inherit; color: var(--text2); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); } .toast.error { background: #5a2020; border-color: #8a3a3a; }
 .tool-header .slider-row { margin-right: 6px; }
 .tool-header .slider-label { min-width: 0; }
+.ruler { position: absolute; z-index: 2; cursor: default; }
+.ruler-x { left: 18px; top: 0; cursor: row-resize; }
+.ruler-y { left: 0; top: 18px; cursor: col-resize; }
+.ruler-corner { position: absolute; left: 0; top: 0; width: 18px; height: 18px; background: #262626; border-right: 1px solid #1a1a1a; border-bottom: 1px solid #1a1a1a; z-index: 2; }
+.modal .lbl { min-width: 110px; }

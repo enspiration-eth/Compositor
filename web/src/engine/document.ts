@@ -49,14 +49,17 @@ export interface Doc {
   selection: HTMLCanvasElement | null;  // document-size, alpha = selected
   selRev: number;
   dirty: boolean; fileHandle?: unknown;
+  guides: Guide[];
 }
+/** CanvasGuide (Document/Guides.swift): document pixels, Y for a horizontal guide, X for a vertical one. */
+export interface Guide { id: string; axis: 'horizontal' | 'vertical'; position: number }
 
 export const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
   const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16);
 })).toUpperCase();
 
 export function newDoc(width: number, height: number, name = 'Untitled'): Doc {
-  return { id: uuid(), name, width, height, resolution: 72, layers: [], activeId: null, selectedIds: [], selection: null, selRev: 0, dirty: false };
+  return { id: uuid(), name, width, height, resolution: 72, layers: [], activeId: null, selectedIds: [], selection: null, selRev: 0, dirty: false, guides: [] };
 }
 export function fullTransform(doc: Doc): Transform { return { x: 0, y: 0, w: doc.width, h: doc.height, rotation: 0, flipX: false, flipY: false, sampling: 'High quality' }; }
 export function newPixelLayer(doc: Doc, name: string, canvas?: HTMLCanvasElement, t?: Partial<Transform>): Layer {
@@ -122,7 +125,7 @@ export const rgbCss = (c: RGB | { red: number; green: number; blue: number }, a 
 
 // ---------- history (DocumentHistory.swift: whole-document snapshots that share untouched pixels) ----------
 interface Snapshot { label: string; layers: Layer[]; activeId: string | null; selectedIds: string[]; width: number; height: number;
-  selection: HTMLCanvasElement | null; }
+  selection: HTMLCanvasElement | null; guides: Guide[]; }
 export class History {
   undoStack: Snapshot[] = []; redoStack: Snapshot[] = [];
   private shared = new WeakSet<HTMLCanvasElement>();
@@ -133,7 +136,7 @@ export class History {
       shape: l.shape ? structuredClone(l.shape) : undefined }));
     for (const l of layers) { if (l.canvas) this.shared.add(l.canvas); if (l.mask) this.shared.add(l.mask); }
     if (doc.selection) this.shared.add(doc.selection);
-    return { label, layers, activeId: doc.activeId, selectedIds: [...doc.selectedIds], width: doc.width, height: doc.height, selection: doc.selection };
+    return { label, layers, activeId: doc.activeId, selectedIds: [...doc.selectedIds], width: doc.width, height: doc.height, selection: doc.selection, guides: doc.guides.map(g => ({ ...g })) };
   }
   /** Call before changing the document. */
   push(doc: Doc, label: string) {
@@ -149,7 +152,7 @@ export class History {
   private restore(doc: Doc, s: Snapshot) {
     doc.layers = s.layers.map(l => ({ ...l, rev: l.rev + 1000 + Math.floor(Math.random() * 1e6) }));
     doc.activeId = s.activeId; doc.selectedIds = s.selectedIds; doc.width = s.width; doc.height = s.height;
-    doc.selection = s.selection; doc.selRev++;
+    doc.selection = s.selection; doc.selRev++; doc.guides = s.guides.map(g => ({ ...g }));
     doc.dirty = true;
   }
   undo(doc: Doc): string | null {

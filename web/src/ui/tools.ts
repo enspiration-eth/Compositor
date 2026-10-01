@@ -1,5 +1,7 @@
 import { Renderer } from '../engine/render';
 import { WarpSession } from '../engine/kernels';
+import { view, guideAt, snapDelta, snapPoint, drawRuler, drawLines, RULER } from './guides';
+import type { Guide } from '../engine/document';
 // The canvas and its tools: the web counterpart of Rendering/EditorCanvas.swift, BrushStroke.swift, CloneStamp.swift,
 // BlurTool.swift, Gradient.swift, ShapeTool.swift, TypeTool.swift, Crop.swift and the selection tools. The GPU draws
 // the document (engine/render.ts); a 2D overlay above it draws marching ants, transform handles, crop and cursors.
@@ -35,6 +37,8 @@ export class CanvasController {
   cloneOffset: Pt | null = null;
   lastStrokeEnd: Pt | null = null;
   textEditor: HTMLTextAreaElement | null = null;
+  rulerX: HTMLCanvasElement; rulerY: HTMLCanvasElement; rulerCorner: HTMLElement;
+  guideDrag: { guide: Guide; isNew: boolean; startPos: number } | null = null;
   antsPhase = 0;
 
   constructor(stage: HTMLElement) {
@@ -43,6 +47,25 @@ export class CanvasController {
     this.overlay = document.createElement('canvas'); this.overlay.className = 'overlay-canvas';
     stage.append(this.gl, this.overlay);
     app.renderer = new Renderer(this.gl);
+    const wrap = stage.parentElement ?? stage;
+    this.rulerX = document.createElement('canvas'); this.rulerX.className = 'ruler ruler-x';
+    this.rulerY = document.createElement('canvas'); this.rulerY.className = 'ruler ruler-y';
+    this.rulerCorner = document.createElement('div'); this.rulerCorner.className = 'ruler-corner';
+    wrap.append(this.rulerX, this.rulerY, this.rulerCorner);
+    for (const [c, axis] of [[this.rulerX, 'horizontal'], [this.rulerY, 'vertical']] as const) {
+      c.addEventListener('pointerdown', e => {
+        const p = app.project; if (!p || e.button !== 0) return;
+        c.setPointerCapture(e.pointerId);
+        const s = this.local(e), dp = app.toDoc(...s);
+        this.guideDrag = { guide: { id: '', axis, position: axis === 'horizontal' ? Math.round(dp[1]) : Math.round(dp[0]) }, isNew: true, startPos: 0 };
+        app.needsRender = true;
+      });
+      c.addEventListener('pointermove', e => { if (this.guideDrag) this.dragGuideTo(e); else { this.pointer = this.local(e); app.needsRender = true; } });
+      c.addEventListener('pointerup', e => this.endGuideDrag(e));
+      c.addEventListener('pointercancel', e => this.endGuideDrag(e));
+    }
+    app.on(what => { if (what === 'view-settings') this.layoutRulers(); });
+    this.layoutRulers();
     this.octx = this.overlay.getContext('2d')!;
     new ResizeObserver(() => this.resize()).observe(stage);
     stage.addEventListener('pointerdown', e => this.down(e));
@@ -53,6 +76,38 @@ export class CanvasController {
     stage.addEventListener('pointerleave', () => { this.pointer = null; app.needsRender = true; });
     stage.addEventListener('wheel', e => this.wheel(e), { passive: false });
     stage.addEventListener('contextmenu', e => e.preventDefault());
+  }
+  layoutRulers() {
+    const on = view.rulers;
+    for (const el of [this.rulerX, this.rulerY, this.rulerCorner]) el.style.display = on ? '' : 'none';
+    this.stage.style.left = on ? `${RULER}px` : ''; this.stage.style.top = on ? `${RULER}px` : '';
+    app.needsRender = true;
+  }
+  dragGuideTo(e: PointerEvent) {
+    const g = this.guideDrag!, s = this.local(e), dp = app.toDoc(...s);
+    let pos = g.guide.axis === 'horizontal' ? dp[1] : dp[0];
+    // Guides snap to the canvas edges, center and layer edges like everything else.
+    pos += snapDelta(g.guide.axis === 'horizontal' ? 'y' : 'x', [pos]);
+    g.guide.position = Math.round(pos);
+    this.pointer = s; app.needsRender = true;
+  }
+  endGuideDrag(e: PointerEvent) {
+    const g = this.guideDrag; if (!g) return;
+    this.guideDrag = null;
+    const d = app.doc; if (!d) return;
+    const s = this.local(e), r = this.stage.getBoundingClientRect();
+    const outside = s[0] < 0 || s[1] < 0 || s[0] > r.width || s[1] > r.height;
+    if (g.isNew) {
+      if (outside) { app.needsRender = true; return; }
+      app.edit('New Guide'); d.guides.push({ ...g.guide, id: crypto.randomUUID ? crypto.randomUUID().toUpperCase() : String(Date.now()) });
+      if (!view.guides) view.guides = true;
+    } else {
+      // The guide moved live; record the move (or the removal, when dropped off the canvas) as one undo step.
+      const moved = g.guide.position; g.guide.position = g.startPos;
+      app.edit(outside ? 'Delete Guide' : 'Move Guide');
+      if (outside) d.guides = d.guides.filter(x => x.id !== g.guide.id); else g.guide.position = moved;
+    }
+    app.changed('guides');
   }
   resize() {
     const r = this.stage.getBoundingClientRect();
@@ -69,8 +124,18 @@ export class CanvasController {
     const p = app.project;
     if (!p) { app.renderer.clearScreen(); this.octx.clearRect(0, 0, this.overlay.width, this.overlay.height); return; }
     app.renderer.render(p.doc);
-    app.renderer.present(p.doc, p.zoom, p.ox, p.oy, this.dpr);
+    app.renderer.present(p.doc, p.zoom, p.ox, p.oy, this.dpr, view.pixelGrid);
     this.drawOverlay();
+    if (view.rulers) this.drawRulers();
+  }
+  drawRulers() {
+    const r = this.stage.getBoundingClientRect();
+    const size = (c: HTMLCanvasElement, w: number, h: number) => {
+      const W = Math.max(1, Math.round(w * this.dpr)), H = Math.max(1, Math.round(h * this.dpr));
+      if (c.width !== W || c.height !== H) { c.width = W; c.height = H; c.style.width = `${w}px`; c.style.height = `${h}px`; }
+    };
+    size(this.rulerX, r.width, RULER); size(this.rulerY, RULER, r.height);
+    drawRuler(this.rulerX, 'x', this.dpr, this.pointer); drawRuler(this.rulerY, 'y', this.dpr, this.pointer);
   }
   drawOverlay() {
     const x = this.octx, p = app.project!, d = p.doc;
@@ -79,6 +144,7 @@ export class CanvasController {
     const S = (a: number, b: number) => app.toScreen(a, b);
     // canvas border
     const [bx, by] = S(0, 0); x.strokeStyle = 'rgba(0,0,0,0.6)'; x.lineWidth = 1; x.strokeRect(Math.round(bx) - 0.5, Math.round(by) - 0.5, d.width * p.zoom + 1, d.height * p.zoom + 1);
+    drawLines(x, this.overlay.width / this.dpr, this.overlay.height / this.dpr, this.guideDrag?.guide ?? null);
     // marching ants
     const loops = Sel.selectionOutline(d);
     if (loops) {
@@ -167,10 +233,16 @@ export class CanvasController {
     const p = app.project; if (!p) return;
     if ((e.target as HTMLElement).tagName === 'TEXTAREA') return;
     this.stage.setPointerCapture(e.pointerId);
-    const s = this.local(e), dpt = app.toDoc(...s);
+    const s = this.local(e);
+    let dpt = app.toDoc(...s);
+    if (['marquee', 'crop', 'shape'].includes(app.tool)) dpt = snapPoint(...dpt);
     this.pointer = s;
     if (e.button === 1 || this.spaceDown || app.tool === 'hand') { this.drag = { kind: 'pan', start: s, startDoc: dpt, data: { ox: p.ox, oy: p.oy } }; return; }
     if (e.button !== 0) return;
+    if (app.tool === 'move' && !e.altKey) {
+      const g = guideAt(s[0], s[1]);
+      if (g) { this.guideDrag = { guide: g, isNew: false, startPos: g.position }; return; }
+    }
     const d = p.doc, mode: Sel.SelMode = e.shiftKey && e.altKey ? 'intersect' : e.shiftKey ? 'add' : e.altKey ? 'subtract' : 'replace';
     switch (app.tool as Tool) {
       case 'zoom': {
@@ -216,9 +288,12 @@ export class CanvasController {
     }
   }
   move(e: PointerEvent) {
+    if (this.guideDrag) { this.dragGuideTo(e); return; }
     const p = app.project; const s = this.local(e); this.pointer = s; app.needsRender = true;
     if (!p) return;
-    const dpt = app.toDoc(...s), dr = this.drag;
+    const dr = this.drag;
+    let dpt = app.toDoc(...s);
+    if (dr && ['marquee', 'cropNew', 'cropHandle', 'shape'].includes(dr.kind)) dpt = snapPoint(...dpt);
     this.updateCursor(s);
     if (this.stroke && e.buttons & 1) {
       const events = (e.getCoalescedEvents?.() ?? [e]);
@@ -265,6 +340,7 @@ export class CanvasController {
     }
   }
   up(e: PointerEvent) {
+    if (this.guideDrag) { this.endGuideDrag(e); return; }
     const p = app.project; const dr = this.drag; this.drag = null;
     if (this.stroke) { this.endStroke(); return; }
     if (!p || !dr) return;
@@ -317,6 +393,7 @@ export class CanvasController {
     else if (['brush', 'spotHealing', 'cloneStamp', 'blur'].includes(t)) c = 'none';
     else if (['marquee', 'lasso', 'wand', 'crop', 'gradient', 'shape', 'eyedropper'].includes(t)) c = 'crosshair';
     else if (t === 'type') c = 'text';
+    else if (t === 'move' && guideAt(s[0], s[1])) c = guideAt(s[0], s[1])!.axis === 'vertical' ? 'col-resize' : 'row-resize';
     else if (t === 'move') {
       const a = app.active;
       const hit = a ? this.handles(a).find(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8) : null;
@@ -351,15 +428,14 @@ export class CanvasController {
     if (!hit) {
       let dx = dpt[0] - dr.startDoc[0], dy = dpt[1] - dr.startDoc[1];
       if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
-      // Snap the primary layer's edges and center to the canvas edges and center (Compositor's Snap To document bounds).
-      const d = app.doc!, st = starts[layers.indexOf(data.layer as Layer)] ?? starts[0];
-      const tol = 6 / app.project!.zoom;
-      const snap = (pos: number, size: number, total: number) => {
-        for (const [edge, target] of [[pos, 0], [pos + size, total], [pos + size / 2, total / 2], [pos, total / 2], [pos + size, total / 2]] as [number, number][])
-          if (Math.abs(edge - target) < tol) return target - edge;
-        return 0;
-      };
-      if (st && st.rotation % 360 === 0) { dx += snap(st.x + dx, st.w, d.width); dy += snap(st.y + dy, st.h, d.height); }
+      // Snap the primary layer's bounds (edges and center) to guides, grid, other layers and the canvas (Snap To).
+      const st = starts[layers.indexOf(data.layer as Layer)] ?? starts[0];
+      if (st) {
+        const cs = layerCorners({ ...(data.layer as Layer), transform: st }), xs = cs.map(c => c[0]), ys = cs.map(c => c[1]);
+        const x0 = Math.min(...xs) + dx, x1 = Math.max(...xs) + dx, y0 = Math.min(...ys) + dy, y1 = Math.max(...ys) + dy;
+        if (!(e.shiftKey && dx === 0)) dx += snapDelta('x', [x0, (x0 + x1) / 2, x1], layers);
+        if (!(e.shiftKey && dy === 0)) dy += snapDelta('y', [y0, (y0 + y1) / 2, y1], layers);
+      }
       layers.forEach((l, i) => { l.transform = { ...starts[i], x: Math.round(starts[i].x + dx), y: Math.round(starts[i].y + dy) }; });
     } else {
       const l = data.layer as Layer, t0 = starts[layers.indexOf(l)] ?? (l.transform);

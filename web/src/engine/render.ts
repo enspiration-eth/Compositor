@@ -321,7 +321,7 @@ export class Renderer {
   }
 
   /** Draws the composite to the screen at `zoom` (screen px per doc px) with the doc's top-left at offset (CSS px). */
-  present(doc: Doc, zoom: number, offX: number, offY: number, dpr: number) {
+  present(doc: Doc, zoom: number, offX: number, offY: number, dpr: number, pixelGrid = true) {
     const gl = this.gl;
     if (!this.composite) return;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -339,7 +339,7 @@ export class Renderer {
     gl.uniform1f(u('u_scale'), scale);
     gl.uniform1f(u('u_dpr'), dpr);
     gl.uniform2f(u('u_docSize'), doc.width, doc.height);
-    gl.uniform1i(u('u_pixelGrid'), zoom >= 12 ? 1 : 0);
+    gl.uniform1i(u('u_pixelGrid'), pixelGrid && zoom >= 8 ? 1 : 0);
     gl.bindVertexArray(this.quad); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
   clearScreen() {

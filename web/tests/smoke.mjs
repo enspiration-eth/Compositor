@@ -111,15 +111,48 @@ try {
   await step('Liquify push (wasm warp kernel)', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Hills').id); app.smearMode = 'liquify'; app.smearStrength = 0.6; app.brush.size = 220; });
     await page.click('.rail-btn[data-tool="blur"]');
-    const alphaAt = () => page.evaluate(() => { const { app } = window.compositor; return app.active.canvas.getContext('2d').getImageData(800, 640, 1, 1).data[3]; });
+    const alphaAt = () => page.evaluate(() => { const { app } = window.compositor; return app.active.canvas.getContext('2d').getImageData(800, 770, 1, 1).data[3]; });
     const before = await alphaAt();
-    const [x0, y0] = await toScreen(800, 800), [x1, y1] = await toScreen(800, 600);
+    const [x0, y0] = await toScreen(800, 900), [x1, y1] = await toScreen(800, 640);
     await page.mouse.move(x0, y0); await page.mouse.down();
     for (let i = 1; i <= 15; i++) await page.mouse.move(x0, y0 + (y1 - y0) * i / 15);
     await page.mouse.up();
     const after = await alphaAt();
     assert(before === 0 && after > 0, `hill pushed up: alpha ${before} -> ${after}`);
     assert((await st()).undo > 0, 'liquify recorded');
+  });
+
+  await step('rulers, grid, guides + snapping', async () => {
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await page.evaluate(() => localStorage.removeItem('compositor.view'));
+    await menu('View', 'Rulers');
+    await page.waitForSelector('.ruler-x', { state: 'visible' });
+    await page.keyboard.press(`${mod}+'`); // grid
+    // Drag a vertical guide out of the left ruler to x≈400.
+    const ry = await page.locator('.ruler-y').boundingBox();
+    const [gx, gy] = await toScreen(400, 300);
+    await page.mouse.move(ry.x + 9, gy); await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(ry.x + 9 + (gx - ry.x - 9) * i / 10, gy);
+    await page.mouse.up();
+    const guides = await page.evaluate(() => window.compositor.app.doc.guides);
+    assert(guides.length === 1 && guides[0].axis === 'vertical' && Math.abs(guides[0].position - 400) <= 8, 'guide ' + JSON.stringify(guides));
+    await page.keyboard.press(`${mod}+'`); // grid off so the guide is the nearest target
+    // Move the text layer so its left edge lands within snapping distance of the guide.
+    await page.click('.rail-btn[data-tool="move"]');
+    const info = await page.evaluate(() => { const { app } = window.compositor; const l = app.doc.layers.find(x => x.name === 'Compositor'); app.setActive(l.id); return { x: l.transform.x, y: l.transform.y, w: l.transform.w, h: l.transform.h }; });
+    const gpos = guides[0].position;
+    const [sx, sy] = await toScreen(info.x + info.w / 2, info.y + info.h / 2);
+    const [tx] = await toScreen(info.x + info.w / 2 + (gpos - info.x) + 3, 0);
+    await page.mouse.move(sx, sy); await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(sx + (tx - sx) * i / 10, sy + 40 * i / 10);
+    await page.mouse.up();
+    const nx = await page.evaluate(() => window.compositor.app.active.transform.x);
+    assert(nx === gpos, `snapped to guide: x=${nx} guide=${gpos}`);
+    await page.waitForTimeout(200);
+    await page.keyboard.press(`${mod}+'`);
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${SHOTS}/04-rulers-guides-grid.png` });
+    await page.keyboard.press(`${mod}+'`);
   });
 
   await step('magic wand selection (wasm flood fill + trace)', async () => {
@@ -143,6 +176,7 @@ try {
     const manifestName = Object.keys(files).find(n => n.endsWith('manifest.json'));
     const manifest = JSON.parse(strFromU8(files[manifestName]));
     assert(manifest.layers?.length >= 5, 'manifest layers ' + manifest.layers?.length);
+    assert(manifest.guides?.length === 1, 'manifest guides');
     console.log(`(manifest v${manifest.version}, ${manifest.layers.length} layers, ${Object.keys(files).length} entries) `);
     // Round-trip: reopen the saved project.
     await page.evaluate(async b64 => { const { app } = window.compositor; const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));

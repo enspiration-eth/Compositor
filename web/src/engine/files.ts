@@ -5,7 +5,7 @@
 // Swift PSD reader, IO/PSD, which depends on Core Graphics).
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { readPsd, type Layer as PsdLayer } from 'ag-psd';
-import { type Doc, type Layer, type BlendMode, BLEND_MODES, newDoc, newPixelLayer, uuid, fullTransform } from './document';
+import { type Doc, type Guide, type Layer, type BlendMode, BLEND_MODES, newDoc, newPixelLayer, uuid, fullTransform } from './document';
 import { canvasOf, ctx2d, type AdjustmentRecord } from './adjustments';
 
 export interface ManifestLayer {
@@ -73,7 +73,7 @@ export async function writeComp(doc: Doc): Promise<Uint8Array> {
     layers.push(rec);
   }
   const manifest: Manifest = { format: 'com.compositor.project', version: 11, colorSpace: 'sRGB', documentID: doc.id, width: doc.width,
-    height: doc.height, resolution: doc.resolution, activeLayerID: doc.activeId, layers };
+    height: doc.height, resolution: doc.resolution, activeLayerID: doc.activeId, layers, ...(doc.guides.length ? { guides: doc.guides.map(g => ({ id: g.id, axis: g.axis, position: g.position })) } : {}) };
   files[`${folder}/manifest.json`] = strToU8(JSON.stringify(manifest, null, 2));
   return zipSync(files, { level: 0 });
 }
@@ -88,6 +88,10 @@ export async function readCompFiles(files: Map<string, Uint8Array>, name: string
   if (!(m.width >= 1 && m.height >= 1 && m.width <= 30000 && m.height <= 30000)) throw new Error('Invalid canvas size.');
   const doc = newDoc(m.width, m.height, name.replace(/\.comp(\.zip)?$/i, ''));
   doc.id = m.documentID ?? doc.id; doc.resolution = m.resolution ?? 72;
+  doc.guides = (Array.isArray(m.guides) ? m.guides : []).slice(0, 1000).flatMap(g0 => {
+    const g = g0 as Partial<Guide>;
+    return (g.axis === 'horizontal' || g.axis === 'vertical') && Number.isFinite(g.position) ? [{ id: String(g.id ?? uuid()), axis: g.axis, position: Number(g.position) }] : [];
+  });
   for (const r of m.layers) {
     const t = r.transform;
     const layer: Layer = {

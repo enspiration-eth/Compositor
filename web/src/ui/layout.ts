@@ -3,8 +3,9 @@
 import { app, TOOLS, type Tool } from './app';
 import { CanvasController } from './tools';
 import { h, icon, slider, select, checkbox, button, showMenu, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
-import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showShortcuts, closeOpenPanel, hasOpenPanel } from './dialogs';
+import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel } from './dialogs';
 import { fileToCanvas } from '../engine/files';
+import { view, setView, clearGuides } from './guides';
 import { newPixelLayer, renderText, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
 import { ADJUSTMENT_KINDS, FILTER_MENU, IMAGE_ADJUSTMENTS, type FilterKind } from '../engine/adjustments';
 
@@ -175,6 +176,26 @@ function buildMenubar() {
       { label: 'Actual Pixels', shortcut: `${MOD}1`, action: () => app.zoomTo(1), disabled: !app.doc },
       { label: 'Zoom In', shortcut: `${MOD}+`, action: () => app.zoomStep(1), disabled: !app.doc },
       { label: 'Zoom Out', shortcut: `${MOD}−`, action: () => app.zoomStep(-1), disabled: !app.doc },
+      { label: 'Pixel Grid (800% and above)', checked: view.pixelGrid, action: () => setView('pixelGrid', !view.pixelGrid) },
+      { separator: true },
+      { label: 'Show', submenu: [
+        { label: 'Grid', shortcut: `${MOD}'`, checked: view.grid, action: () => setView('grid', !view.grid), disabled: !app.doc },
+        { label: 'Guides', shortcut: `${MOD};`, checked: view.guides, action: () => setView('guides', !view.guides), disabled: !app.doc },
+      ] },
+      { label: 'Grid Settings…', action: () => showGridSettings(), disabled: !app.doc },
+      { label: 'Rulers', shortcut: `${MOD}R`, checked: view.rulers, action: () => setView('rulers', !view.rulers), disabled: !app.doc },
+      { separator: true },
+      { label: 'Snap', shortcut: `⇧${MOD};`, checked: view.snap, action: () => setView('snap', !view.snap), disabled: !app.doc },
+      { label: 'Snap To', submenu: [
+        { label: 'Guides', checked: view.snapGuides, action: () => setView('snapGuides', !view.snapGuides) },
+        { label: 'Grid', checked: view.snapGrid, action: () => setView('snapGrid', !view.snapGrid) },
+        { label: 'Layers', checked: view.snapLayers, action: () => setView('snapLayers', !view.snapLayers) },
+        { label: 'Document Bounds', checked: view.snapBounds, action: () => setView('snapBounds', !view.snapBounds) },
+      ] },
+      { separator: true },
+      { label: 'New Guide…', action: () => showNewGuide(), disabled: !app.doc },
+      { label: 'Lock Guides', shortcut: `⌥${MOD};`, checked: view.lockGuides, action: () => setView('lockGuides', !view.lockGuides), disabled: !app.doc },
+      { label: 'Clear Guides', action: () => clearGuides(), disabled: !app.doc?.guides.length },
     ]],
   ];
   for (const [title, items] of menus) {
@@ -607,6 +628,9 @@ function setupKeys() {
       if (k === 'e') return run(() => e.shiftKey ? app.exportImage('png') : app.mergeSelected());
       if (k === 'w') return run(() => app.closeProject());
       if (k === '0') return run(() => app.fit());
+      if (e.key === "'" || e.code === 'Quote') return run(() => setView('grid', !view.grid));
+      if (e.key === ';' || e.key === ':' || e.code === 'Semicolon') return run(() => e.shiftKey ? setView('snap', !view.snap) : e.altKey ? setView('lockGuides', !view.lockGuides) : setView('guides', !view.guides));
+      if (k === 'r' && !e.shiftKey) return run(() => setView('rulers', !view.rulers));
       if (k === '1') return run(() => app.zoomTo(1));
       if (k === '=' || k === '+') return run(() => app.zoomStep(1));
       if (k === '-') return run(() => app.zoomStep(-1));
