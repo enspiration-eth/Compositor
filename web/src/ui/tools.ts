@@ -1,3 +1,4 @@
+import { translateTextKey } from './shortcuts';
 import { Renderer } from '../engine/render';
 import { WarpSession } from '../engine/kernels';
 import { view, guideAt, snapDelta, snapPoint, drawRuler, drawLines, RULER } from './guides';
@@ -28,6 +29,8 @@ export class CanvasController {
   pointer: Pt | null = null;       // last pointer in stage coords
   spaceDown = false;
   private drag: { kind: string; start: Pt; startDoc: Pt; data?: Record<string, unknown> } | null = null;
+  /** The eyedropper's sample ring while dragging (SampleRingOverlay). */
+  ring: { s: Pt; orig: RGB; bg: boolean } | null = null;
   private stroke: Stroke | null = null;
   lasso: Pt[] | null = null;              // in-progress lasso (doc coords)
   marquee: { x: number; y: number; w: number; h: number } | null = null;
@@ -176,20 +179,29 @@ export class CanvasController {
       x.save(); x.strokeStyle = '#4c8dff'; x.lineWidth = 1; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
       for (const c of cs) { x.fillStyle = '#fff'; x.beginPath(); x.rect(c[0] - 4, c[1] - 4, 8, 8); x.fill(); x.stroke(); }
       x.restore();
-    } else if (app.tool === 'move' && a && a.mask && app.maskTarget && a.maskLinked === false) {
+    } else if (app.tool === 'move' && (app.showsTransformControls || app.floating) && a && a.mask && app.maskTarget && a.maskLinked === false) {
       // The unlinked mask's own box (dashed): what the Move tool drags.
       const cs = layerCorners({ ...a, transform: maskTransformOf(a) }).map(([u, v]) => S(u, v));
       x.save(); x.setLineDash([5, 4]); x.strokeStyle = '#ff9f2e'; x.lineWidth = 1.5; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
       x.setLineDash([]); x.lineWidth = 1;
       for (const hp of this.handles({ ...a, transform: maskTransformOf(a) })) { x.fillStyle = '#fff'; x.beginPath(); if (hp.kind === 'rotate') x.arc(hp.s[0], hp.s[1], 5, 0, Math.PI * 2); else x.rect(hp.s[0] - 4, hp.s[1] - 4, 8, 8); x.fill(); x.stroke(); }
       x.restore();
-    } else if (app.tool === 'move' && a && !a.isGroup && !a.adjustment && isEffectivelyVisible(d, a)) {
+    } else if (app.tool === 'move' && (app.showsTransformControls || app.floating) && a && !a.isGroup && !a.adjustment && isEffectivelyVisible(d, a)) {
       const cs = layerCorners(a).map(([u, v]) => S(u, v));
       x.save(); x.strokeStyle = '#4c8dff'; x.lineWidth = 1; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
       for (const hp of this.handles(a)) { x.fillStyle = '#fff'; x.strokeStyle = '#4c8dff'; x.beginPath(); if (hp.kind === 'rotate') x.arc(hp.s[0], hp.s[1], 5, 0, Math.PI * 2); else x.rect(hp.s[0] - 4, hp.s[1] - 4, 8, 8); x.fill(); x.stroke(); }
       const top = this.handles(a).find(h0 => h0.kind === 'rotate');
       const mid = S(...apply(layerUnit(a), 0.5, 0));
       if (top) { x.beginPath(); x.moveTo(...mid); x.lineTo(...top.s); x.stroke(); }
+      x.restore();
+    }
+    if (this.ring && app.showsSampleRing) {
+      // 116-point view inset by 15: a gray ring, then the sampled color on the top half and the original below.
+      const [cx, cy] = this.ring.s, r = 58 - 15, cur = this.ring.bg ? app.bg : app.fg, css = (c: RGB) => `rgb(${Math.round(c.red * 255)},${Math.round(c.green * 255)},${Math.round(c.blue * 255)})`;
+      x.save(); x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.lineWidth = 24; x.strokeStyle = 'rgb(115,115,115)'; x.stroke();
+      x.lineWidth = 16;
+      x.beginPath(); x.arc(cx, cy, r, Math.PI, Math.PI * 2); x.strokeStyle = css(cur); x.stroke();
+      x.beginPath(); x.arc(cx, cy, r, 0, Math.PI); x.strokeStyle = css(this.ring.orig); x.stroke();
       x.restore();
     }
     if (app.canvasHook?.draw) { x.save(); app.canvasHook.draw(x, S); x.restore(); }
@@ -239,6 +251,7 @@ export class CanvasController {
 
   // ---------- transform handles ----------
   handles(l: Layer): { kind: string; u: number; v: number; s: Pt }[] {
+    if (!app.showsTransformControls && !app.floating) return [];
     const m = layerUnit(l), out: { kind: string; u: number; v: number; s: Pt }[] = [];
     for (const [u, v] of [[0, 0], [0.5, 0], [1, 0], [1, 0.5], [1, 1], [0.5, 1], [0, 1], [0, 0.5]]) out.push({ kind: 'scale', u, v, s: app.toScreen(...apply(m, u, v)) });
     const top = app.toScreen(...apply(m, 0.5, 0)), center = app.toScreen(...apply(m, 0.5, 0.5));
@@ -312,7 +325,12 @@ export class CanvasController {
       }
       case 'shape': this.shapeRect = { a: dpt, b: dpt }; this.drag = { kind: 'shape', start: s, startDoc: dpt }; return;
       case 'type': return this.typeClick(dpt);
-      case 'eyedropper': return this.sample(dpt, e.altKey);
+      case 'eyedropper': {
+        // Drag to keep sampling; the ring compares the new sample (top) with the color before the drag (bottom).
+        const bg = e.altKey, orig = { ...(bg ? app.bg : app.fg) };
+        this.drag = { kind: 'sample', start: s, startDoc: dpt, data: { bg } };
+        this.sample(dpt, bg); this.ring = { s, orig, bg }; app.needsRender = true; return;
+      }
       default: return;
     }
   }
@@ -332,6 +350,7 @@ export class CanvasController {
     if (!dr) return;
     switch (dr.kind) {
       case 'hook': app.canvasHook?.move?.(dpt, e); return;
+      case 'sample': this.sample(dpt, !!dr.data!.bg); if (this.ring) this.ring.s = s; app.needsRender = true; return;
       case 'pan': p.ox = (dr.data!.ox as number) + s[0] - dr.start[0]; p.oy = (dr.data!.oy as number) + s[1] - dr.start[1]; p.fitted = false; app.emit('view'); return;
       case 'zoom': {
         const dx = s[0] - dr.start[0];
@@ -382,6 +401,7 @@ export class CanvasController {
     const d = p.doc;
     switch (dr.kind) {
       case 'hook': app.canvasHook?.up?.(app.toDoc(...this.local(e)), e); app.needsRender = true; return;
+      case 'sample': this.ring = null; app.needsRender = true; return;
       case 'zoom': if (!dr.data!.moved) app.zoomStep(dr.data!.out || e.altKey ? -1 : 1, dr.start[0], dr.start[1]); return;
       case 'marquee': {
         const m = this.marquee; this.marquee = null;
@@ -468,8 +488,8 @@ export class CanvasController {
       return;
     }
     const hit = a && !a.isGroup ? this.handles(a).find(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8) : null;
-    if (!hit && (e.metaKey || e.ctrlKey || !a)) {
-      // Auto-select the topmost visible pixel layer under the pointer.
+    if (!hit && (app.transformAutoSelect !== (e.metaKey || e.ctrlKey) || !a)) {
+      // Auto Select (or ⌘, which turns it the other way): the topmost visible pixel layer under the pointer.
       const under = [...d.layers].reverse().find(l => !l.isGroup && l.canvas && isEffectivelyVisible(d, l) && layerContains(l, ...dpt) && alphaAt(l, dpt) > 10);
       if (under) { app.setActive(under.id); a = under; }
     }
@@ -522,18 +542,24 @@ export class CanvasController {
       if (e.shiftKey) deg = Math.round(deg / 15) * 15;
       return { ...t0, rotation: Math.round(deg * 10) / 10 };
     }
-    const loc = (q: Pt): Pt => { const dx = q[0] - c0[0], dy = q[1] - c0[1]; return [dx * Math.cos(r) + dy * Math.sin(r) + t0.w / 2, -dx * Math.sin(r) + dy * Math.cos(r) + t0.h / 2]; };
-    const lp = loc(dpt), ax = 1 - hit.u, ay = 1 - hit.v, A: Pt = [ax * t0.w, ay * t0.h];
-    let w = hit.u === 0.5 ? t0.w : Math.max(1, hit.u > ax ? lp[0] - A[0] : A[0] - lp[0]);
-    let hh = hit.v === 0.5 ? t0.h : Math.max(1, hit.v > ay ? lp[1] - A[1] : A[1] - lp[1]);
-    const corner = hit.u !== 0.5 && hit.v !== 0.5;
-    if (corner && !e.shiftKey) { const k = Math.max(w / t0.w, hh / t0.h); w = t0.w * k; hh = t0.h * k; }
-    if (e.altKey) return { ...t0, x: c0[0] - w / 2, y: c0[1] - hh / 2, w, h: hh }; // from the center
-    const left = hit.u === 0.5 ? (t0.w - w) / 2 : hit.u > ax ? A[0] : A[0] - w;
-    const top = hit.v === 0.5 ? (t0.h - hh) / 2 : hit.v > ay ? A[1] : A[1] - hh;
-    const cl: Pt = [left + w / 2 - t0.w / 2, top + hh / 2 - t0.h / 2];
-    const nc: Pt = [c0[0] + cl[0] * Math.cos(r) - cl[1] * Math.sin(r), c0[1] + cl[0] * Math.sin(r) + cl[1] * Math.cos(r)];
-    return { ...t0, x: nc[0] - w / 2, y: nc[1] - hh / 2, w, h: hh };
+    // TransformDrag.updated(.resize): measured from the grabbed handle plus the pointer's travel (no jump on grab),
+    // proportional when the ratio lock is on (Shift turns it the other way), Option scales about the center, and a
+    // handle dragged past the opposite side turns the layer over.
+    const cos = Math.cos(r), sin = Math.sin(r);
+    const at = (u: number, v: number): Pt => { const lx = (u - 0.5) * t0.w, ly = (v - 0.5) * t0.h; return [c0[0] + lx * cos - ly * sin, c0[1] + lx * sin + ly * cos]; };
+    const au: Pt = e.altKey ? [0.5, 0.5] : [1 - hit.u, 1 - hit.v], anchor = at(...au), grab = at(hit.u, hit.v);
+    const dx = grab[0] + dpt[0] - startDoc[0] - anchor[0], dy = grab[1] + dpt[1] - startDoc[1] - anchor[1], span = e.altKey ? 2 : 1;
+    const lx = (dx * cos + dy * sin) * span, ly = (-dx * sin + dy * cos) * span, sx = hit.u * 2 - 1, sy = hit.v * 2 - 1;
+    const rawW = sx === 0 ? t0.w : lx * sx, rawH = sy === 0 ? t0.h : ly * sy, mx = rawW < 0, my = rawH < 0;
+    let w = Math.max(1, Math.abs(rawW)), hh = Math.max(1, Math.abs(rawH));
+    if (app.locksTransformRatio !== e.shiftKey) {
+      const f = sx === 0 ? hh / t0.h : sy === 0 ? w / t0.w
+        : Math.max(1 / Math.min(t0.w, t0.h), (lx * sx * t0.w + ly * sy * t0.h) / (t0.w * t0.w + t0.h * t0.h));
+      w = t0.w * f; hh = t0.h * f;
+    }
+    const ox = (0.5 - au[0]) * w * (mx ? -1 : 1), oy = (0.5 - au[1]) * hh * (my ? -1 : 1);
+    const nc: Pt = [anchor[0] + ox * cos - oy * sin, anchor[1] + ox * sin + oy * cos];
+    return { ...t0, x: nc[0] - w / 2, y: nc[1] - hh / 2, w, h: hh, flipX: mx ? !t0.flipX : t0.flipX, flipY: my ? !t0.flipY : t0.flipY };
   }
   // ---------- Free Distort ----------
   startDistort(l: Layer | null = app.active): boolean {
@@ -991,10 +1017,20 @@ export class CanvasController {
     const ctx = { layer, style, origin, scale, original };
     const live = () => { if (layer && ctx.style.content) this.showLiveText(layer, ctx.style, scale); };
     ta.addEventListener('input', () => { ctx.style = retargetRuns(ctx.style, ta.value); live(); autosize(); });
-    ta.addEventListener('keydown', e => {
-      e.stopPropagation();
+    ta.addEventListener('keydown', raw => {
+      raw.stopPropagation();
+      const e = translateTextKey(raw); if (!e) { raw.preventDefault(); return; }
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.commitText(); }
       if (e.key === 'Escape') { e.preventDefault(); this.commitText(true); }
+      // Option with the arrows sets spacing, as in Photoshop (InlineTextEditor): left and right the tracking, up and
+      // down the leading, counting from what Auto works out to. Shift makes each step ten.
+      if (e.altKey && !e.metaKey && !e.ctrlKey && e.key.startsWith('Arrow')) {
+        e.preventDefault();
+        const st = ctx.style, step = e.shiftKey ? 10 : 1, lh = st.leading > 0 ? st.leading : st.fontSize * 1.2;
+        const patch = e.key === 'ArrowLeft' ? { tracking: st.tracking - step } : e.key === 'ArrowRight' ? { tracking: st.tracking + step }
+          : e.key === 'ArrowUp' ? { leading: Math.max(1, lh - step) } : { leading: lh + step };
+        this.applyTextStyle(patch); app.emit('tool');
+      }
     });
     (ta as unknown as { _ctx: unknown })._ctx = ctx;
     this.stage.append(ta); this.textEditor = ta;

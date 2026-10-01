@@ -56,12 +56,22 @@ export class App {
   shape = { kind: 'Rectangle' as 'Rectangle' | 'Ellipse' | 'Line', cornerRadius: 0, lineWidth: 6 };
   type = { fontName: 'Helvetica', fontSize: 72, alignment: 'Left' as 'Left' | 'Center' | 'Right', tracking: 0, leading: 0 };
   crop = { ratio: 'Free' };
-  showsSampleRing = true;
   maskTarget = false;    // painting on the active layer's mask instead of its pixels
   listeners = new Set<(what: string) => void>();
   needsRender = true;
   /** A panel borrowing the canvas (Camera Raw's Point Color eyedropper, Upright guides): it gets the pointer before any tool. */
   canvasHook: CanvasHook | null = null;
+  /** Eyedropper: show the sample ring while sampling. */
+  get showsSampleRing() { return localStorage.getItem('compositor.sampleRing') !== '0'; }
+  set showsSampleRing(v: boolean) { localStorage.setItem('compositor.sampleRing', v ? '1' : '0'); this.emit('tool'); }
+  /** Move tool (TransformInspector): scale handles keep the aspect ratio (Shift turns it the other way). */
+  locksTransformRatio = true;
+  /** Off by default: a Move-tool press drags the active layer; hold ⌘ (or turn this on) to pick the layer under the pointer. */
+  get transformAutoSelect() { return localStorage.getItem('compositor.autoSelect') === '1'; }
+  set transformAutoSelect(v: boolean) { localStorage.setItem('compositor.autoSelect', v ? '1' : '0'); this.emit('tool'); }
+  /** The Move tool's transform box and handles (⌘H). Hidden, a drag anywhere just moves the layer. */
+  get showsTransformControls() { return localStorage.getItem('compositor.transformControls') !== '0'; }
+  set showsTransformControls(v: boolean) { localStorage.setItem('compositor.transformControls', v ? '1' : '0'); this.emit('tool'); }
 
   get project(): Project | null { return this.projects[this.current] ?? null; }
   get doc(): Doc | null { return this.project?.doc ?? null; }
@@ -601,26 +611,45 @@ export class App {
     if (!coalesce) this.edit(label);
     l.transform = t; this.redrawShape(l); this.changed('transform');
   }
-  canvasSize(w: number, h: number, ax: number, ay: number) {
+  /** CanvasResizer: the anchor keeps a point fixed (whole pixels; floor puts an odd extra pixel right/bottom). A fill
+   *  color adds a bottom "Canvas Extension" layer covering only the added area. */
+  canvasSize(w: number, h: number, ax: number, ay: number, fill?: { red: number; green: number; blue: number } | null) {
     const d = this.doc; if (!d) return;
+    const dx = Math.floor((w - d.width) * ax), dy = Math.floor((h - d.height) * ay);
+    if (w === d.width && h === d.height && !dx && !dy) return;
     this.edit('Canvas Size');
-    const dx = (w - d.width) * ax, dy = (h - d.height) * ay;
     for (const l of d.layers) eachTransform(l, t => { t.x += dx; t.y += dy; });
+    for (const g of d.guides) g.position += g.axis === 'vertical' ? dx : dy;
     if (d.selection) { const c = canvasOf(w, h); ctx2d(c).drawImage(d.selection, dx, dy); d.selection = c; d.selRev++; }
+    if (fill && (w > d.width || h > d.height)) {
+      const c = canvasOf(w, h), x = ctx2d(c);
+      x.fillStyle = `rgb(${Math.round(fill.red * 255)},${Math.round(fill.green * 255)},${Math.round(fill.blue * 255)})`; x.fillRect(0, 0, w, h);
+      x.clearRect(dx, dy, d.width, d.height);
+      const l = newPixelLayer(d, 'Canvas Extension', c, { x: 0, y: 0, w, h });
+      d.layers.unshift(l);
+    }
     d.width = w; d.height = h;
     this.fit(); this.changed('canvas');
   }
-  imageSize(w: number, h: number) {
+  /** ImageResizer: resamples every layer (Sampling) and scales guides; without resampling only the resolution changes. */
+  imageSize(w: number, h: number, opts: { resolution?: number; sampling?: 'High quality' | 'Smooth' | 'Nearest'; resample?: boolean } = {}) {
     const d = this.doc; if (!d) return;
+    if (opts.resample === false) {
+      if (opts.resolution && opts.resolution !== d.resolution) { this.edit('Image Size'); d.resolution = opts.resolution; this.changed('canvas'); }
+      return;
+    }
     this.edit('Image Size');
+    if (opts.resolution) d.resolution = opts.resolution;
+    const smooth = opts.sampling !== 'Nearest', quality: ImageSmoothingQuality = opts.sampling === 'Smooth' ? 'medium' : 'high';
+    for (const g of d.guides) g.position *= g.axis === 'vertical' ? w / d.width : h / d.height;
     const sx = w / d.width, sy = h / d.height;
     for (const l of d.layers) {
       eachTransform(l, t => { t.x *= sx; t.y *= sy; t.w *= sx; t.h *= sy; });
       // Resample pixels so the stored image matches its new size (as the Mac app does).
       if (l.canvas && !l.isGroup) {
         const nw = Math.max(1, Math.round(l.canvas.width * sx)), nh = Math.max(1, Math.round(l.canvas.height * sy));
-        const c = canvasOf(nw, nh), x = ctx2d(c); x.imageSmoothingQuality = 'high'; x.drawImage(l.canvas, 0, 0, nw, nh); l.canvas = c;
-        if (l.mask && !l.maskPlacement) { const m = canvasOf(nw, nh); ctx2d(m).drawImage(l.mask, 0, 0, nw, nh); l.mask = m; }
+        const c = canvasOf(nw, nh), x = ctx2d(c); x.imageSmoothingEnabled = smooth; x.imageSmoothingQuality = quality; x.drawImage(l.canvas, 0, 0, nw, nh); l.canvas = c;
+        if (l.mask && !l.maskPlacement) { const m = canvasOf(nw, nh), mx = ctx2d(m); mx.imageSmoothingEnabled = smooth; mx.imageSmoothingQuality = quality; mx.drawImage(l.mask, 0, 0, nw, nh); l.mask = m; }
         if (l.text) l.text = { ...l.text, fontSize: l.text.fontSize * sx, boxSize: l.text.boxSize ? { width: l.text.boxSize.width * sx, height: l.text.boxSize.height * sy } : undefined };
       }
       l.rev++;

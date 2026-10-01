@@ -10,9 +10,10 @@ import {
 } from '../engine/adjustments';
 import { levelsHistogram, colorRangeMask, cameraRawScope, cameraRawClipOverlay, SCOPE_SIDE } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
+import { SHORTCUTS, chordFor, chordLabel, chordOf, saveShortcuts, shortcutOverrides, shortcutProblem, type Chord } from './shortcuts';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, maskGridView, maskInLayerGrid, setMaskPlacement, invert, apply, pixelToDoc } from '../engine/document';
 import * as Sel from '../engine/selection';
-import { view, setView, addGuide } from './guides';
+import { view, setView, addGuide, GRID_PRESETS, GRID_STYLES, GRID_DEFAULTS, type GridPreset, type GridStyle } from './guides';
 import { subjectMatte, matteToMask, defaultMatte, type MatteSettings } from '../engine/segment';
 
 let openPanel: { panel: Panel; cancel: () => void } | null = null;
@@ -260,7 +261,7 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
           slider({ label: 'Hue', min: hs.colorize ? 0 : -180, max: hs.colorize ? 360 : 180, value: adj.hue, unit: '°', onInput: v => { adj.hue = v; changed(); spec.draw(); }, id: 'hs-hue' }),
           slider({ label: 'Saturation', min: hs.colorize ? 0 : -100, max: 100, value: adj.saturation, onInput: v => { adj.saturation = v; changed(); spec.draw(); }, id: 'hs-sat' }),
           slider({ label: 'Lightness', min: -100, max: 100, value: adj.lightness, onInput: v => { adj.lightness = v; changed(); spec.draw(); } }));
-        if (!hs.colorize && hs.range !== 'Master') inner.append(checkbox('Invert Range', !!hs.invertRange, v => { hs.invertRange = v; changed(); spec.draw(); }));
+        if (!hs.colorize && hs.range !== 'Master') inner.append(checkbox('Apply outside this range instead', !!hs.invertRange, v => { hs.invertRange = v; changed(); spec.draw(); }));
         inner.append(spec.el);
         spec.draw();
       };
@@ -300,6 +301,7 @@ function scopeSample(img: ImageData): ImageData {
   for (let y = 0; y < hh; y++) for (let x = 0; x < w; x++) { const si = ((y * step) * img.width + x * step) * 4, di = (y * w + x) * 4; o.data[di] = img.data[si]; o.data[di + 1] = img.data[si + 1]; o.data[di + 2] = img.data[si + 2]; o.data[di + 3] = img.data[si + 3]; }
   return o;
 }
+const same = (a: Chord, b: Chord) => a.key === b.key && a.modifiers === b.modifiers;
 function histPeak(bins: number[]) {
   const peak = Math.max(0, ...bins.filter(v => isFinite(v) && v > 0)); if (!peak) return 0;
   const interior = bins.slice(1, -1).filter(v => isFinite(v) && v > 0).sort((a, b) => a - b);
@@ -984,16 +986,72 @@ export function showNewCanvas() {
   const form = newCanvasForm((w, hh) => { close(); app.newCanvas(w, hh); app.fit(); });
   close = modal('', form, [{ label: 'Cancel', onClick: () => {} }]);
 }
+const UNITS = ['Pixels', 'Percent', 'Inches', 'Centimeters'] as const;
+type Unit = typeof UNITS[number];
+/** ByteCountFormatter, memory style. */
+function fmtBytes(n: number) {
+  const u = ['bytes', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return i ? `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}` : `${n} bytes`;
+}
+const fmtNum = (v: number) => String(Math.round(v * 1000) / 1000);
+/** CanvasSizeSheet: units, relative sizes, the aspect lock, the anchor and the extension color. */
 export function showCanvasSize() {
   const d = app.doc; if (!d) return;
-  const w = h('input', { type: 'number', value: d.width, class: 'dim' }) as HTMLInputElement, hh = h('input', { type: 'number', value: d.height, class: 'dim' }) as HTMLInputElement;
-  let anchor = [0.5, 0.5];
-  const grid = h('div', { class: 'anchor-grid' });
-  const drawGrid = () => { grid.replaceChildren(...[0, 0.5, 1].flatMap(v => [0, 0.5, 1].map(u => { const b = h('button', { class: `anchor${u === anchor[0] && v === anchor[1] ? ' on' : ''}` }); b.addEventListener('click', () => { anchor = [u, v]; drawGrid(); }); return b; }))); };
+  const W0 = d.width, H0 = d.height, res = d.resolution || 72;
+  // CanvasSizeDraft: pixels are kept; fields show them in the chosen unit, relative to the current size if asked.
+  const dr = { width: W0, height: H0, relative: false, locked: false, unit: 'Pixels' as Unit };
+  const shown = (wAxis: boolean) => {
+    const o = wAxis ? W0 : H0, px = (wAxis ? dr.width : dr.height) - (dr.relative ? o : 0);
+    return dr.unit === 'Percent' ? px / o * 100 : dr.unit === 'Inches' ? px / res : dr.unit === 'Centimeters' ? px / res * 2.54 : px;
+  };
+  const set = (v: number, wAxis: boolean) => {
+    const o = wAxis ? W0 : H0;
+    const px = dr.unit === 'Percent' ? v / 100 * o : dr.unit === 'Inches' ? v * res : dr.unit === 'Centimeters' ? v / 2.54 * res : v;
+    const fin = px + (dr.relative ? o : 0);
+    if (wAxis) { dr.width = fin; if (dr.locked) dr.height = fin * H0 / W0; } else { dr.height = fin; if (dr.locked) dr.width = fin * W0 / H0; }
+  };
+  const valid = () => isFinite(dr.width) && isFinite(dr.height) && Math.round(dr.width) >= 1 && Math.round(dr.width) <= 30000 && Math.round(dr.height) >= 1 && Math.round(dr.height) <= 30000;
+  const w = h('input', { type: 'number', class: 'dim', id: 'canvas-width', step: 'any' }) as HTMLInputElement;
+  const hh = h('input', { type: 'number', class: 'dim', id: 'canvas-height', step: 'any' }) as HTMLInputElement;
+  const unitLbl = [h('span', { class: 'unit' }), h('span', { class: 'unit' })];
+  const result = h('p', { class: 'hint', id: 'canvas-result' });
+  const refresh = (skip?: HTMLInputElement) => {
+    if (skip !== w) w.value = fmtNum(shown(true)); if (skip !== hh) hh.value = fmtNum(shown(false));
+    unitLbl.forEach(u => { u.textContent = { Pixels: 'px', Percent: '%', Inches: 'in', Centimeters: 'cm' }[dr.unit]; });
+    const ok = valid(); result.classList.toggle('warn', !ok);
+    result.textContent = ok ? `New: ${Math.round(dr.width)} × ${Math.round(dr.height)} pixels · ${fmtBytes(Math.round(dr.width) * Math.round(dr.height) * 4)} uncompressed` : 'Final dimensions must be 1–30,000 pixels per side.';
+  };
+  w.addEventListener('input', () => { if (w.value !== '' && isFinite(+w.value)) { set(+w.value, true); refresh(w); } });
+  hh.addEventListener('input', () => { if (hh.value !== '' && isFinite(+hh.value)) { set(+hh.value, false); refresh(hh); } });
+  const ANCHORS = ['Top left', 'Top center', 'Top right', 'Middle left', 'Center', 'Middle right', 'Bottom left', 'Bottom center', 'Bottom right'];
+  let anchor = 4;
+  const grid = h('div', { class: 'anchor-grid' }), anchorName = h('div', { class: 'anchor-name' });
+  const drawGrid = () => {
+    grid.replaceChildren(...ANCHORS.map((n, i) => { const b = h('button', { class: `anchor${i === anchor ? ' on' : ''}`, title: n, 'aria-label': n, 'data-anchor': String(i) }); b.addEventListener('click', () => { anchor = i; drawGrid(); }); return b; }));
+    anchorName.textContent = ANCHORS[anchor];
+  };
   drawGrid();
-  modal('Canvas Size', h('div', {}, h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w, h('span', { class: 'unit' }, 'px')),
-    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh, h('span', { class: 'unit' }, 'px')), h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Anchor'), grid)),
-    [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => { const W = Math.round(+w.value), H = Math.round(+hh.value); if (!(W >= 1 && H >= 1 && W <= 30000 && H <= 30000)) return false; app.canvasSize(W, H, anchor[0], anchor[1]); } }]);
+  let ext = 'Transparent', custom = { red: 1, green: 1, blue: 1 };
+  const customRow = h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Extension color'), colorWell(custom, c => { custom = c; }));
+  customRow.style.display = 'none';
+  refresh();
+  modal('Canvas Size', h('div', { class: 'canvas-size' },
+    h('p', {}, `Current: ${W0} × ${H0} pixels`), h('p', { class: 'hint' }, `${fmtBytes(W0 * H0 * 4)} uncompressed RGBA canvas`), h('hr'),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Units'), select([...UNITS], dr.unit, v => { dr.unit = v as Unit; refresh(); }, { id: 'canvas-units' })),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w, unitLbl[0]),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh, unitLbl[1]),
+    checkbox('Relative to current dimensions', false, v => { dr.relative = v; refresh(); }, 'canvas-relative'),
+    checkbox('Lock original aspect ratio', false, v => { dr.locked = v; if (v) set(shown(true), true); refresh(); }, 'canvas-locked'),
+    result,
+    h('div', { class: 'row anchor-row' }, h('span', { class: 'lbl' }, 'Anchor'), grid,
+      h('div', { class: 'anchor-note' }, anchorName, h('p', { class: 'hint' }, 'Keeps this point fixed. Artwork is not scaled; cropped content remains outside the canvas.'))),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Canvas extension'), select(['Transparent', 'Foreground', 'Background', 'Black', 'White', 'Custom'], ext, v => { ext = v; customRow.style.display = v === 'Custom' ? '' : 'none'; }, { id: 'canvas-extension' })),
+    customRow),
+    [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => {
+      if (!valid()) return false;
+      const fill = ext === 'Transparent' ? null : ext === 'Foreground' ? app.fg : ext === 'Background' ? app.bg : ext === 'Black' ? { red: 0, green: 0, blue: 0 } : ext === 'White' ? { red: 1, green: 1, blue: 1 } : custom;
+      app.canvasSize(Math.round(dr.width), Math.round(dr.height), (anchor % 3) / 2, Math.floor(anchor / 3) / 2, fill);
+    } }], 'canvas-size-modal');
 }
 /** Image › Trim… (TrimSheet.swift): what to trim by, and which edges. */
 export function showTrim() {
@@ -1009,15 +1067,70 @@ export function showTrim() {
     h('div', { class: 'row' }, side('top', 'Top'), side('left', 'Left')), h('div', { class: 'row' }, side('bottom', 'Bottom'), side('right', 'Right'))),
     [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => { if (!opts.top && !opts.bottom && !opts.left && !opts.right) return false; app.trim(opts); } }]);
 }
+/** ImageSizeSheet: units, the aspect lock, resolution, Resample (off: print size only) and Sampling. */
 export function showImageSize() {
   const d = app.doc; if (!d) return;
-  const w = h('input', { type: 'number', value: d.width, class: 'dim' }) as HTMLInputElement, hh = h('input', { type: 'number', value: d.height, class: 'dim' }) as HTMLInputElement;
-  let lock = true;
-  w.addEventListener('input', () => { if (lock) hh.value = String(Math.round(+w.value * d.height / d.width)); });
-  hh.addEventListener('input', () => { if (lock) w.value = String(Math.round(+hh.value * d.width / d.height)); });
-  modal('Image Size', h('div', {}, h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w, h('span', { class: 'unit' }, 'px')),
-    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh, h('span', { class: 'unit' }, 'px')), checkbox('Constrain proportions', true, v => lock = v)),
-    [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => { const W = Math.round(+w.value), H = Math.round(+hh.value); if (!(W >= 1 && H >= 1 && W <= 30000 && H <= 30000)) return false; app.imageSize(W, H); } }]);
+  const W0 = d.width, H0 = d.height;
+  const st = { width: W0, height: H0, resolution: d.resolution || 72, last: d.resolution || 72, locked: true, resample: true, unit: 'Pixels' as Unit, sampling: 'High quality' as 'High quality' | 'Smooth' | 'Nearest' };
+  const valid = () => isFinite(st.width) && isFinite(st.height) && isFinite(st.resolution) && st.resolution >= 1 && st.resolution <= 9600
+    && Math.round(st.width) >= 1 && Math.round(st.width) <= 30000 && Math.round(st.height) >= 1 && Math.round(st.height) <= 30000
+    && (!st.resample || Math.round(st.width) * Math.round(st.height) <= 100_000_000);
+  const display = (px: number, o: number) => st.unit === 'Percent' ? px / o * 100 : st.unit === 'Inches' ? px / st.resolution : st.unit === 'Centimeters' ? px / st.resolution * 2.54 : px;
+  const setDim = (v: number, isW: boolean) => {
+    if (!(isFinite(v) && v > 0)) return;
+    if ((st.unit === 'Inches' || st.unit === 'Centimeters') && !(st.resolution > 0)) return;
+    if (!st.resample) { st.resolution = (isW ? st.width : st.height) / v * (st.unit === 'Centimeters' ? 2.54 : 1); st.last = st.resolution; return; }
+    const o = isW ? W0 : H0;
+    const px = st.unit === 'Percent' ? v / 100 * o : st.unit === 'Inches' ? v * st.resolution : st.unit === 'Centimeters' ? v / 2.54 * st.resolution : v;
+    if (isW) { if (st.locked) st.height = px * st.height / st.width; st.width = px; } else { if (st.locked) st.width = px * st.width / st.height; st.height = px; }
+  };
+  const w = h('input', { type: 'number', class: 'dim', id: 'image-width', step: 'any' }) as HTMLInputElement;
+  const hh = h('input', { type: 'number', class: 'dim', id: 'image-height', step: 'any' }) as HTMLInputElement;
+  const resIn = h('input', { type: 'number', class: 'dim', id: 'image-resolution', step: 'any' }) as HTMLInputElement;
+  const unitSel = h('select', { id: 'image-units' }) as HTMLSelectElement;
+  const lockBox = checkbox('Lock aspect ratio', true, v => { st.locked = v; }, 'image-lock');
+  const samplingRow = h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Sampling'), select(['High quality', 'Smooth', 'Nearest'], st.sampling, v => { st.sampling = v as typeof st.sampling; }, { id: 'image-sampling' }));
+  const note = h('p', { class: 'hint' }), result = h('p', { class: 'hint', id: 'image-result' });
+  const refresh = (skip?: HTMLInputElement) => {
+    const units = UNITS.filter(u => st.resample || (u !== 'Pixels' && u !== 'Percent'));
+    if (unitSel.options.length !== units.length) unitSel.replaceChildren(...units.map(u => h('option', { value: u }, u)));
+    unitSel.value = st.unit;
+    if (skip !== w) w.value = fmtNum(display(st.width, W0)); if (skip !== hh) hh.value = fmtNum(display(st.height, H0)); if (skip !== resIn) resIn.value = fmtNum(st.resolution);
+    (lockBox.querySelector('input') as HTMLInputElement).disabled = !st.resample; (lockBox.querySelector('input') as HTMLInputElement).checked = st.locked;
+    samplingRow.style.display = st.resample ? '' : 'none';
+    note.textContent = st.resample ? 'Resizes layer pixels and applies existing transforms. Undo restores the originals.' : 'Only print dimensions and resolution change. Pixels stay unchanged.';
+    const ok = valid(); result.classList.toggle('warn', !ok);
+    result.textContent = ok ? `Result: ${Math.round(st.width)} × ${Math.round(st.height)} pixels` : 'Use 1–30,000 pixels per side, up to 100 megapixels, and 1–9,600 pixels/inch.';
+    const btn = document.querySelector('#image-size-modal .modal-buttons .primary') as HTMLButtonElement | null; if (btn) btn.disabled = !ok;
+  };
+  unitSel.addEventListener('change', () => { st.unit = unitSel.value as Unit; refresh(); });
+  w.addEventListener('input', () => { if (w.value !== '') { setDim(+w.value, true); refresh(w); } });
+  hh.addEventListener('input', () => { if (hh.value !== '') { setDim(+hh.value, false); refresh(hh); } });
+  resIn.addEventListener('input', () => {
+    const v = +resIn.value; st.resolution = v;
+    if (isFinite(v) && v > 0) {
+      if (st.resample && (st.unit === 'Inches' || st.unit === 'Centimeters')) { st.width *= v / st.last; st.height *= v / st.last; }
+      st.last = v;
+    }
+    refresh(resIn);
+  });
+  const resampleBox = checkbox('Resample', true, v => {
+    st.resample = v;
+    if (!v) { st.width = W0; st.height = H0; st.locked = true; if (st.unit === 'Pixels' || st.unit === 'Percent') st.unit = 'Inches'; }
+    refresh();
+  }, 'image-resample');
+  modal('Image Size', h('div', { class: 'image-size' },
+    h('p', { class: 'hint' }, `Current: ${W0} × ${H0} pixels`),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Units'), unitSel),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w), h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh),
+    lockBox,
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Resolution'), resIn, h('span', { class: 'unit' }, 'pixels/inch')),
+    resampleBox, samplingRow, note, result),
+    [{ label: 'Cancel', onClick: () => {} }, { label: 'Resize', primary: true, onClick: () => {
+      if (!valid()) return false;
+      app.imageSize(Math.round(st.width), Math.round(st.height), { resolution: st.resolution, sampling: st.sampling, resample: st.resample });
+    } }], 'image-size-modal');
+  refresh();
 }
 export function showSelectionAmount(op: 'expand' | 'contract' | 'feather') {
   const i = h('input', { type: 'number', value: op === 'feather' ? 10 : 5, min: 1, max: 500, class: 'dim' }) as HTMLInputElement;
@@ -1041,31 +1154,110 @@ export function showExportJpeg() {
   modal('Export JPEG', h('div', {}, prev, slider({ label: 'Quality', min: 1, max: 100, value: q, unit: '%', onInput: v => q = v, onCommit: update }), size),
     [{ label: 'Cancel', onClick: () => {} }, { label: 'Export', primary: true, onClick: () => { app.exportImage('jpeg', q / 100); } }]);
 }
+/** KeyboardShortcutsSheet: click a shortcut, press its new chord; changes apply on Save. */
 export function showShortcuts() {
-  const rows: [string, string][] = [
-    ['Move / Transform', 'V'], ['Marquee (cycle shape)', 'M'], ['Lasso (cycle mode)', 'L'], ['Magic Wand', 'W'], ['Crop', 'C'], ['Brush / Eraser', 'B / E'],
-    ['Spot Healing', 'J'], ['Clone Stamp', 'S'], ['Smear', 'R'], ['Gradient', 'G'], ['Shape (cycle kind: ⇧U)', 'U'], ['Type', 'T'], ['Eyedropper', 'I'],
-    ['Hand (hold Space)', 'H'], ['Zoom', 'Z'], ['No tool', 'A'], ['Swap / reset colors', 'X / D'], ['Brush size / hardness', '[ ]  ⇧[ ⇧]'], ['Opacity', '1 … 0'],
-    ['Undo / Redo', '⌘Z / ⇧⌘Z'], ['New / Open / Save', '⌘N / ⌘O / ⌘S'], ['Export PNG / JPEG', '⇧⌘E / ⌥⇧⌘S'], ['Select All / Deselect / Inverse', '⌘A / ⌘D / ⇧⌘I'],
-    ['Levels / Curves / Hue-Sat / Invert', '⌘L / ⌘M / ⌘U / ⌘I'], ['Duplicate (Layer via Copy)', '⌘J'], ['Group / Ungroup', '⌘G / ⇧⌘G'], ['Clipping Mask', '⌥⌘G'],
-    ['Merge', '⌘E'], ['New Layer', '⇧⌘N'], ['Fill FG / BG / Content-Aware', '⌥⌫ / ⌘⌫ / ⇧⌫'], ['Fit / 100% / Zoom', '⌘0 / ⌘1 / ⌘+ ⌘−'],
-    ['Canvas Size / Image Size', '⌥⌘C / ⌥⌘I'], ['Free Transform', '⌘T'], ['Blend mode next / previous', '⇧= / ⇧−'],
-  ];
-  modal('Keyboard Shortcuts', h('div', { class: 'shortcut-list' }, ...rows.map(([a, b]) => h('div', { class: 'shortcut-row' }, h('span', {}, a), h('kbd', {}, b)))), [{ label: 'Done', primary: true, onClick: () => {} }]);
+  const draft: Record<string, Chord> = { ...shortcutOverrides() };
+  let recording: string | null = null, search = '';
+  const list = h('div', { class: 'shortcut-list editable', id: 'shortcut-list' });
+  const problemEl = h('div', { class: 'shortcut-problem', id: 'shortcut-problem' });
+  const searchEl = h('input', { type: 'search', placeholder: 'Search shortcuts', class: 'shortcut-search', id: 'shortcut-search' }) as HTMLInputElement;
+  searchEl.addEventListener('input', () => { search = searchEl.value.trim().toLowerCase(); draw(); });
+  const update = () => {
+    const p = shortcutProblem(draft); problemEl.textContent = p ?? ''; problemEl.style.display = p ? '' : 'none';
+    const save = document.getElementById('shortcuts-save') as HTMLButtonElement | null; if (save) save.disabled = !!recording || !!p;
+  };
+  const draw = () => {
+    const rows: HTMLElement[] = [];
+    for (const group of ['Menus', 'Canvas & Layers', 'Text Editing'] as const) {
+      const defs = SHORTCUTS.filter(d => d.group === group && (!search || d.title.toLowerCase().includes(search)));
+      if (!defs.length) continue;
+      rows.push(h('div', { class: 'group-title' }, group));
+      for (const d of defs) {
+        const rec = h('button', { class: `shortcut-recorder${recording === d.id ? ' recording' : ''}${draft[d.id] ? ' changed' : ''}`, 'data-id': d.id,
+          'aria-label': recording === d.id ? 'Press a shortcut' : chordLabel(chordFor(d, draft)) }, recording === d.id ? 'Press keys…' : chordLabel(chordFor(d, draft))) as HTMLButtonElement;
+        rec.addEventListener('click', () => { recording = d.id; draw(); (list.querySelector('.shortcut-recorder.recording') as HTMLElement | null)?.focus(); });
+        rec.addEventListener('keydown', e => {
+          if (recording !== d.id) return;
+          e.preventDefault(); e.stopPropagation();
+          const c = chordOf(e); if (!c) return;
+          if (same(c, d.original)) delete draft[d.id]; else draft[d.id] = c;
+          recording = null; draw();
+        });
+        rows.push(h('div', { class: 'shortcut-row' }, h('span', {}, d.title), rec));
+      }
+    }
+    list.replaceChildren(...rows);
+    update();
+  };
+  const body = h('div', { class: 'shortcuts-editor' },
+    h('p', { class: 'hint' }, 'Click a shortcut, then press its new key combination. Changes apply when you save.'), searchEl, list, problemEl,
+    h('details', { class: 'shortcut-notes' }, h('summary', {}, 'Contextual keys & mouse gestures'),
+      h('p', { class: 'hint' }, 'Text fields keep the browser’s standard editing keys. Numeric fields use Up/Down. Option (Alt) temporarily selects the eyedropper in painting tools. Shift constrains shapes and movement or adds to a selection; Option subtracts from selections or draws from the center. Option-drag duplicates layers; Option-click at a layer boundary toggles clipping. Command-click a thumbnail loads its selection. Control bypasses snapping. Modifier-and-mouse gestures are fixed.')));
+  draw();
+  const close = modal('Keyboard Shortcuts', body, [
+    { label: 'Restore Defaults', onClick: () => { recording = null; for (const k of Object.keys(draft)) delete draft[k]; draw(); return false; } },
+    { label: 'Cancel', onClick: () => {} },
+    { label: 'Save', primary: true, onClick: () => { if (recording || shortcutProblem(draft)) return false; saveShortcuts(draft); toast('Keyboard shortcuts saved.'); } },
+  ], 'shortcuts-modal');
+  void close;
+  // The modal's buttons: Save gets an id so it can be disabled while recording or on a conflict.
+  const btns = document.querySelectorAll('#shortcuts-modal .modal-buttons button');
+  (btns[2] as HTMLElement | undefined)?.setAttribute('id', 'shortcuts-save');
+  (btns[0] as HTMLElement | undefined)?.classList.add('left');
+  update();
 }
 
 // GridSettingsSheet.swift: the layout grid's spacing and subdivisions.
+/** GridSettingsSheet: every change shows on the canvas at once; Cancel puts back what was there. */
 export function showGridSettings() {
-  const sp = h('input', { type: 'number', value: view.gridSpacing, min: 1, max: 10000, class: 'dim', id: 'grid-spacing' }) as HTMLInputElement;
-  const sub = h('input', { type: 'number', value: view.gridSubdivisions, min: 1, max: 100, class: 'dim', id: 'grid-subdivisions' }) as HTMLInputElement;
-  modal('Grid Settings', h('div', {},
-    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Gridline every'), sp, h('span', { class: 'unit' }, 'px')),
-    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Subdivisions'), sub)),
-    [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => {
-      setView('gridSpacing', Math.min(10000, Math.max(1, Math.round(+sp.value || 64))));
-      setView('gridSubdivisions', Math.min(100, Math.max(1, Math.round(+sub.value || 1))));
-      if (!view.grid) setView('grid', true);
-    } }]);
+  const keys = ['gridSpacing', 'gridSubdivisions', 'gridPreset', 'gridCustom', 'gridStyle', 'gridOpacity', 'grid'] as const;
+  const saved = Object.fromEntries(keys.map(k => [k, structuredClone(view[k])])) as Pick<typeof view, typeof keys[number]>;
+  const st = { spacing: view.gridSpacing, subdivisions: view.gridSubdivisions, preset: view.gridPreset, custom: { ...view.gridCustom }, style: view.gridStyle, opacity: view.gridOpacity };
+  const valid = () => st.spacing >= 2 && st.spacing <= 4096 && st.subdivisions >= 1 && st.subdivisions <= 64 && st.subdivisions <= st.spacing && Number.isInteger(st.spacing) && Number.isInteger(st.subdivisions);
+  const hint = h('p', { class: 'hint', id: 'grid-hint' });
+  const preview = () => {
+    hint.textContent = valid() ? `A subdivision every ${+(st.spacing / st.subdivisions).toFixed(2)} pixels.`
+      : 'Use gridlines every 2–4,096 pixels and 1–64 subdivisions, no more than the pixels between gridlines.';
+    hint.classList.toggle('warn', !valid());
+    if (!valid()) return;
+    view.gridSpacing = st.spacing; view.gridSubdivisions = st.subdivisions; view.gridPreset = st.preset; view.gridCustom = { ...st.custom };
+    view.gridStyle = st.style; view.gridOpacity = st.opacity; view.grid = true; app.needsRender = true;
+  };
+  const body = h('div', { class: 'grid-settings' });
+  const build = () => {
+    const presetSel = select(Object.keys(GRID_PRESETS), st.preset, v => { st.preset = v as GridPreset; preview(); build(); }, { id: 'grid-color' });
+    const shown = GRID_PRESETS[st.preset] ? { red: GRID_PRESETS[st.preset]![0], green: GRID_PRESETS[st.preset]![1], blue: GRID_PRESETS[st.preset]![2] } : st.custom;
+    // The swatch shows whichever color is in use; picking one there makes that the Custom color.
+    const well = colorWell(shown, c => { st.custom = c; st.preset = 'Custom'; presetSel.value = 'Custom'; preview(); });
+    (well as HTMLElement).title = 'Choose a custom grid color';
+    const num = (id: string, v: number, min: number, max: number, set: (n: number) => void) => {
+      const i = h('input', { type: 'number', value: v, min, max, class: 'dim', id }) as HTMLInputElement;
+      i.addEventListener('input', () => { set(Math.round(+i.value)); preview(); });
+      return i;
+    };
+    body.replaceChildren(
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Color'), presetSel, well),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Style'), select(Object.keys(GRID_STYLES), st.style, v => { st.style = v as GridStyle; preview(); }, { id: 'grid-style' })),
+      slider({ label: 'Opacity', min: 1, max: 100, value: st.opacity, unit: '%', onInput: v => { st.opacity = Math.round(v); preview(); } }),
+      h('hr'),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Gridline every'), num('grid-spacing', st.spacing, 2, 4096, n => { st.spacing = n; }), h('span', { class: 'unit' }, 'px')),
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Subdivisions'), num('grid-subdivisions', st.subdivisions, 1, 64, n => { st.subdivisions = n; })),
+      hint);
+    preview();
+  };
+  build();
+  const restore = () => { for (const k of keys) (view as unknown as Record<string, unknown>)[k] = structuredClone(saved[k]); app.needsRender = true; };
+  modal('Grid Settings', body, [
+    { label: 'Restore Defaults', onClick: () => { Object.assign(st, { spacing: GRID_DEFAULTS.gridSpacing, subdivisions: GRID_DEFAULTS.gridSubdivisions, preset: GRID_DEFAULTS.gridPreset,
+      style: GRID_DEFAULTS.gridStyle, opacity: GRID_DEFAULTS.gridOpacity }); build(); return false; } },
+    { label: 'Cancel', onClick: () => { restore(); } },
+    { label: 'OK', primary: true, onClick: () => {
+      if (!valid()) return false;
+      restore();
+      setView('gridSpacing', st.spacing); setView('gridSubdivisions', st.subdivisions); setView('gridPreset', st.preset); setView('gridCustom', { ...st.custom });
+      setView('gridStyle', st.style); setView('gridOpacity', st.opacity); if (!view.grid) setView('grid', true);
+    } }], 'grid-settings-modal');
+  document.querySelector('#grid-settings-modal .modal-buttons button')?.classList.add('left');
 }
 export function showNewGuide() {
   const d = app.doc; if (!d) return;

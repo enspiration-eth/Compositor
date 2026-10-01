@@ -7,9 +7,21 @@ export interface ViewSettings {
   rulers: boolean; grid: boolean; guides: boolean; pixelGrid: boolean;
   snap: boolean; snapGuides: boolean; snapGrid: boolean; snapLayers: boolean; snapBounds: boolean;
   lockGuides: boolean; gridSpacing: number; gridSubdivisions: number;
+  /** GridAppearance: color preset (or Custom), major-line style and opacity in percent. */
+  gridPreset: GridPreset; gridCustom: { red: number; green: number; blue: number }; gridStyle: GridStyle; gridOpacity: number;
+}
+export const GRID_PRESETS = { 'Light Gray': [0.7, 0.7, 0.7], 'Light Blue': [0.29, 0.78, 1], 'Light Red': [1, 0.4, 0.4], Green: [0.25, 0.8, 0.25],
+  'Medium Blue': [0.2, 0.4, 1], Yellow: [1, 1, 0], Magenta: [1, 0, 1], Cyan: [0, 1, 1], Black: [0, 0, 0], Custom: null } as const;
+export type GridPreset = keyof typeof GRID_PRESETS;
+export const GRID_STYLES = { Lines: [] as number[], 'Dashed Lines': [4, 3], Dots: [1, 2] } as const;
+export type GridStyle = keyof typeof GRID_STYLES;
+export const GRID_DEFAULTS = { gridSpacing: 64, gridSubdivisions: 8, gridPreset: 'Light Gray' as GridPreset, gridStyle: 'Lines' as GridStyle, gridOpacity: 45 };
+export function gridColor(): [number, number, number] {
+  const p = GRID_PRESETS[view.gridPreset] ?? null, c = view.gridCustom;
+  return p ? [p[0], p[1], p[2]] : [c.red, c.green, c.blue];
 }
 const defaults: ViewSettings = { rulers: false, grid: false, guides: true, pixelGrid: true, snap: true, snapGuides: true, snapGrid: true,
-  snapLayers: true, snapBounds: true, lockGuides: false, gridSpacing: 64, gridSubdivisions: 8 };
+  snapLayers: true, snapBounds: true, lockGuides: false, ...GRID_DEFAULTS, gridCustom: { red: 0.7, green: 0.7, blue: 0.7 } };
 export const view: ViewSettings = (() => {
   try { return { ...defaults, ...JSON.parse(localStorage.getItem('compositor.view') || '{}') }; } catch { return { ...defaults }; }
 })();
@@ -113,17 +125,21 @@ export function drawLines(x: CanvasRenderingContext2D, stageW: number, stageH: n
   const d = p.doc, z = p.zoom, X = (v: number) => Math.round(v * z + p.ox) + 0.5, Y = (v: number) => Math.round(v * z + p.oy) + 0.5;
   const left = Math.max(0, X(0)), right = Math.min(stageW, X(d.width)), top = Math.max(0, Y(0)), bottom = Math.min(stageH, Y(d.height));
   if (view.grid && view.gridSpacing > 0) {
-    const sub = view.gridSpacing / Math.max(1, view.gridSubdivisions);
-    const lines = (step: number, style: string) => {
-      if (step * z < 4) return;
-      x.strokeStyle = style; x.beginPath();
-      for (let v = 0; v <= d.width; v += step) { const s = X(v); if (s >= left - 1 && s <= right + 1) { x.moveTo(s, top); x.lineTo(s, bottom); } }
-      for (let v = 0; v <= d.height; v += step) { const s = Y(v); if (s >= top - 1 && s <= bottom + 1) { x.moveTo(left, s); x.lineTo(right, s); } }
+    // drawLayoutGrid: dotted subdivisions at 28/45 of the majors' opacity, majors in the chosen style; every line
+    // counted from the origin (LayoutGrid.lines) so an uneven step doesn't drift off the majors.
+    const spacing = view.gridSpacing, step = spacing / Math.max(1, view.gridSubdivisions);
+    const [r, g, b] = gridColor().map(v => Math.round(v * 255)), major = Math.min(100, Math.max(1, view.gridOpacity)) / 100;
+    const along = (len: number) => { const n = Math.floor(len / step + 0.001), out: number[] = []; for (let i = 0; i <= n; i++) out.push(Math.round(i * step)); return out; };
+    const isMajor = (v: number) => Math.abs(Math.round(v) % spacing) < 0.001;
+    const stroke = (pick: (v: number) => boolean, alpha: number, dash: readonly number[]) => {
+      x.strokeStyle = `rgba(${r},${g},${b},${alpha})`; x.setLineDash([...dash]); x.beginPath();
+      for (const v of along(d.width)) if (pick(v)) { const s = X(v); if (s >= left - 1 && s <= right + 1) { x.moveTo(s, top); x.lineTo(s, bottom); } }
+      for (const v of along(d.height)) if (pick(v)) { const s = Y(v); if (s >= top - 1 && s <= bottom + 1) { x.moveTo(left, s); x.lineTo(right, s); } }
       x.stroke();
     };
     x.save(); x.lineWidth = 1;
-    if (view.gridSubdivisions > 1) lines(sub, 'rgba(128,128,128,0.22)');
-    lines(view.gridSpacing, 'rgba(128,128,128,0.55)');
+    if (step * z >= 4 && view.gridSubdivisions > 1) stroke(v => !isMajor(v), major * 28 / 45, [1, 2]);
+    if (spacing * z >= 4) stroke(isMajor, major, GRID_STYLES[view.gridStyle] ?? []);
     x.restore();
   }
   if (view.guides || dragGuide) {

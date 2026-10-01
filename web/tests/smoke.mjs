@@ -252,6 +252,46 @@ try {
     for (const [k, v] of Object.entries(r.res)) assert(v.diff <= 2, `${k} strips differ by ${v.diff}`);
   });
 
+  await step('Keyboard Shortcuts…: reassign, conflict check, menus follow, Restore Defaults', async () => {
+    await menu('Edit', 'Keyboard Shortcuts…');
+    await page.waitForSelector('#shortcuts-modal');
+    await page.fill('#shortcut-search', 'Levels');
+    await page.click('#shortcut-list .shortcut-recorder[data-id="Menus:Levels"]');
+    await page.keyboard.press('Control+Shift+K');
+    const recd = await page.textContent('#shortcut-list .shortcut-recorder[data-id="Menus:Levels"]');
+    assert(/K$/.test(recd), 'recorded ' + recd);
+    // The same chord on Curves is a conflict: Save is disabled and the problem is named.
+    await page.fill('#shortcut-search', 'Curves');
+    await page.click('#shortcut-list .shortcut-recorder[data-id="Menus:Curves"]');
+    await page.keyboard.press('Control+Shift+K');
+    assert(/assigned to both/.test(await page.textContent('#shortcut-problem')) && await page.isDisabled('#shortcuts-save'), 'conflict blocks Save');
+    await page.click('#shortcut-list .shortcut-recorder[data-id="Menus:Curves"]');
+    await page.keyboard.press('Control+m');
+    assert(!(await page.textContent('#shortcut-problem')) && !(await page.isDisabled('#shortcuts-save')), 'conflict cleared');
+    await page.fill('#shortcut-search', '');
+    await page.screenshot({ path: `${SHOTS}/19-keyboard-shortcuts.png` });
+    await page.click('#shortcuts-save');
+    await page.waitForSelector('#shortcuts-modal', { state: 'detached' });
+    // The new chord opens Levels; the old one no longer does; the Image menu shows the new chord.
+    await page.mouse.click(1300, 860);
+    await page.keyboard.press('Control+l');
+    await page.waitForTimeout(300);
+    assert(!(await page.$('#filter-panel')), 'old chord does nothing');
+    await page.keyboard.press('Control+Shift+K');
+    await page.waitForSelector('#filter-panel');
+    assert((await page.textContent('#filter-panel')).includes('Input Black'), 'Levels opened by the new chord');
+    await page.locator('#filter-panel button:text-is("Cancel")').click();
+    await page.click('.menubar-item[data-menu="Image"]');
+    const lbl = await page.locator('.menu .menu-item', { hasText: 'Levels…' }).first().locator('.menu-shortcut').textContent();
+    assert(/Shift\+K$|⇧⌘K$/.test(lbl), 'menu shows the new chord: ' + lbl);
+    await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+    await menu('Edit', 'Keyboard Shortcuts…');
+    await page.waitForSelector('#shortcuts-modal');
+    await page.locator('#shortcuts-modal button:text-is("Restore Defaults")').click();
+    await page.click('#shortcuts-save');
+    assert(await page.evaluate(() => localStorage.getItem('keyboardShortcuts.v1')) === '{}', 'defaults restored');
+  });
+
   await step('Gaussian Blur filter', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers[2].id); });
     await menu('Filter', 'Gaussian Blur');
@@ -396,6 +436,85 @@ try {
     await page.waitForTimeout(200);
     await page.screenshot({ path: `${SHOTS}/04-rulers-guides-grid.png` });
     await page.keyboard.press(`${mod}+'`);
+    // View › Grid Settings…: color preset, style, opacity, live preview, validation, Cancel/Escape restores.
+    const viewState = () => page.evaluate(() => JSON.parse(localStorage.getItem('compositor.view') || '{}'));
+    await menu('View', 'Grid Settings…');
+    await page.waitForSelector('#grid-settings-modal');
+    await page.selectOption('#grid-color', 'Magenta'); await page.selectOption('#grid-style', 'Dashed Lines');
+    await page.fill('#grid-subdivisions', '100');
+    assert(await page.evaluate(() => document.getElementById('grid-hint').classList.contains('warn')), 'invalid subdivisions flagged');
+    await page.fill('#grid-subdivisions', '4'); await page.fill('#grid-spacing', '100');
+    assert((await page.textContent('#grid-hint')).includes('every 25 pixels'), 'hint ' + await page.textContent('#grid-hint'));
+    await page.locator('#grid-settings-modal .modal-buttons button:text-is("OK")').click();
+    let vs = await viewState();
+    assert(vs.gridPreset === 'Magenta' && vs.gridStyle === 'Dashed Lines' && vs.gridSpacing === 100 && vs.gridSubdivisions === 4 && vs.grid, 'grid settings saved ' + JSON.stringify(vs));
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${SHOTS}/20-grid-settings.png` });
+    await menu('View', 'Grid Settings…');
+    await page.selectOption('#grid-color', 'Cyan');
+    await page.keyboard.press('Escape');
+    vs = await viewState(); assert(vs.gridPreset === 'Magenta' && await page.evaluate(() => !document.getElementById('grid-settings-modal')), 'Escape kept the saved grid');
+    await menu('View', 'Grid Settings…');
+    await page.locator('#grid-settings-modal .modal-buttons button:text-is("Restore Defaults")').click();
+    await page.locator('#grid-settings-modal .modal-buttons button:text-is("OK")').click();
+    vs = await viewState(); assert(vs.gridPreset === 'Light Gray' && vs.gridSpacing === 64 && vs.gridSubdivisions === 8 && vs.gridOpacity === 45, 'defaults restored');
+    await page.keyboard.press(`${mod}+'`);
+  });
+
+  await step('Move tool header: Auto Select, Show Controls (⌘H), ratio lock, Scale %', async () => {
+    const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Compositor').id); });
+    await page.click('.rail-btn[data-tool="move"]');
+    // Show Controls off: no handles (a drag anywhere moves); ⌘H brings them back.
+    await page.click('#transform-show-controls');
+    assert(await page.evaluate(() => window.compositor.ctl.handles(window.compositor.app.active).length === 0), 'handles hidden');
+    await page.mouse.click(1300, 860);
+    await page.keyboard.press(`${mod}+h`);
+    assert(await page.evaluate(() => window.compositor.ctl.handles(window.compositor.app.active).length > 0 && window.compositor.app.showsTransformControls), 'handles back with ⌘H');
+    // The ratio lock: an edge handle scales both sides while it's on, one side when off.
+    const r = await page.evaluate(() => {
+      const { app, ctl } = window.compositor, t0 = { ...app.active.transform }, start = [t0.x + t0.w, t0.y + t0.h / 2], to = [start[0] + 100, start[1]];
+      const ev = { shiftKey: false, altKey: false };
+      const locked = ctl.handleTransform(t0, { kind: 'scale', u: 1, v: 0.5 }, start, to, ev);
+      app.locksTransformRatio = false;
+      const free = ctl.handleTransform(t0, { kind: 'scale', u: 1, v: 0.5 }, start, to, ev);
+      const shifted = ctl.handleTransform(t0, { kind: 'scale', u: 1, v: 0.5 }, start, to, { shiftKey: true, altKey: false });
+      app.locksTransformRatio = true;
+      return { t0, locked, free, shifted };
+    });
+    assert(Math.abs(r.locked.h / r.t0.h - r.locked.w / r.t0.w) < 1e-6 && r.locked.w > r.t0.w, 'locked edge drag keeps the ratio');
+    assert(Math.abs(r.free.h - r.t0.h) < 1e-6 && Math.abs(r.free.w - r.t0.w - 100) < 1e-6, 'unlocked edge drag scales one side');
+    assert(Math.abs(r.shifted.h / r.t0.h - r.shifted.w / r.t0.w) < 1e-6, 'Shift turns the lock back on');
+    // Scale %: both sides to 50% of the layer's pixels, about the center.
+    const before = await page.evaluate(() => { const a = window.compositor.app.active; return { ...a.transform, pw: a.canvas.width }; });
+    const scale = page.locator('.hdr-field', { hasText: 'Scale' }).locator('input');
+    await scale.fill('50'); await scale.press('Enter');
+    const after = await page.evaluate(() => ({ ...window.compositor.app.active.transform }));
+    assert(Math.abs(after.w - before.pw / 2) < 0.01 && Math.abs((after.x + after.w / 2) - (before.x + before.w / 2)) < 0.01, 'scale 50% ' + JSON.stringify(after));
+    await page.keyboard.press(`${mod}+z`);
+    // Auto Select: a plain click picks the layer under the pointer.
+    await page.click('#transform-auto-select');
+    const [sx, sy] = await toScreen(1100, 560);
+    await page.mouse.click(sx, sy);
+    const picked = await page.evaluate(() => window.compositor.app.active.name);
+    await page.click('#transform-auto-select');
+    assert(picked === 'Sun', 'auto select picked ' + picked);
+    await page.screenshot({ path: `${SHOTS}/21-move-header.png` });
+  });
+
+  await step('Eyedropper drag with the Sample Ring', async () => {
+    await page.click('.rail-btn[data-tool="eyedropper"]');
+    assert(await page.isChecked('#sample-ring'), 'sample ring on by default');
+    const fg0 = await page.evaluate(() => ({ ...window.compositor.app.fg }));
+    const [ax, ay] = await toScreen(200, 950), [bx, by] = await toScreen(1100, 560);
+    await page.mouse.move(ax, ay); await page.mouse.down();
+    await page.mouse.move(bx, by, { steps: 6 });
+    const mid = await page.evaluate(() => ({ ring: !!window.compositor.ctl.ring, fg: { ...window.compositor.app.fg } }));
+    await page.screenshot({ path: `${SHOTS}/23-sample-ring.png` });
+    await page.mouse.up();
+    assert(mid.ring && JSON.stringify(mid.fg) !== JSON.stringify(fg0), 'sampling while dragging, ring shown');
+    assert(await page.evaluate(() => !window.compositor.ctl.ring), 'ring gone on release');
+    await page.evaluate(fg => { window.compositor.app.fg = fg; window.compositor.app.emit('colors'); }, fg0);
   });
 
   await step('Free Distort (wasm perspective warp)', async () => {
@@ -470,6 +589,17 @@ try {
     await page.waitForTimeout(100);
     await page.evaluate(() => { const ta = document.querySelector('textarea.text-editor'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
     await page.keyboard.type('!');
+    // Option/Alt+arrows: tracking (left/right) and leading (up/down), Shift for steps of ten.
+    const tr0 = await page.evaluate(() => document.querySelector('textarea.text-editor')._ctx.style.tracking);
+    await page.keyboard.press('Alt+Shift+ArrowRight');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('text-editor'));
+    await page.keyboard.press('Alt+ArrowRight');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('text-editor'));
+    const tr1 = await page.evaluate(() => document.querySelector('textarea.text-editor')._ctx.style.tracking);
+    assert(tr1 === tr0 + 11, `tracking ${tr0} → ${tr1}`);
+    await page.keyboard.press('Alt+Shift+ArrowLeft'); await page.waitForFunction(() => document.activeElement?.classList.contains('text-editor'));
+    await page.keyboard.press('Alt+ArrowLeft'); await page.waitForFunction(() => document.activeElement?.classList.contains('text-editor'));
+    await page.evaluate(() => { const ta = document.querySelector('textarea.text-editor'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
     await page.waitForTimeout(200);
     await page.screenshot({ path: `${SHOTS}/11-text-runs.png` });
     await page.keyboard.press('Control+Enter');
@@ -742,6 +872,44 @@ try {
     }
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportTiff())]);
     assert(/\.tif$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  });
+
+  await step('Canvas Size… (percent, relative, anchor, extension color) and Image Size… (resample off, sampling)', async () => {
+    await page.evaluate(() => { window.compositor.app.newCanvas(100, 50, 'Sizes'); window.compositor.app.doc.guides.push({ id: 'g1', axis: 'vertical', position: 40 }); });
+    await menu('Image', 'Canvas Size…');
+    await page.waitForSelector('#canvas-size-modal');
+    await page.selectOption('#canvas-units', 'Percent');
+    await page.check('#canvas-relative');
+    await page.fill('#canvas-width', '50'); await page.fill('#canvas-height', '100');
+    assert((await page.textContent('#canvas-result')).includes('New: 150 × 100 pixels'), await page.textContent('#canvas-result'));
+    await page.click('#canvas-size-modal .anchor[data-anchor="0"]');
+    await page.selectOption('#canvas-extension', 'Black');
+    await page.screenshot({ path: `${SHOTS}/22-canvas-size.png` });
+    await page.locator('#canvas-size-modal .modal-buttons button:text-is("OK")').click();
+    const r = await page.evaluate(() => { const { app } = window.compositor, d = app.doc, ext = d.layers[0];
+      const px = (x, y) => Array.from(ext.canvas.getContext('2d').getImageData(x, y, 1, 1).data);
+      return { w: d.width, h: d.height, ext: ext.name, inside: px(10, 10), outside: px(140, 90), layer1: { ...d.layers[1].transform }, guide: d.guides[0].position }; });
+    assert(r.w === 150 && r.h === 100 && r.ext === 'Canvas Extension' && r.inside[3] === 0 && r.outside[3] === 255 && r.outside[0] === 0, 'canvas size ' + JSON.stringify(r));
+    assert(r.layer1.x === 0 && r.layer1.y === 0 && r.guide === 40, 'top-left anchor keeps layers and guides');
+    // Image Size with Resample off changes only the resolution.
+    await menu('Image', 'Image Size…');
+    await page.waitForSelector('#image-size-modal');
+    await page.uncheck('#image-resample');
+    assert(await page.inputValue('#image-units') === 'Inches', 'units switch to inches');
+    await page.fill('#image-width', '1');
+    assert(+(await page.inputValue('#image-resolution')) === 150, 'resolution follows print width');
+    await page.locator('#image-size-modal .modal-buttons button:text-is("Resize")').click();
+    let d = await page.evaluate(() => { const x = window.compositor.app.doc; return { w: x.width, h: x.height, res: x.resolution }; });
+    assert(d.w === 150 && d.h === 100 && d.res === 150, 'resample off ' + JSON.stringify(d));
+    // Resample on, locked, Nearest: 300 px wide.
+    await menu('Image', 'Image Size…');
+    await page.selectOption('#image-sampling', 'Nearest');
+    await page.fill('#image-width', '300');
+    assert(+(await page.inputValue('#image-height')) === 200, 'locked height');
+    await page.locator('#image-size-modal .modal-buttons button:text-is("Resize")').click();
+    d = await page.evaluate(() => { const x = window.compositor.app.doc; return { w: x.width, h: x.height, guide: x.guides[0].position }; });
+    assert(d.w === 300 && d.h === 200 && d.guide === 80, 'resampled ' + JSON.stringify(d));
+    await page.evaluate(() => { const { app } = window.compositor; app.doc.dirty = false; app.closeProject(); });
   });
 
   await step('Image › Trim… (transparent pixels / corner color, chosen edges)', async () => {

@@ -7,6 +7,7 @@ import { CanvasController } from './tools';
 import { h, icon, slider, select, checkbox, button, showMenu, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
 import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel, openColorRange, showTrim } from './dialogs';
 import { fileToCanvas } from '../engine/files';
+import { translateCanvasKey } from './shortcuts';
 import { recentProjects, clearRecent, loadRecent, onRecentChange } from '../engine/recent';
 import { view, setView, clearGuides } from './guides';
 import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
@@ -204,6 +205,7 @@ function buildMenubar() {
       { label: 'Grid Settings…', action: () => showGridSettings(), disabled: !app.doc },
       { label: 'Rulers', shortcut: `${MOD}R`, checked: view.rulers, action: () => setView('rulers', !view.rulers), disabled: !app.doc },
       { separator: true },
+      { label: 'Show Transform Controls', shortcut: `${MOD}H`, checked: app.showsTransformControls, action: () => { app.showsTransformControls = !app.showsTransformControls; }, disabled: app.tool !== 'move' || !app.doc },
       { label: 'Snap', shortcut: `⇧${MOD};`, checked: view.snap, action: () => setView('snap', !view.snap), disabled: !app.doc },
       { label: 'Snap To', submenu: [
         { label: 'Guides', checked: view.snapGuides, action: () => setView('snapGuides', !view.snapGuides) },
@@ -283,9 +285,18 @@ function renderHeader() {
   const t = app.tool, a = app.active;
   switch (t) {
     case 'move': {
-      hd.append(title('Move'));
+      hd.append(title(app.maskTarget && a?.mask ? 'Transform Mask' : 'Transform'));
+      // TransformInspector: Auto Select (⌘ turns it the other way while held) and Show Controls (⌘H).
+      const autoSel = checkbox('Auto Select', app.transformAutoSelect, v => { app.transformAutoSelect = v; }, 'transform-auto-select');
+      autoSel.title = 'Select layers by clicking the canvas. Hold Command (Ctrl) to turn it the other way while you click.';
+      const showCtl = checkbox('Show Controls', app.showsTransformControls, v => { app.showsTransformControls = v; }, 'transform-show-controls');
+      showCtl.title = `Show the transform box and handles (${MOD}H). When hidden, drag anywhere to move the layer.`;
+      hd.append(autoSel, showCtl);
       if (a && !a.isGroup && !a.adjustment) {
         const tr = a.transform;
+        const lockBtn = h('button', { class: `btn small icon-toggle${app.locksTransformRatio ? ' on' : ''}`, id: 'transform-lock-ratio', 'aria-pressed': String(app.locksTransformRatio),
+          title: 'Lock aspect ratio. Hold Shift while dragging a handle to turn it the other way.' }, '🔗');
+        lockBtn.addEventListener('click', () => { app.locksTransformRatio = !app.locksTransformRatio; app.emit('tool'); });
         const field = (label: string, get: () => number, set: (v: number) => void, unit = 'px') => {
           const i = h('input', { type: 'number', value: Math.round(get() * 10) / 10, class: 'hdr-num' }) as HTMLInputElement;
           i.addEventListener('change', () => { const tt = { ...a.transform }; app.edit('Transform'); set(+i.value); app.emit('transform'); void tt; });
@@ -293,7 +304,14 @@ function renderHeader() {
           return h('label', { class: 'hdr-field' }, h('span', {}, label), i, h('span', { class: 'unit' }, unit));
         };
         hd.append(field('X', () => tr.x, v => a.transform.x = v), field('Y', () => tr.y, v => a.transform.y = v),
-          field('W', () => tr.w, v => { a.transform.w = Math.max(1, v); }), field('H', () => tr.h, v => { a.transform.h = Math.max(1, v); }),
+          field('W', () => tr.w, v => { if (v < 1) return; if (app.locksTransformRatio) a.transform.h *= v / a.transform.w; a.transform.w = v; }),
+          field('H', () => tr.h, v => { if (v < 1) return; if (app.locksTransformRatio) a.transform.w *= v / a.transform.h; a.transform.h = v; }),
+          lockBtn,
+          // Scale both sides to a percent of the layer's pixels, about the center.
+          field('Scale', () => tr.w / Math.max(1, a.canvas?.width ?? tr.w) * 100, v => {
+            if (!(v > 0)) return; const pw = a.canvas?.width ?? tr.w, ph = a.canvas?.height ?? tr.h, cx = a.transform.x + a.transform.w / 2, cy = a.transform.y + a.transform.h / 2;
+            a.transform.w = pw * v / 100; a.transform.h = ph * v / 100; a.transform.x = cx - a.transform.w / 2; a.transform.y = cy - a.transform.h / 2;
+          }, '%'),
           field('Angle', () => tr.rotation, v => a.transform.rotation = v, '°'),
           button('Flip H', () => app.flipLayers(true)), button('Flip V', () => app.flipLayers(false)),
           select(['High quality', 'Smooth', 'Nearest'], tr.sampling, v => { app.edit('Sampling'); a.transform.sampling = v; a.rev++; app.emit('transform'); }));
@@ -371,7 +389,7 @@ function renderHeader() {
         w.addEventListener('mousedown', () => { /* keep the editor's selection */ }); w.addEventListener('change', () => set({ ...fromHex(w.value) })); hd.append(w); }
       break;
     }
-    case 'eyedropper': hd.append(title('Eyedropper'), h('span', { class: 'hint' }, 'Click to pick the foreground color · Option-click for background')); break;
+    case 'eyedropper': hd.append(title('Eyedropper'), checkbox('Sample Ring', app.showsSampleRing, v => { app.showsSampleRing = v; }, 'sample-ring'), h('span', { class: 'hint' }, 'Click or drag to pick the foreground color · Option-click for background')); break;
     case 'crop': {
       hd.append(title('Crop'), h('span', { class: 'lbl' }, 'Ratio'), select(['Free', 'Original', '1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'], app.crop.ratio, v => { app.crop.ratio = v; }),
         button('Apply', () => ctl.applyCrop(), { class: 'btn primary', id: 'crop-apply' }), button('Cancel', () => { ctl.cancelCrop(); }));
@@ -667,9 +685,11 @@ function setupDrop() {
 
 // ---------- keyboard (KeyboardShortcuts.swift defaults) ----------
 function setupKeys() {
-  window.addEventListener('keydown', e => {
-    const tgt = e.target as HTMLElement;
-    if (tgt.closest('input:not([type=range]):not([type=checkbox]), textarea, select')) return;
+  window.addEventListener('keydown', raw => {
+    const tgt = raw.target as HTMLElement;
+    if (tgt.closest('input:not([type=range]):not([type=checkbox]), textarea, select, .shortcut-recorder')) return;
+    // Reassigned shortcuts arrive as the default chord they stand for; a default that was moved away does nothing.
+    const e = translateCanvasKey(raw); if (!e) { raw.preventDefault(); return; }
     const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
     const run = (f: () => void) => { e.preventDefault(); f(); };
     if (e.key === ' ' && !mod) { if (!ctl.spaceDown) { ctl.spaceDown = true; ctl.updateCursor(ctl.pointer ?? [0, 0]); } e.preventDefault(); return; }
@@ -681,6 +701,7 @@ function setupKeys() {
       if (k === 's') return run(() => e.altKey && e.shiftKey ? showExportJpeg() : e.shiftKey ? app.saveAs() : app.save());
       if (k === 'e') return run(() => e.shiftKey ? app.exportImage('png') : app.mergeSelected());
       if (k === 'w') return run(() => app.closeProject());
+      if (k === 'h' && !e.altKey) return run(() => { if (app.tool === 'move' && app.doc) app.showsTransformControls = !app.showsTransformControls; });
       if (k === '0') return run(() => app.fit());
       if (e.key === "'" || e.code === 'Quote') return run(() => setView('grid', !view.grid));
       if (e.key === ';' || e.key === ':' || e.code === 'Semicolon') return run(() => e.shiftKey ? setView('snap', !view.snap) : e.altKey ? setView('lockGuides', !view.lockGuides) : setView('guides', !view.guides));
@@ -688,7 +709,7 @@ function setupKeys() {
       if (k === '1') return run(() => app.zoomTo(1));
       if (k === '=' || k === '+') return run(() => app.zoomStep(1));
       if (k === '-') return run(() => app.zoomStep(-1));
-      if (k === 'a') return run(() => app.selectAll());
+      if (k === 'a') return run(() => e.altKey ? void app.selectSubject() : app.selectAll());
       if (k === 'd') return run(() => app.deselect());
       if (k === 'i') return run(() => e.shiftKey ? app.inverseSelection() : e.altKey ? showImageSize() : app.invertPixels());
       if (k === 'l') return run(() => openFilter('Levels'));
@@ -700,7 +721,7 @@ function setupKeys() {
       if (k === 'c' && e.altKey) return run(() => showCanvasSize());
       if (k === 'c') return run(() => e.shiftKey ? app.copyMerged() : app.copy());
       if (k === 'x') return run(() => app.copy(true));
-      if (k === 'v') return; // native paste event handles images; fall through to app.paste for layers
+      if (k === 'v') { if (e !== raw) run(() => app.paste()); return; } // native paste event handles images; fall through to app.paste for layers
       if (k === ']') return run(() => app.moveLayer(1));
       if (k === '[') return run(() => app.moveLayer(-1));
       if (e.key === 'Backspace' || e.key === 'Delete') return run(() => app.fill(app.bg));
@@ -748,6 +769,6 @@ function setupKeys() {
     const t = TOOLS.find(x => x.key === k);
     if (t) return run(() => selectTool(t.id));
   });
-  window.addEventListener('keyup', e => { if (e.key === ' ') { ctl.spaceDown = false; ctl.updateCursor(ctl.pointer ?? [0, 0]); } });
+  window.addEventListener('keyup', raw => { const e = translateCanvasKey(raw); if (e?.key === ' ') { ctl.spaceDown = false; ctl.updateCursor(ctl.pointer ?? [0, 0]); } });
   document.addEventListener('paste', e => { if (!(e.target as HTMLElement).closest('input, textarea') && !e.clipboardData?.files.length) app.paste(); });
 }

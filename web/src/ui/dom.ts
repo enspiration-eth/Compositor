@@ -1,6 +1,7 @@
 // Small DOM helpers and the controls the Mac app builds with SwiftUI: sliders whose label scrubs the value
 // (UI/NumericScrub.swift), pop-up menus, color wells, and floating panels (UI/FloatingPanel.swift).
 type Attrs = Record<string, unknown> & { class?: string; style?: string };
+import { menuShortcutLabel } from './shortcuts';
 export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = {}, ...children: (Node | string | null | undefined | false)[]): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -147,14 +148,19 @@ export function floatingPanel(title: string, onClose: () => void, opts: { width?
 }
 export function modal(title: string, content: HTMLElement, buttons: { label: string; primary?: boolean; onClick: () => boolean | void }[], id?: string): () => void {
   const back = h('div', { class: 'modal-back' });
-  const close = () => back.remove();
+  const close = () => { back.remove(); document.removeEventListener('keydown', onEscape, true); };
   const row = h('div', { class: 'modal-buttons' }, ...buttons.map(b => button(b.label, () => { if (b.onClick() !== false) close(); }, { class: b.primary ? 'btn primary' : 'btn' })));
   back.append(h('div', { class: 'modal', id }, h('h2', {}, title), content, row));
   back.addEventListener('keydown', e => {
     e.stopPropagation();
-    if (e.key === 'Escape') close();
     if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) { const p = buttons.find(b => b.primary); if (p && p.onClick() !== false) close(); }
   });
+  // Escape cancels from anywhere in the sheet (selects and fields stop their own keys), except a shortcut being recorded.
+  const onEscape = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape' || !back.isConnected || back !== [...document.querySelectorAll('.modal-back')].pop() || (e.target as HTMLElement).closest('.shortcut-recorder.recording')) return;
+    e.preventDefault(); e.stopPropagation(); buttons.find(b => b.label === 'Cancel')?.onClick(); close();
+  };
+  document.addEventListener('keydown', onEscape, true);
   document.body.append(back);
   requestAnimationFrame(() => (back.querySelector('input, select, button.primary') as HTMLElement | null)?.focus());
   return close;
@@ -175,7 +181,7 @@ export function showMenu(items: MenuItem[], x: number, y: number, nested = false
     if (it.separator) { m.append(h('div', { class: 'menu-sep' })); continue; }
     const row = h('div', { class: `menu-item${it.disabled ? ' disabled' : ''}${it.submenu ? ' has-sub' : ''}`, 'data-id': it.id ?? it.label },
       h('span', { class: 'menu-check' }, it.checked ? '✓' : ''), h('span', { class: 'menu-label' }, it.label ?? ''),
-      h('span', { class: 'menu-shortcut' }, it.submenu ? '▸' : it.shortcut ?? ''));
+      h('span', { class: 'menu-shortcut' }, it.submenu ? '▸' : menuShortcutLabel(it.shortcut ?? '')));
     if (it.submenu) {
       let sub: HTMLElement | null = null;
       row.addEventListener('mouseenter', () => {

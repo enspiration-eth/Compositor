@@ -206,3 +206,18 @@ body.busy, body.busy * { cursor: progress !important; }
 .welcome-recent { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
 .welcome-recent .recent-item { background: none; border: none; color: var(--accent, #4c8dff); text-align: left; padding: 3px 0; cursor: pointer; font: inherit; }
 .welcome-recent .recent-item:hover { text-decoration: underline; }
+.shortcuts-editor { width: min(620px, 80vw); }
+.shortcut-search { width: 100%; margin: 6px 0 8px; }
+.shortcut-list.editable { max-height: 52vh; overflow: auto; padding-right: 6px; }
+.shortcut-list.editable .shortcut-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.shortcut-recorder { min-width: 130px; padding: 3px 8px; border-radius: 5px; border: 1px solid #4a4a4a; background: #2c2c2c; color: inherit; font: 12px ui-monospace, monospace; cursor: pointer; }
+.shortcut-recorder.changed { border-color: var(--accent, #4c8dff); }
+.shortcut-recorder.recording { background: var(--accent, #4c8dff); color: #fff; }
+.shortcut-problem { color: #ff9f0a; font-size: 12px; margin-top: 6px; }
+.shortcut-notes { margin-top: 8px; }
+.modal-buttons .left { margin-right: auto; }
+.hint.warn { color: #ff9f0a; }
+.anchor-row { align-items: flex-start; }
+.anchor-note { max-width: 190px; margin-left: 12px; }
+.anchor-name { font-weight: 600; font-size: 12px; }
+.canvas-size > .check, .image-size > .check { display: flex; margin: 4px 0; }

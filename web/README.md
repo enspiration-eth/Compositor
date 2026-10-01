@@ -81,10 +81,12 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Compositing:** all 24 blend modes; opacity; layer masks (reveal/hide all, from selection, invert, apply, disable,
   delete); clipping masks; folder masks
 - **Layer effects:** stroke, drop shadow, inner shadow, outer glow, inner glow, color overlay
-- **Tools:** move/free transform (scale, rotate, flip), rectangle/ellipse marquee, lasso and polygonal lasso, magic wand
+- **Tools:** move/free transform (scale, rotate, flip; the Mac header's Auto Select with ⌘ to flip it, Show Controls / View ›
+  Show Transform Controls ⌘H, the aspect-ratio lock that Shift turns the other way on any handle, Scale %, handles
+  dragged past the opposite side flip the layer), rectangle/ellipse marquee, lasso and polygonal lasso, magic wand
   (wasm), crop, brush/eraser (size, hardness, opacity, smoothing; paints on masks too), spot healing (wasm), clone stamp,
   Liquify/Blur/Smudge (Liquify and Smudge run the Mac app's warp algorithm in wasm; Blur paints a softened copy of the
-  layer, made at the start of the stroke with the Radius setting, through the brush, as `BlurTool.swift` does), gradient, shape, type, eyedropper, hand, zoom
+  layer, made at the start of the stroke with the Radius setting, through the brush, as `BlurTool.swift` does), gradient, shape, type, eyedropper (click or drag, with the Sample Ring comparing new and previous color), hand, zoom
 - **Selections:** add/subtract/intersect, all, deselect, inverse, expand/contract (round corners via a Euclidean distance
   transform in wasm, as the Mac app's stroked-band path ops), feather (Gaussian of feather/2, edges extended), layer pixels, Color Range… (eyedroppers, Fuzziness, Invert, live preview; the wasm `color_range_mask`), Mask's Black Areas, marching ants
   (traced by the wasm `wand_trace`), Content-Aware Fill (wasm), Select Subject and Object Selection (on-device ML)
@@ -95,14 +97,19 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   running the Mac app's C kernel, Remove Background (Basic/Advanced with Refine Edges,
   Contrast, Shift Edge; adds a layer mask)
 - **Rulers, guides and grid:** rulers you drag guides out of (⌘R); guides saved in the project's manifest, moved
-  or deleted with the Move tool, locked or cleared, or added by position; a layout grid with Grid Settings (⌘'); Snap
+  or deleted with the Move tool, locked or cleared, or added by position; a layout grid (⌘') with Grid Settings (color preset or custom, Lines/Dashed Lines/Dots, opacity, spacing and
+  subdivisions, previewed live, Restore Defaults); Snap
   (⇧⌘;) to guides, grid, layers and document bounds for move, marquee, crop and shape
 - **Open Recent:** File › Open Recent (and the welcome card) lists the last ten projects opened or saved. They're kept
   in IndexedDB: the file handle where the browser provides one (Chromium's pickers, so Save writes back to that file),
   otherwise a copy of the project as last opened or saved. Clear Menu empties it.
-- **Canvas:** canvas size with anchor, image size, Trim… (transparent pixels or the top-left/bottom-right color, per edge), crop to selection, flip canvas, zoom/fit/100%, pixel grid at
+- **Canvas:** Canvas Size… (pixels/percent/inches/cm, relative to the current size, aspect lock, anchor, extension color as
+  a bottom "Canvas Extension" layer, guides follow), Image Size… (units, aspect lock, resolution, Resample off for print size
+  only, High quality/Smooth/Nearest sampling, guides scale), Trim… (transparent pixels or the top-left/bottom-right color, per edge), crop to selection, flip canvas, zoom/fit/100%, pixel grid at
   high zoom, checkerboard transparency
-- **Undo/redo** with copy-on-write pixel snapshots; Mac keyboard shortcuts (⌘ on Mac, Ctrl elsewhere)
+- **Undo/redo** with copy-on-write pixel snapshots; Mac keyboard shortcuts (⌘ on Mac, Ctrl elsewhere), all of them
+  reassignable in Edit › Keyboard Shortcuts… as in the Mac app (record a chord, conflicts are refused, menus show the
+  new chords, Restore Defaults; saved per browser). In text, Option/Alt+arrows set tracking and leading (⇧ for 10).
 
 ## Missing or simplified, and why
 
