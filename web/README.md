@@ -30,6 +30,25 @@ re-implemented on WebGL2 and canvas.
 Each kernel call premultiplies browser `ImageData` on the way in and un-premultiplies on the way out, because the C
 code expects premultiplied RGBA, as the Mac app's `CGContext`s provide.
 
+## Deploy anywhere (one command)
+
+From the repository root of the `web` branch:
+
+```sh
+npm install && npm start      # builds web/ and serves it on $PORT (default 3000), bound to 0.0.0.0
+```
+
+Point Render, Railway, Fly, Heroku or any Node host at the repo (branch `web`). Use `npm install` (or
+`npm install && npm run build`) as the build command and `npm start` as the start command. Node 20 or newer is
+required (`engines` in the root `package.json`).
+
+- `postinstall` installs the web app's dependencies, including dev dependencies (Vite, TypeScript), even when `NODE_ENV=production`.
+- `npm start` runs a zero-dependency Node server (`web/server.mjs`). It builds `web/dist` first if it's missing. It
+  serves `.wasm` as `application/wasm`, gives hashed assets long cache lifetimes, falls back to `index.html` for unknown
+  routes, and answers `/healthz`.
+- The compiled WebAssembly (`web/src/wasm/pixels.wasm`) is committed, so Emscripten is not needed at deploy time.
+- GitHub Pages deploys via `.github/workflows/pages.yml` on every push to `web`.
+
 ## Build
 
 ```sh

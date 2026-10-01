@@ -99,3 +99,10 @@ It needs, all kept outside this repository:
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+
+## Compositor for the web (`web` branch)
+
+A browser port lives in [`web/`](web/README.md): the Mac app's C pixel kernels compiled to WebAssembly, a WebGL2 compositor
+and a TypeScript UI. Deploy it anywhere with `npm install && npm start` from the repository root (serves on `$PORT`), or
+use the GitHub Pages build at https://enspiration-eth.github.io/Compositor/.
