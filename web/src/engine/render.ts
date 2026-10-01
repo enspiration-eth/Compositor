@@ -2,7 +2,7 @@
 // TiledLayerRenderer.swift, SeparableBlend.swift). Layers are drawn through their transforms, masked, clipped and
 // blended one at a time into a document-size framebuffer with all 24 of Compositor's blend modes, computed in sRGB
 // as Photoshop does. Adjustment layers read back what is below them and run the original C kernels over it.
-import { type Doc, type Layer, type Mat, ancestors, apply, getLayer, invert, isEffectivelyVisible, layerMatrix, mul, renderEffects, effectsMargin, BLEND_MODES } from './document';
+import { type Doc, type Layer, type Mat, ancestors, apply, getLayer, invert, isEffectivelyVisible, layerMatrix, mul, renderEffects, effectsMargin, BLEND_MODES, maskInLayerGrid, maskPlacementOf } from './document';
 import { adjustmentAsFilter, applyFilter } from './adjustments';
 import { unpremultiplyFrom } from './kernels';
 
@@ -250,8 +250,9 @@ export class Renderer {
       gl.enable(gl.BLEND); gl.blendFunc(gl.ZERO, gl.SRC_ALPHA);
       const masked = [l, ...ancestors(doc, l)].filter(x => x.mask && x.maskEnabled);
       for (const x of masked) {
-        const mt = this.uploadTex('M' + x.id, `${x.rev}|${x.mask!.width}`, x.mask!, x.mask!.width, x.mask!.height, false, false);
-        const pw = x.canvas ? x.canvas.width : x.mask!.width, ph = x.canvas ? x.canvas.height : x.mask!.height;
+        const mk = maskInLayerGrid(x)!;
+        const mt = this.uploadTex('M' + x.id, `${x.rev}|${mk.width}|${mk === x.mask ? '' : JSON.stringify(maskPlacementOf(x)) + JSON.stringify(x.transform)}`, mk, mk.width, mk.height, false, false);
+        const pw = x.canvas ? x.canvas.width : mk.width, ph = x.canvas ? x.canvas.height : mk.height;
         const toDoc = mul(layerMatrix(x), [pw, 0, 0, ph, 0, 0]);
         this.drawQuad(this.maskProg, toDoc, W, H, mt, p => gl.uniform1i(gl.getUniformLocation(p, 'u_useAlpha'), 0));
       }
@@ -294,8 +295,8 @@ export class Renderer {
     return true;
   }
   private layerSig(doc: Doc, l: Layer) {
-    const anc = ancestors(doc, l).map(a => `${a.id}:${a.opacity}:${a.rev}:${a.maskEnabled}:${JSON.stringify(a.transform)}`).join(',');
-    return `${l.id}:${l.rev}:${l.opacity}:${l.blend}:${l.maskEnabled}:${l.clipTo}:${JSON.stringify(l.transform)}:${l.adjustment ? JSON.stringify(l.adjustment) : ''}:${l.effects ? JSON.stringify(l.effects) : ''}:${l.canvas?.width}x${l.canvas?.height}:${anc}`;
+    const anc = ancestors(doc, l).map(a => `${a.id}:${a.opacity}:${a.rev}:${a.maskEnabled}:${JSON.stringify(a.maskPlacement)}:${JSON.stringify(a.transform)}`).join(',');
+    return `${l.id}:${l.rev}:${l.opacity}:${l.blend}:${l.maskEnabled}:${l.maskLinked}:${JSON.stringify(l.maskPlacement)}:${l.clipTo}:${JSON.stringify(l.transform)}:${l.adjustment ? JSON.stringify(l.adjustment) : ''}:${l.effects ? JSON.stringify(l.effects) : ''}:${l.canvas?.width}x${l.canvas?.height}:${anc}`;
   }
   private adjustedBackdrop(l: Layer, accum: Target, W: number, H: number, key: string): WebGLTexture {
     const gl = this.gl;

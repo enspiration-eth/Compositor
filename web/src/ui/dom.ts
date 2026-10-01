@@ -20,6 +20,7 @@ export function svg(path: string, size = 18, extra = ''): SVGSVGElement {
   return d.firstElementChild as SVGSVGElement;
 }
 export const ICONS: Record<string, string> = {
+  link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
   move: '<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>',
   marquee: '<rect x="4" y="5" width="16" height="14" rx="1" stroke-dasharray="3 2.4"/>',
   marqueeEllipse: '<ellipse cx="12" cy="12" rx="8.5" ry="7.5" stroke-dasharray="3 2.4"/>',

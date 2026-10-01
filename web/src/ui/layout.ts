@@ -144,6 +144,7 @@ function buildMenubar() {
           { separator: true },
           { label: a?.maskEnabled === false ? 'Enable Mask' : 'Disable Mask', action: () => a && app.setLayerProp(a, 'maskEnabled', !a.maskEnabled, 'Toggle Mask'), disabled: !a?.mask },
           { label: 'Invert Mask', action: () => app.invertMask(), disabled: !a?.mask },
+          { label: a?.maskLinked === false ? 'Link Mask' : 'Unlink Mask', action: () => app.toggleMaskLink(), disabled: !a?.mask },
           { label: 'Apply Mask', action: () => app.applyMask(), disabled: !a?.mask || !a.canvas },
           { label: 'Delete Mask', action: () => { if (a?.mask) { app.maskTarget = true; app.deleteLayers(); } }, disabled: !a?.mask },
         ], disabled: !a || a.isGroup },
@@ -514,7 +515,11 @@ function layerRow(l: Layer, depth: number): HTMLElement {
     mt.classList.add('mask-thumb'); if (app.maskTarget && active) mt.classList.add('target'); if (!l.maskEnabled) mt.classList.add('disabled');
     mt.title = 'Click to paint on the mask · Shift-click to disable it';
     mt.addEventListener('click', e => { e.stopPropagation(); if (e.shiftKey) { app.setLayerProp(l, 'maskEnabled', !l.maskEnabled, 'Toggle Mask'); return; } app.setActive(l.id); app.maskTarget = true; app.emit('layers'); });
-    parts.push(mt);
+    const linked = l.maskLinked !== false;
+    const link = h('button', { class: `mask-link${linked ? '' : ' off'}`, title: linked ? 'Unlink layer and mask so each moves on its own' : 'Link layer and mask so they move together',
+      'aria-label': `${linked ? 'Unlink' : 'Link'} mask: ${l.name}` }, linked ? icon('link', 11) : '');
+    link.addEventListener('click', e => { e.stopPropagation(); app.toggleMaskLink(l); });
+    parts.push(link, mt);
   }
   let name: HTMLElement;
   if (renaming === l.id) {

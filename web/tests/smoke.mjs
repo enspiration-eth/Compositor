@@ -230,6 +230,35 @@ try {
     await page.waitForFunction(() => window.compositor.app.active.mask && window.compositor.app.history.undoLabel === 'Remove Background', null, { timeout: 60000 });
   });
 
+  await step('unlinked layer mask moves on its own', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Hills').id); });
+    await page.click('.rail-btn[data-tool="marquee"]');
+    const drag = async (a, b) => { const [x0, y0] = await toScreen(...a), [x1, y1] = await toScreen(...b); await page.mouse.move(x0, y0); await page.mouse.down(); for (let i = 1; i <= 6; i++) await page.mouse.move(x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6); await page.mouse.up(); };
+    await drag([200, 500], [800, 1000]);
+    await page.evaluate(() => window.compositor.app.addMask(true));
+    const t0 = await page.evaluate(() => JSON.stringify(window.compositor.app.active.transform));
+    await page.click('.layer-row.active .mask-link');
+    assert(await page.evaluate(() => window.compositor.app.active.maskLinked === false), 'unlinked');
+    await page.click('.layer-row.active .mask-thumb');
+    await page.click('.rail-btn[data-tool="move"]');
+    await drag([500, 800], [900, 800]);
+    const r = await page.evaluate(() => { const a = window.compositor.app.active; return { p: a.maskPlacement, t: JSON.stringify(a.transform), label: window.compositor.app.history.undoLabel }; });
+    assert(r.label === 'Transform Layer Mask' && r.t === t0 && Math.abs(r.p.x - (JSON.parse(t0).x + 400)) <= 2, 'mask moved alone ' + JSON.stringify(r));
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: `${SHOTS}/08-unlinked-mask.png` });
+    // Now move the layer: the unlinked mask stays put on the document.
+    await page.click('.layer-row.active .layer-name');
+    await drag([500, 800], [500, 700]);
+    const r2 = await page.evaluate(() => { const a = window.compositor.app.active; return { p: a.maskPlacement, t: a.transform }; });
+    assert(Math.abs(r2.t.y - (JSON.parse(t0).y - 100)) <= 2 && Math.abs(r2.p.x - r.p.x) < 0.01 && Math.abs(r2.p.y - r.p.y) < 0.01, 'layer moved alone ' + JSON.stringify(r2));
+    // Relink, then moving the layer carries the placed mask along.
+    await page.click('.layer-row.active .mask-link');
+    await drag([500, 700], [500, 750]);
+    const r3 = await page.evaluate(() => { const { app } = window.compositor; const a = app.active; return { linked: a.maskLinked, x: a.maskPlacement?.x, y: a.maskPlacement?.y, ty: a.transform.y }; });
+    assert(r3.linked === true && Math.abs(r3.ty - r2.t.y - 50) <= 2, 'relinked ' + JSON.stringify(r3));
+    await page.evaluate(() => window.compositor.app.toggleMaskLink());
+  });
+
   await step('export PNG + save .comp', async () => {
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportImage('png'))]);
     assert(/\.png$/.test(dl.suggestedFilename()), dl.suggestedFilename());
@@ -243,12 +272,15 @@ try {
     const manifest = JSON.parse(strFromU8(files[manifestName]));
     assert(manifest.layers?.length >= 5, 'manifest layers ' + manifest.layers?.length);
     assert(manifest.guides?.length === 1, 'manifest guides');
+    const ml = manifest.layers.find(l => l.maskLinked === false);
+    assert(ml && ml.maskPlacement?.origin?.length === 2, 'manifest unlinked mask placement');
     console.log(`(manifest v${manifest.version}, ${manifest.layers.length} layers, ${Object.keys(files).length} entries) `);
     // Round-trip: reopen the saved project.
     await page.evaluate(async b64 => { const { app } = window.compositor; const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
       await app.openFiles([new File([bytes], 'sample.comp.zip', { type: 'application/zip' })]); }, readFileSync(zipPath).toString('base64'));
     await page.waitForFunction(() => window.compositor.app.projects.length === 2);
     const s2 = await st(); assert(s2.layers === manifest.layers.length, 'reopened layers ' + s2.layers);
+    assert(await page.evaluate(() => window.compositor.app.doc.layers.some(l => l.maskLinked === false && l.maskPlacement)), 'reopened unlinked mask');
   });
 
   await step('TIFF import (LZW, Deflate+alpha, 16-bit gray) + TIFF export', async () => {

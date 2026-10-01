@@ -3,6 +3,7 @@
 import {
   type Doc, type Layer, type BlendMode, type Effects, type EffectKey, type Transform, History, newDoc, newPixelLayer, uuid, cloneCanvas,
   getLayer, descendants, ancestors, childrenOf, layerMatrix, solidMask, fullTransform, renderText, rgbCss, BLEND_MODES, invert, apply,
+  bakeMask, toggleMaskLink, maskInLayerGrid, eachTransform,
 } from '../engine/document';
 import { Renderer } from '../engine/render';
 import { canvasOf, ctx2d, imageDataOf, newAdjustment, type AdjustmentKind, type FilterKind, type FilterSettings, applyFilter, type RGB } from '../engine/adjustments';
@@ -92,7 +93,9 @@ export class App {
   undo() { if (!this.doc || !this.history) return; const l = this.history.undo(this.doc); if (l) { this.maskTarget = this.maskTarget && !!this.active?.mask; this.changed('history'); } }
   redo() { if (!this.doc || !this.history) return; const l = this.history.redo(this.doc); if (l) this.changed('history'); }
   ownPixels(l: Layer) { this.history!.ownLayer(l); return l.canvas!; }
-  ownMask(l: Layer) { this.history!.ownMask(l); return l.mask!; }
+  ownMask(l: Layer) { bakeMask(l); this.history!.ownMask(l); return l.mask!; }
+  /** EditorSession.toggleMaskLink. */
+  toggleMaskLink(l = this.active) { if (!l?.mask) return; this.edit(l.maskLinked === false ? 'Link Layer Mask' : 'Unlink Layer Mask'); toggleMaskLink(l); this.changed('layers'); }
 
   // ---------- layers ----------
   setActive(id: string, extend = false) {
@@ -333,11 +336,11 @@ export class App {
     const a = this.active; if (!a?.mask || !a.canvas) return;
     this.edit('Apply Layer Mask');
     const c = this.ownPixels(a), x = ctx2d(c);
-    const alpha = canvasOf(c.width, c.height), ax = ctx2d(alpha), md = ctx2d(a.mask).getImageData(0, 0, c.width, c.height);
+    const alpha = canvasOf(c.width, c.height), ax = ctx2d(alpha), md = ctx2d(maskInLayerGrid(a)!).getImageData(0, 0, c.width, c.height);
     for (let i = 0; i < md.data.length; i += 4) { md.data[i + 3] = md.data[i]; }
     ax.putImageData(md, 0, 0);
     x.globalCompositeOperation = 'destination-in'; x.drawImage(alpha, 0, 0); x.globalCompositeOperation = 'source-over';
-    a.mask = null; a.rev++; this.maskTarget = false; this.rasterize(a);
+    a.mask = null; a.maskPlacement = a.maskBase = undefined; a.maskLinked = undefined; a.rev++; this.maskTarget = false; this.rasterize(a);
     this.changed('layers');
   }
 
@@ -458,11 +461,10 @@ export class App {
   flipCanvas(horizontal: boolean) {
     const d = this.doc; if (!d) return;
     this.edit(horizontal ? 'Flip Canvas Horizontal' : 'Flip Canvas Vertical');
-    for (const l of d.layers) {
-      const t = l.transform;
+    for (const l of d.layers) eachTransform(l, t => {
       if (horizontal) { t.x = d.width - t.x - t.w; t.flipX = !t.flipX; t.rotation = -t.rotation; }
       else { t.y = d.height - t.y - t.h; t.flipY = !t.flipY; t.rotation = -t.rotation; }
-    }
+    });
     if (d.selection) { const c = canvasOf(d.width, d.height), x = ctx2d(c); x.translate(horizontal ? d.width : 0, horizontal ? 0 : d.height); x.scale(horizontal ? -1 : 1, horizontal ? 1 : -1); x.drawImage(d.selection, 0, 0); d.selection = c; d.selRev++; }
     this.changed('layers');
   }
@@ -474,7 +476,7 @@ export class App {
     const d = this.doc; if (!d) return;
     this.edit('Canvas Size');
     const dx = (w - d.width) * ax, dy = (h - d.height) * ay;
-    for (const l of d.layers) { l.transform.x += dx; l.transform.y += dy; }
+    for (const l of d.layers) eachTransform(l, t => { t.x += dx; t.y += dy; });
     if (d.selection) { const c = canvasOf(w, h); ctx2d(c).drawImage(d.selection, dx, dy); d.selection = c; d.selRev++; }
     d.width = w; d.height = h;
     this.fit(); this.changed('canvas');
@@ -484,12 +486,12 @@ export class App {
     this.edit('Image Size');
     const sx = w / d.width, sy = h / d.height;
     for (const l of d.layers) {
-      const t = l.transform; t.x *= sx; t.y *= sy; t.w *= sx; t.h *= sy;
+      eachTransform(l, t => { t.x *= sx; t.y *= sy; t.w *= sx; t.h *= sy; });
       // Resample pixels so the stored image matches its new size (as the Mac app does).
       if (l.canvas && !l.isGroup) {
         const nw = Math.max(1, Math.round(l.canvas.width * sx)), nh = Math.max(1, Math.round(l.canvas.height * sy));
         const c = canvasOf(nw, nh), x = ctx2d(c); x.imageSmoothingQuality = 'high'; x.drawImage(l.canvas, 0, 0, nw, nh); l.canvas = c;
-        if (l.mask) { const m = canvasOf(nw, nh); ctx2d(m).drawImage(l.mask, 0, 0, nw, nh); l.mask = m; }
+        if (l.mask && !l.maskPlacement) { const m = canvasOf(nw, nh); ctx2d(m).drawImage(l.mask, 0, 0, nw, nh); l.mask = m; }
         if (l.text) l.text = { ...l.text, fontSize: l.text.fontSize * sx, boxSize: l.text.boxSize ? { width: l.text.boxSize.width * sx, height: l.text.boxSize.height * sy } : undefined };
       }
       l.rev++;
@@ -502,7 +504,7 @@ export class App {
     const d = this.doc; if (!d) return;
     const w = Math.max(1, Math.round(r.w)), h = Math.max(1, Math.round(r.h)), x0 = Math.round(r.x), y0 = Math.round(r.y);
     this.edit('Crop');
-    for (const l of d.layers) { l.transform.x -= x0; l.transform.y -= y0; }
+    for (const l of d.layers) eachTransform(l, t => { t.x -= x0; t.y -= y0; });
     if (d.selection) { const c = canvasOf(w, h); ctx2d(c).drawImage(d.selection, -x0, -y0); d.selection = Sel.isEmpty(c) ? null : c; d.selRev++; }
     d.width = w; d.height = h;
     this.fit(); this.changed('canvas');

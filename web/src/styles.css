@@ -101,6 +101,7 @@ button { font: inherit; color: inherit; }
 .thumb.icon { background: #3a3a3a; color: var(--text2); }
 .mask-thumb { background: #000; cursor: pointer; } .mask-thumb.target { outline: 2px solid #fff; outline-offset: 1px; } .mask-thumb.disabled { opacity: 0.4; position: relative; }
 .mask-thumb.disabled::after { content: ''; position: absolute; inset: 0; background: linear-gradient(45deg, transparent 46%, #e33 46%, #e33 54%, transparent 54%); }
+.mask-link { width: 12px; height: 18px; padding: 0; margin: 0 -2px; background: none; border: 0; color: var(--text-dim, #999); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; } .mask-link:hover { color: #fff; }
 .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clip-mark { color: var(--text2); font-size: 13px; width: 10px; }
 .fx { border: none; background: #3c3c3c; border-radius: 4px; font-size: 10px; font-style: italic; font-weight: 700; padding: 1px 4px; cursor: pointer; color: var(--text2); }

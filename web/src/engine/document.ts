@@ -37,7 +37,14 @@ export interface Layer {
   parentId: string | null; isGroup: boolean; collapsed?: boolean;
   canvas: HTMLCanvasElement | null;          // pixels (null for groups and adjustment layers)
   transform: Transform;
-  mask: HTMLCanvasElement | null; maskEnabled: boolean;  // gray in R, same pixel size as `canvas`
+  mask: HTMLCanvasElement | null; maskEnabled: boolean;  // gray in R, same pixel size as `canvas` (unless placed)
+  /** LayerMask.placement: where the mask's own pixel grid sits on the document once moved apart from its layer;
+   *  undefined while it covers the layer's pixel grid. */
+  maskPlacement?: Transform;
+  /** The layer's transform when `maskPlacement` was last set, so a linked placed mask follows later layer moves. */
+  maskBase?: Transform;
+  /** LayerMask.isLinked (default true): linked, layer and mask move together; unlinked, each on its own. */
+  maskLinked?: boolean;
   clipTo: string | null;                       // maskSourceID: base layer whose alpha clips this one
   adjustment?: AdjustmentRecord;
   text?: TextStyle; shape?: ShapeStyle; effects?: Effects;
@@ -98,6 +105,83 @@ export function layerContains(l: Layer, x: number, y: number) {
   return Math.abs(dx * Math.cos(r) + dy * Math.sin(r)) <= t.w / 2 && Math.abs(-dx * Math.sin(r) + dy * Math.cos(r)) <= t.h / 2;
 }
 
+// ---------- placed / unlinked masks (Document/LayerMask.swift) ----------
+const sameT = (a: Transform, b: Transform) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h && a.rotation === b.rotation && a.flipX === b.flipX && a.flipY === b.flipY;
+const unitToDoc = (t: Transform) => pixelToDoc(t, 1, 1);
+/** LayerTransform.placing: the transform nearest `t` that maps the unit square by `m` (no shear). */
+export function placing(t: Transform, m: Mat): Transform {
+  const sign = t.flipX ? -1 : 1;
+  const angle = Math.atan2(m[1] * sign, m[0] * sign);
+  const along = -m[2] * Math.sin(angle) + m[3] * Math.cos(angle);
+  const mid = apply(m, 0.5, 0.5);
+  const w = Math.hypot(m[0], m[1]), h = Math.abs(along), deg = angle * 180 / Math.PI;
+  return { ...t, w, h, rotation: deg + Math.round((t.rotation - deg) / 360) * 360, flipY: along < 0, x: mid[0] - w / 2, y: mid[1] - h / 2 };
+}
+/** LayerTransform.following: this placement carried along as a layer moves from `old` to `nw`. */
+export function following(p: Transform, old: Transform, nw: Transform): Transform {
+  if (sameT(old, nw)) return p;
+  if (old.w === nw.w && old.h === nw.h && old.rotation === nw.rotation && old.flipX === nw.flipX && old.flipY === nw.flipY)
+    return { ...p, x: p.x + nw.x - old.x, y: p.y + nw.y - old.y };
+  return placing(p, mul(unitToDoc(nw), mul(invert(unitToDoc(old)), unitToDoc(p))));
+}
+/** Where the mask's pixels sit on the document right now; undefined while it covers the layer's grid. */
+export function maskPlacementOf(l: Layer): Transform | undefined {
+  if (!l.mask || !l.maskPlacement) return undefined;
+  const p = l.maskLinked !== false && l.maskBase ? following(l.maskPlacement, l.maskBase, l.transform) : l.maskPlacement;
+  return sameT(p, l.transform) && l.canvas && l.mask.width === l.canvas.width && l.mask.height === l.canvas.height ? undefined : p;
+}
+/** ImageLayer.maskTransform: where the mask's pixels sit on the document. */
+export const maskTransformOf = (l: Layer): Transform => maskPlacementOf(l) ?? l.transform;
+const bgCache = new WeakMap<HTMLCanvasElement, [number, number]>();
+/** LayerMask.background: white or black beyond a placed mask's pixels, whichever most of its edge is. */
+export function maskBackground(m: HTMLCanvasElement, rev = 0): number {
+  const c = bgCache.get(m); if (c && c[0] === rev) return c[1];
+  const W = m.width, H = m.height, d = m.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, W, H).data;
+  let tot = 0, n = 0;
+  const step = Math.max(1, Math.floor(Math.max(W, H) / 256));
+  for (let x = 0; x < W; x += step) { tot += d[x * 4] + d[((H - 1) * W + x) * 4]; n += 2; }
+  for (let y = 0; y < H; y += step) { tot += d[y * W * 4] + d[(y * W + W - 1) * 4]; n += 2; }
+  const v = tot * 2 >= n * 255 ? 255 : 0; bgCache.set(m, [rev, v]); return v;
+}
+const gridCache = new WeakMap<Layer, { key: string; c: HTMLCanvasElement }>();
+/** LayerMask.clipImage: the mask as renderers take it, stretched over the layer's pixel grid (placed masks resampled). */
+export function maskInLayerGrid(l: Layer): HTMLCanvasElement | null {
+  if (!l.mask) return null;
+  const p = maskPlacementOf(l); if (!p) return l.mask;
+  const pw = l.canvas ? l.canvas.width : Math.max(1, Math.round(l.transform.w)), ph = l.canvas ? l.canvas.height : Math.max(1, Math.round(l.transform.h));
+  const key = `${l.rev}|${pw}x${ph}|${JSON.stringify(p)}|${JSON.stringify(l.transform)}`;
+  const hit = gridCache.get(l); if (hit && hit.key === key && hit.c.width === pw) return hit.c;
+  const c = hit?.c && hit.c.width === pw && hit.c.height === ph ? hit.c : canvasOf(pw, ph), x = ctx2d(c);
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  const bg = maskBackground(l.mask, l.rev); x.fillStyle = `rgb(${bg},${bg},${bg})`; x.fillRect(0, 0, pw, ph);
+  const m = mul(invert(pixelToDoc(l.transform, pw, ph)), pixelToDoc(p, l.mask.width, l.mask.height));
+  x.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+  x.drawImage(l.mask, 0, 0); x.setTransform(1, 0, 0, 1, 0, 0);
+  gridCache.set(l, { key, c }); return c;
+}
+/** Resample a placed mask back into its layer's pixel grid (before painting or filtering it in that grid). */
+export function bakeMask(l: Layer): boolean {
+  if (!l.mask || !maskPlacementOf(l)) return false;
+  const g = maskInLayerGrid(l)!; const c = canvasOf(g.width, g.height); ctx2d(c).drawImage(g, 0, 0);
+  l.mask = c; l.maskBase = undefined; l.maskPlacement = l.maskLinked === false ? { ...l.transform } : undefined; l.rev++; return true;
+}
+/** Set where the mask sits on the document (undefined: back over the layer). */
+export function setMaskPlacement(l: Layer, p: Transform | undefined) {
+  if (p && l.canvas && l.mask && sameT(p, l.transform) && l.mask.width === l.canvas.width && l.mask.height === l.canvas.height) p = undefined;
+  if (!p && l.maskLinked === false) p = l.transform;
+  l.maskPlacement = p ? { ...p } : undefined; l.maskBase = p && l.maskLinked !== false ? { ...l.transform } : undefined; l.rev++;
+}
+/** Apply a document-wide geometric change (crop, canvas size, flip, image size) to a layer and its mask placement. */
+export function eachTransform(l: Layer, f: (t: Transform) => void) { f(l.transform); if (l.maskPlacement) f(l.maskPlacement); if (l.maskBase) f(l.maskBase); }
+/** EditorSession.toggleMaskLink. */
+export function toggleMaskLink(l: Layer) {
+  if (!l.mask) return;
+  const p = maskPlacementOf(l);
+  if (l.maskLinked !== false) { l.maskLinked = false; l.maskPlacement = { ...(p ?? l.transform) }; l.maskBase = undefined; }
+  else { l.maskLinked = true; setMaskPlacement(l, p); }
+  l.rev++;
+}
+
 // ---------- tree helpers ----------
 export function childrenOf(doc: Doc, parent: string | null) { return doc.layers.filter(l => l.parentId === parent); }
 export function ancestors(doc: Doc, l: Layer): Layer[] {
@@ -131,7 +215,7 @@ export class History {
   private shared = new WeakSet<HTMLCanvasElement>();
   limit = 60;
   private snap(doc: Doc, label: string): Snapshot {
-    const layers = doc.layers.map(l => ({ ...l, transform: { ...l.transform }, effects: l.effects ? structuredClone(l.effects) : undefined,
+    const layers = doc.layers.map(l => ({ ...l, transform: { ...l.transform }, maskPlacement: l.maskPlacement && { ...l.maskPlacement }, maskBase: l.maskBase && { ...l.maskBase }, effects: l.effects ? structuredClone(l.effects) : undefined,
       adjustment: l.adjustment ? structuredClone(l.adjustment) : undefined, text: l.text ? structuredClone(l.text) : undefined,
       shape: l.shape ? structuredClone(l.shape) : undefined }));
     for (const l of layers) { if (l.canvas) this.shared.add(l.canvas); if (l.mask) this.shared.add(l.mask); }

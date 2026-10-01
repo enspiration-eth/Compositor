@@ -6,12 +6,13 @@ import { isTiffName, tiffToCanvas } from './tiff';
 // Swift PSD reader, IO/PSD, which depends on Core Graphics).
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { readPsd, type Layer as PsdLayer } from 'ag-psd';
-import { type Doc, type Guide, type Layer, type BlendMode, BLEND_MODES, newDoc, newPixelLayer, uuid, fullTransform } from './document';
+import { type Doc, type Guide, type Layer, type BlendMode, BLEND_MODES, newDoc, newPixelLayer, uuid, fullTransform, maskPlacementOf } from './document';
 import { canvasOf, ctx2d, type AdjustmentRecord } from './adjustments';
 
 export interface ManifestLayer {
   id: string; name: string; isVisible: boolean; imageFile?: string; parentID?: string; isGroup?: boolean; opacity?: number; blendMode?: string;
   maskFile?: string; maskEnabled?: boolean; maskSourceID?: string; adjustment?: AdjustmentRecord; shape?: unknown; effects?: unknown; text?: unknown;
+  maskPlacement?: ManifestLayer['transform']; maskLinked?: boolean;
   transform: { origin: [number, number]; size: [number, number]; rotation: number; flipX: boolean; flipY: boolean; sampling: string };
 }
 export interface Manifest {
@@ -64,6 +65,9 @@ export async function writeComp(doc: Doc): Promise<Uint8Array> {
     }
     if (l.mask) {
       rec.maskFile = `${l.id}.mask.png`; rec.maskEnabled = l.maskEnabled;
+      const mp = maskPlacementOf(l) ?? (l.maskLinked === false ? l.transform : undefined);
+      if (mp && maskPlacementOf(l)) rec.maskPlacement = { origin: [mp.x, mp.y], size: [mp.w, mp.h], rotation: mp.rotation, flipX: mp.flipX, flipY: mp.flipY, sampling: mp.sampling };
+      if (l.maskLinked === false) rec.maskLinked = false;
       files[`${folder}/images/${l.id}.mask.png`] = await maskToPng(l.mask);
     }
     if (l.clipTo) rec.maskSourceID = l.clipTo;
@@ -117,9 +121,15 @@ export async function readCompFiles(files: Map<string, Uint8Array>, name: string
         const mc = await bytesToCanvas(bytes);
         // A mask has the layer's pixel size; a 1×1 uniform mask is stretched to it.
         const pw = layer.canvas?.width ?? Math.round(t.size[0]), ph = layer.canvas?.height ?? Math.round(t.size[1]);
-        if (mc.width !== pw || mc.height !== ph) { const s = canvasOf(pw, ph); ctx2d(s).drawImage(mc, 0, 0, pw, ph); layer.mask = s; } else layer.mask = mc;
+        const mp = r.maskPlacement;
+        if (mp && Array.isArray(mp.origin) && Array.isArray(mp.size) && mp.size[0] > 0 && mp.size[1] > 0) {
+          layer.maskPlacement = { x: mp.origin[0], y: mp.origin[1], w: mp.size[0], h: mp.size[1], rotation: mp.rotation ?? 0, flipX: !!mp.flipX, flipY: !!mp.flipY, sampling: (mp.sampling as 'High quality') ?? 'High quality' };
+          layer.mask = mc;
+        } else if (mc.width !== pw || mc.height !== ph) { const s = canvasOf(pw, ph); ctx2d(s).drawImage(mc, 0, 0, pw, ph); layer.mask = s; } else layer.mask = mc;
       }
     }
+    if (r.maskLinked === false && layer.mask) { layer.maskLinked = false; layer.maskPlacement ??= { ...layer.transform }; }
+    else if (layer.maskPlacement) layer.maskBase = { ...layer.transform };
     doc.layers.push(layer);
   }
   doc.activeId = m.activeLayerID && doc.layers.some(l => l.id === m.activeLayerID) ? m.activeLayerID : doc.layers[doc.layers.length - 1]?.id ?? null;

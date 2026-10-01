@@ -7,7 +7,7 @@ import type { Guide } from '../engine/document';
 // the document (engine/render.ts); a 2D overlay above it draws marching ants, transform handles, crop and cursors.
 import { app, type Tool } from './app';
 import { type Layer, type Mat, type Transform, layerMatrix, invert, apply, cloneCanvas, rgbCss, layerContains, layerCorners, renderShape,
-  isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer } from '../engine/document';
+  isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer, maskTransformOf, bakeMask } from '../engine/document';
 import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
 import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds } from '../engine/kernels';
@@ -41,7 +41,7 @@ export class CanvasController {
   rulerX: HTMLCanvasElement; rulerY: HTMLCanvasElement; rulerCorner: HTMLElement;
   guideDrag: { guide: Guide; isNew: boolean; startPos: number } | null = null;
   /** Free Distort in progress (Distort.swift): the layer's original pixels and the four dragged image corners. */
-  distort: { layer: Layer; canvas: HTMLCanvasElement; mask: HTMLCanvasElement | null; transform: Transform; corners: Pt[]; src: ImageData; maskSrc: ImageData | null } | null = null;
+  distort: { layer: Layer; canvas: HTMLCanvasElement; mask: HTMLCanvasElement | null; keepMask: boolean; transform: Transform; corners: Pt[]; src: ImageData; maskSrc: ImageData | null } | null = null;
   antsPhase = 0;
 
   constructor(stage: HTMLElement) {
@@ -175,6 +175,10 @@ export class CanvasController {
       x.save(); x.strokeStyle = '#4c8dff'; x.lineWidth = 1; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
       for (const c of cs) { x.fillStyle = '#fff'; x.beginPath(); x.rect(c[0] - 4, c[1] - 4, 8, 8); x.fill(); x.stroke(); }
       x.restore();
+    } else if (app.tool === 'move' && a && a.mask && app.maskTarget && a.maskLinked === false) {
+      // The unlinked mask's own box (dashed): what the Move tool drags.
+      const cs = layerCorners({ ...a, transform: maskTransformOf(a) }).map(([u, v]) => S(u, v));
+      x.save(); x.setLineDash([5, 4]); x.strokeStyle = '#ff9f2e'; x.lineWidth = 1.5; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke(); x.restore();
     } else if (app.tool === 'move' && a && !a.isGroup && !a.adjustment && isEffectivelyVisible(d, a)) {
       const cs = layerCorners(a).map(([u, v]) => S(u, v));
       x.save(); x.strokeStyle = '#4c8dff'; x.lineWidth = 1; x.beginPath(); cs.forEach((c, i) => i ? x.lineTo(...c) : x.moveTo(...c)); x.closePath(); x.stroke();
@@ -435,6 +439,12 @@ export class CanvasController {
         if (i >= 0) { this.drag = { kind: 'distort', start: s, startDoc: dpt, data: { i } }; return; }
       }
     }
+    if (a && app.maskTarget && a.mask && a.maskLinked === false && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      // An unlinked mask, selected, moves on its own (EditorSession.commitMaskTransform).
+      app.edit('Transform Layer Mask');
+      this.drag = { kind: 'move', start: s, startDoc: dpt, data: { maskOnly: true, layer: a, startP: { ...maskTransformOf(a) }, moved: false } };
+      return;
+    }
     const hit = a && !a.isGroup ? this.handles(a).find(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8) : null;
     if (!hit && (e.metaKey || e.ctrlKey || !a)) {
       // Auto-select the topmost visible pixel layer under the pointer.
@@ -452,6 +462,13 @@ export class CanvasController {
   }
   moveDrag(dr: NonNullable<CanvasController['drag']>, dpt: Pt, e: PointerEvent) {
     const data = dr.data!; data.moved = true;
+    if (data.maskOnly) {
+      const l = data.layer as Layer, p0 = data.startP as Transform;
+      let dx = dpt[0] - dr.startDoc[0], dy = dpt[1] - dr.startDoc[1];
+      if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      l.maskPlacement = { ...p0, x: Math.round(p0.x + dx), y: Math.round(p0.y + dy) }; l.rev++;
+      app.needsRender = true; return;
+    }
     const hit = data.hit as ReturnType<CanvasController['handles']>[number] | null;
     const layers = data.layers as Layer[], starts = data.starts as Transform[];
     if (!hit) {
@@ -501,8 +518,11 @@ export class CanvasController {
     if (!l || !l.canvas || l.isGroup || l.adjustment) { toast('Select a pixel layer to distort.'); return false; }
     app.edit('Distort');
     app.rasterize(l);
-    this.distort = { layer: l, canvas: l.canvas, mask: l.mask, transform: { ...l.transform }, corners: layerCorners(l).map(c => [c[0], c[1]] as Pt),
-      src: imageDataOf(l.canvas), maskSrc: l.mask ? imageDataOf(l.mask) : null };
+    // A linked mask is warped with its layer; an unlinked one stays where it is on the document.
+    const keepMask = !!l.mask && l.maskLinked === false;
+    if (!keepMask) bakeMask(l);
+    this.distort = { layer: l, canvas: l.canvas, mask: l.mask, keepMask, transform: { ...l.transform }, corners: layerCorners(l).map(c => [c[0], c[1]] as Pt),
+      src: imageDataOf(l.canvas), maskSrc: l.mask && !keepMask ? imageDataOf(l.mask) : null };
     toast('Free Distort: drag the corners · Return applies · Esc cancels');
     app.needsRender = true;
     return true;
@@ -530,7 +550,7 @@ export class CanvasController {
   previewDistort() {
     const dist = this.distort; if (!dist) return;
     const r = this.warpDistort(1024); if (!r) return;
-    const l = dist.layer; l.canvas = r.canvas; l.mask = r.mask; l.transform = r.transform; l.rev++;
+    const l = dist.layer; l.canvas = r.canvas; l.mask = dist.keepMask ? dist.mask : r.mask; l.transform = r.transform; l.rev++;
     app.needsRender = true;
   }
   commitDistort() {
@@ -548,7 +568,7 @@ export class CanvasController {
       canvas = crop(canvas); mask = mask ? crop(mask) : null;
       transform = { ...transform, x: transform.x + b[0] * sx, y: transform.y + b[1] * sy, w: cw * sx, h: ch * sy };
     }
-    l.canvas = canvas; l.mask = mask; l.transform = transform; l.rev++;
+    l.canvas = canvas; l.mask = dist.keepMask ? dist.mask : mask; l.transform = transform; l.rev++;
     app.changed('layers');
   }
   cancelDistort() {
@@ -563,6 +583,8 @@ export class CanvasController {
     if (app.tool === 'move' || !d.selection) {
       const ids = d.selectedIds.length ? d.selectedIds : d.activeId ? [d.activeId] : [];
       if (app.history?.undoLabel !== 'Nudge') app.edit('Nudge');
+      const a = app.active;
+      if (a && app.maskTarget && a.mask && a.maskLinked === false) { const p = maskTransformOf(a); a.maskPlacement = { ...p, x: p.x + dx, y: p.y + dy }; a.rev++; app.emit('transform'); return; }
       for (const id of ids) { const l = getLayer(d, id); if (l) { l.transform = { ...l.transform, x: l.transform.x + dx, y: l.transform.y + dy }; } }
       app.emit('transform');
     } else { app.edit('Nudge Selection'); Sel.translateSelection(d, dx, dy); app.emit('selection'); }

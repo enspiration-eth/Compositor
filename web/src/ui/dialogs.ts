@@ -7,7 +7,7 @@ import {
   curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
-import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas } from '../engine/document';
+import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, bakeMask, maskInLayerGrid, setMaskPlacement } from '../engine/document';
 import * as Sel from '../engine/selection';
 import { view, setView, addGuide } from './guides';
 import { subjectMatte, matteToMask, defaultMatte, type MatteSettings } from '../engine/segment';
@@ -321,6 +321,7 @@ export function openFilter(kind: FilterKind) {
   if (kind === 'Levels') s.levels = defaultFilterSettings().levels;
   if (kind === 'Hue/Saturation') s.hueSat = defaultFilterSettings().hueSat;
   const seed = (Math.random() * 2 ** 32) >>> 0;
+  if (onMask) bakeMask(a);
   const original = onMask ? a.mask! : a.canvas!;
   const sel = Sel.selectionInLayer(d, a, original.width, original.height);
   if (kind === 'Levels') currentHistogram = levelsHistogram(imageDataOf(original));
@@ -582,7 +583,8 @@ export function openRemoveBackground() {
     let mask = matteToMask(m, original.width, original.height);
     if (layer.mask) {
       // Both masks hide: what either one hides stays hidden.
-      const c = cloneCanvas(layer.mask), x = ctx2d(c); x.globalCompositeOperation = 'multiply'; x.drawImage(mask, 0, 0, c.width, c.height); mask = c;
+      const c = cloneCanvas(maskInLayerGrid(layer)!); setMaskPlacement(layer, undefined);
+      const x = ctx2d(c); x.globalCompositeOperation = 'multiply'; x.drawImage(mask, 0, 0, c.width, c.height); mask = c;
     }
     layer.mask = mask; layer.maskEnabled = true; layer.rev++;
     app.changed('layers');
