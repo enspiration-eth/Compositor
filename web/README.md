@@ -126,8 +126,8 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   type); color and font apply to the selected letters as runs (the Mac app's `colorRuns`/`fontRuns`, saved in `.comp`),
   size/alignment/tracking to the whole layer. Shape layers redraw at their new size when scaled (corners keep their
   radius), and with a shape layer selected the Shape options edit its color, corner radius or line width. Differences:
-  layout is canvas 2D instead of Core Text (line breaking and kerning can differ slightly), there is no per-run size, and
-  gradients are rasterized.
+  layout is canvas 2D instead of Core Text (line breaking and kerning can differ slightly) and
+  gradients are rasterized. Size stays per layer, as in the Mac app.
 - **Layer effects** run the Mac app's own effect passes (`MetalLayerEffects.swift`: coverage, sliding-window spread for
   the stroke, shifted and Gaussian-blurred coverage for shadows and glows, then `effects_compose`) translated to C and
   compiled to wasm (`wasm/src/EffectsPixels.c`), in the layer's own pixel units, with the layer mask applied before the
@@ -142,5 +142,7 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   (`dispatch_apply` is serial). Adjustment layers are recomputed in the workers too: while a new result is on its way the
   canvas keeps showing the previous one, and exports, the eyedropper and other reads compute it exactly first.
 - **Hue/Saturation:** all seven ranges, Invert Range and editable hue bands (drag the spectrum handles, or drag inside the band to slide it) on both the filter and adjustment layers, saved as the Mac app’s `hsvSettings`. The panel’s eyedroppers (Sample / Add / Remove re-center, widen or narrow the selected range’s band from a color in the image, as `HueBand.centered/include/exclude`) and the targeted-adjustment drag (saturation, or hue with ⌘/Ctrl, of the range owning the color under the pointer) are ported too.
-- `.comp` projects are saved as a `.comp.zip` (browsers can't write folder bundles). Unzip one to open it in the Mac app.
+- `.comp` projects are saved as a `.comp.zip` by default. In Chromium-based browsers (Chrome, Edge), File › Save as .comp
+  Folder… writes the real package folder (File System Access API) that the Mac app opens directly; Safari and Firefox
+  can't write folders, so there you unzip the `.comp.zip`.
 - No Sparkle updates, Quick Look, or document-based windowing; tabs replace windows.

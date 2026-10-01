@@ -48,7 +48,9 @@ async function svgToCanvas(file: Blob): Promise<HTMLCanvasElement> {
   } finally { URL.revokeObjectURL(url); }
 }
 
-export async function writeComp(doc: Doc): Promise<Uint8Array> {
+export async function writeComp(doc: Doc): Promise<Uint8Array> { return zipSync(await writeCompFiles(doc), { level: 0 }); }
+/** The project package's files ("Name.comp/manifest.json", "Name.comp/images/…"), as the Mac app lays them out. */
+export async function writeCompFiles(doc: Doc): Promise<Record<string, Uint8Array>> {
   const folder = (doc.name.replace(/\.comp$/i, '') || 'Untitled') + '.comp';
   const files: Record<string, Uint8Array> = {};
   const layers: ManifestLayer[] = [];
@@ -80,7 +82,20 @@ export async function writeComp(doc: Doc): Promise<Uint8Array> {
   const manifest: Manifest = { format: 'com.compositor.project', version: 11, colorSpace: 'sRGB', documentID: doc.id, width: doc.width,
     height: doc.height, resolution: doc.resolution, activeLayerID: doc.activeId, layers, ...(doc.guides.length ? { guides: doc.guides.map(g => ({ id: g.id, axis: g.axis, position: g.position })) } : {}) };
   files[`${folder}/manifest.json`] = strToU8(JSON.stringify(manifest, null, 2));
-  return zipSync(files, { level: 0 });
+  return files;
+}
+/** Writes the package as a real folder into a directory the user picked (File System Access API), replacing an
+ *  existing package of that name, so the Mac app can open it directly. Returns the folder's name. */
+export async function writeCompToDirectory(doc: Doc, dir: FileSystemDirectoryHandle): Promise<string> {
+  const files = await writeCompFiles(doc), folder = Object.keys(files)[0].split('/')[0];
+  try { await dir.removeEntry(folder, { recursive: true }); } catch { /* not there yet */ }
+  for (const [path, bytes] of Object.entries(files)) {
+    const parts = path.split('/'); let d = dir;
+    for (const seg of parts.slice(0, -1)) d = await d.getDirectoryHandle(seg, { create: true });
+    const w = await (await d.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
+    await w.write(bytes as unknown as BufferSource); await w.close();
+  }
+  return folder;
 }
 
 /** Reads a project from a map of relative paths ("manifest.json", "images/X.png") to bytes. */

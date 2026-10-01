@@ -82,6 +82,7 @@ function buildMenubar() {
       { separator: true },
       { label: 'Save', shortcut: `${MOD}S`, action: () => app.save(), disabled: !app.doc },
       { label: 'Save As…', shortcut: `⇧${MOD}S`, action: () => app.saveAs(), disabled: !app.doc },
+      { label: 'Save as .comp Folder…', action: () => app.saveFolder(), disabled: !app.doc || !('showDirectoryPicker' in window) },
       { separator: true },
       { label: 'Export PNG…', shortcut: `⇧${MOD}E`, action: () => app.exportImage('png'), disabled: !app.doc },
       { label: 'Export JPEG…', shortcut: `⌥⇧${MOD}S`, action: showExportJpeg, disabled: !app.doc },

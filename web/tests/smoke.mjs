@@ -589,6 +589,18 @@ try {
     const hl = manifest.layers.find(l => l.adjustment?.hsvSettings);
     assert(hl && Array.isArray(hl.adjustment.hsvSettings.adjustments) && hl.adjustment.hsvSettings.adjustments.includes('Greens'), 'manifest hsvSettings (Mac encoding)');
     console.log(`(manifest v${manifest.version}, ${manifest.layers.length} layers, ${Object.keys(files).length} entries) `);
+    // Save as .comp Folder… into a real directory handle (the origin-private file system stands in for the picker).
+    const folder = await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      await window.compositor.app.saveFolder(root);
+      const out = [];
+      const walk = async (d, pre) => { for await (const [n, h] of d.entries()) { if (h.kind === 'directory') await walk(h, pre + n + '/'); else out.push(pre + n); } };
+      await walk(root, '');
+      const pkg = [...(await (async () => { const a = []; for await (const [n] of root.entries()) a.push(n); return a; })())].find(n => n.endsWith('.comp'));
+      const m = JSON.parse(await (await (await (await root.getDirectoryHandle(pkg)).getFileHandle('manifest.json')).getFile()).text());
+      return { files: out.sort(), layers: m.layers.length };
+    });
+    assert(folder.layers === manifest.layers.length && folder.files.join() === Object.keys(files).filter(n => !n.endsWith('/')).sort().join(), 'folder package matches the zip ' + JSON.stringify(folder));
     // Round-trip: reopen the saved project.
     await page.evaluate(async b64 => { const { app } = window.compositor; const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
       await app.openFiles([new File([bytes], 'sample.comp.zip', { type: 'application/zip' })]); }, readFileSync(zipPath).toString('base64'));

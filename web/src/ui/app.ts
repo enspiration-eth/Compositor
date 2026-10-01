@@ -10,7 +10,7 @@ import { canvasOf, ctx2d, imageDataOf, newAdjustment, type AdjustmentKind, type 
 import { applyFilterAsync } from '../engine/filterPool';
 import * as Sel from '../engine/selection';
 import { contentFill, alphaBounds } from '../engine/kernels';
-import { writeComp, readCompZip, readCompFolder, readPsdFile, fileToCanvas, isImageFile, isPsd, isCompZip, download, canvasToBlob } from '../engine/files';
+import { writeComp, writeCompToDirectory, readCompZip, readCompFolder, readPsdFile, fileToCanvas, isImageFile, isPsd, isCompZip, download, canvasToBlob } from '../engine/files';
 import { toast } from './dom';
 import { subjectMatte, modelLoaded } from '../engine/segment';
 
@@ -661,6 +661,17 @@ export class App {
       } catch (e) { if ((e as Error).name === 'AbortError') return; download(bytes, name, 'application/zip'); }
     } else download(bytes, name, 'application/zip');
     d.dirty = false; toast(`Saved ${name}`); this.emit('saved');
+  }
+  /** File › Save as .comp Folder… (Chromium): the Mac app's package layout written into a picked directory. */
+  async saveFolder(dir?: FileSystemDirectoryHandle) {
+    const d = this.doc; if (!d) return;
+    const w = window as unknown as { showDirectoryPicker?: (o: unknown) => Promise<FileSystemDirectoryHandle> };
+    if (!dir) {
+      if (!w.showDirectoryPicker) { toast('This browser can’t write folders. Use Save (a zipped .comp) instead.', 'error'); return; }
+      try { dir = await w.showDirectoryPicker({ mode: 'readwrite', id: 'compositor-projects' }); } catch (e) { if ((e as Error).name === 'AbortError') return; throw e; }
+    }
+    const name = await writeCompToDirectory(d, dir);
+    d.dirty = false; toast(`Saved ${name} (folder)`); this.emit('saved');
   }
   async saveAs() { const d = this.doc; if (!d) return; d.fileHandle = undefined; await this.save(); }
   async exportImage(type: 'png' | 'jpeg', quality = 0.92) {
