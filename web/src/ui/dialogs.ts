@@ -5,10 +5,10 @@ import { h, slider, select, checkbox, colorWell, button, floatingPanel, modal, t
 import {
   type FilterKind, type FilterSettings, defaultFilterSettings, applyFilter, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
   curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
-  rangeWeight, bandOf, setBandHandle, shiftBand,
+  rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry,
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
-import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, bakeMask, maskInLayerGrid, setMaskPlacement } from '../engine/document';
+import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas, bakeMask, maskInLayerGrid, setMaskPlacement, invert, apply, pixelToDoc } from '../engine/document';
 import * as Sel from '../engine/selection';
 import { view, setView, addGuide } from './guides';
 import { subjectMatte, matteToMask, defaultMatte, type MatteSettings } from '../engine/segment';
@@ -81,15 +81,28 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         d.append(h('summary', {}, title));
         const inner = h('div', { class: 'controls' }); build(el => inner.append(el)); d.append(inner); box.append(d);
       };
-      const S = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step = 1, unit = '') =>
-        slider({ label, min, max, step, unit, value: get(), onInput: v => { set(v); changed(); } });
+      const S = (label: string, get: () => number, set: (v: number) => void, min: number, max: number, step = 1, unit = '', clip = 0) => {
+        const el = slider({ label, min, max, step, unit, value: get(), onInput: v => { set(v); changed(); } });
+        // Option-drag a Light slider: the clipping view (CameraRawClipping) while the pointer is down.
+        if (clip) {
+          el.addEventListener('pointerdown', e => { if (e.altKey) { s.crClipping = clip; changed(); } });
+          const off = () => { if (s.crClipping === clip && clipSel.value === 'Off') { s.crClipping = undefined; changed(); } };
+          el.addEventListener('pointerup', off); el.addEventListener('pointercancel', off);
+        }
+        return el;
+      };
+      const clipSel = select(['Off', 'Highlights', 'Shadows'], ['Off', 'Highlights', 'Shadows'][s.crClipping ?? 0] ?? 'Off', v => { s.crClipping = ['Off', 'Highlights', 'Shadows'].indexOf(v) || undefined; changed(); }, { id: 'cr-clipping' });
       const sub = (t: string) => h('div', { class: 'group-title' }, t);
       const k = <T extends object>(o: T, key: keyof T, label: string, min: number, max: number, step = 1, unit = '') =>
         S(label, () => o[key] as unknown as number, v => { (o[key] as unknown as number) = v; }, min, max, step, unit);
       section('Basic', add => {
         add(sub('White Balance')); add(k(cr, 'temperature', 'Temperature', -100, 100)); add(k(cr, 'tint', 'Tint', -100, 100));
-        add(sub('Light')); add(k(cr, 'exposure', 'Exposure', -5, 5, 0.05)); add(k(cr, 'contrast', 'Contrast', -100, 100)); add(k(cr, 'highlights', 'Highlights', -100, 100));
-        add(k(cr, 'shadows', 'Shadows', -100, 100)); add(k(cr, 'whites', 'Whites', -100, 100)); add(k(cr, 'blacks', 'Blacks', -100, 100));
+        add(sub('Light'));
+        add(h('div', { class: 'row', title: 'Or hold Option (Alt) while dragging Exposure, Highlights, Whites, Shadows or Blacks' }, h('span', { class: 'lbl' }, 'Clipping'), clipSel));
+        const kc = (key: 'exposure' | 'highlights' | 'shadows' | 'whites' | 'blacks', label: string, min: number, max: number, step: number, clip: number) =>
+          S(label, () => cr[key], v => { cr[key] = v; }, min, max, step, '', clip);
+        add(kc('exposure', 'Exposure', -5, 5, 0.05, 1)); add(k(cr, 'contrast', 'Contrast', -100, 100)); add(kc('highlights', 'Highlights', -100, 100, 1, 1));
+        add(kc('shadows', 'Shadows', -100, 100, 1, 2)); add(kc('whites', 'Whites', -100, 100, 1, 1)); add(kc('blacks', 'Blacks', -100, 100, 1, 2));
         add(sub('Presence')); add(k(cr, 'texture', 'Texture', -100, 100)); add(k(cr, 'clarity', 'Clarity', -100, 100)); add(k(cr, 'dehaze', 'Dehaze', -100, 100));
         add(k(cr, 'vibrance', 'Vibrance', -100, 100)); add(k(cr, 'saturation', 'Saturation', -100, 100));
       });
@@ -98,9 +111,7 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         add(sub('Parametric')); add(k(c, 'highlights', 'Highlights', -100, 100)); add(k(c, 'lights', 'Lights', -100, 100)); add(k(c, 'darks', 'Darks', -100, 100)); add(k(c, 'shadows', 'Shadows', -100, 100));
         add(k(c, 'shadowSplit', 'Shadow split', 5, 90)); add(k(c, 'darkSplit', 'Midtone split', 7, 95)); add(k(c, 'lightSplit', 'Light split', 9, 98));
         add(sub('Point curve'));
-        const presets: Record<string, CRPoint[]> = { Linear: [{ x: 0, y: 0 }, { x: 1, y: 1 }], 'Medium Contrast': [{ x: 0, y: 0 }, { x: 0.25, y: 0.18 }, { x: 0.75, y: 0.82 }, { x: 1, y: 1 }],
-          'Strong Contrast': [{ x: 0, y: 0 }, { x: 0.25, y: 0.10 }, { x: 0.75, y: 0.90 }, { x: 1, y: 1 }] };
-        add(h('div', { class: 'row' }, select(Object.keys(presets), 'Linear', v => { c.rgb = presets[v].map(q => ({ ...q })); changed(); })));
+        add(crCurveEditor(c, changed));
         add(k(c, 'refineSaturation', 'Refine saturation', -100, 100));
       });
       section('Color Mixer', add => {
@@ -109,6 +120,7 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
           add(sub(tab)); CR_MIXER_NAMES.forEach((n, i) => add(S(n, () => arr[i], v => { arr[i] = v; }, -100, 100)));
         }
       });
+      section('Point Color', add => { add(crPointColor(cr, s, changed)); });
       section('Color Grading', add => {
         const g = cr.grading;
         for (const [name, w] of [['Shadows', g.shadows], ['Midtones', g.midtones], ['Highlights', g.highlights], ['Global', g.global]] as const) {
@@ -132,6 +144,7 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         add(k(o, 'greenAmount', 'Green amount', 0, 100)); add(k(o, 'greenHueLow', 'Green hue from', 0, 360, 1, '°')); add(k(o, 'greenHueHigh', 'Green hue to', 0, 360, 1, '°'));
         add(sub('Vignette')); add(k(o, 'vignetteAmount', 'Amount', -100, 100)); add(k(o, 'vignetteMidpoint', 'Midpoint', 0, 100));
       });
+      section('Geometry', add => { add(crGeometry(cr, changed)); });
       section('Effects', add => {
         add(sub('Glow')); add(h('div', { class: 'row' }, select(['Diffusion', 'Bloom', 'Halation'], ['Diffusion', 'Bloom', 'Halation'][cr.glowStyle] ?? 'Diffusion', v => { cr.glowStyle = ['Diffusion', 'Bloom', 'Halation'].indexOf(v); changed(); })));
         add(k(cr, 'glow', 'Amount', 0, 100)); add(k(cr, 'glowRange', 'Range', -100, 100)); add(k(cr, 'glowSpread', 'Spread', -100, 100)); add(k(cr, 'glowWarmth', 'Warmth', -100, 100));
@@ -216,6 +229,166 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
     case 'Levels': box.append(levelsEditor(s, changed)); break;
     default: break;
   }
+  return box;
+}
+
+/** The open filter's layer and its untouched pixels, for panels that sample or draw on the canvas. */
+let crCtx: { layer: Layer; original: HTMLCanvasElement } | null = null;
+/** Document point → normalized 0…1 position on the filtered layer (y down), or null outside it. */
+function layerUV(dpt: [number, number]): [number, number] | null {
+  if (!crCtx) return null;
+  const l = crCtx.layer, m = invert(pixelToDoc(l.transform, 1, 1)), [u, v] = apply(m, dpt[0], dpt[1]);
+  return u >= 0 && v >= 0 && u <= 1 && v <= 1 ? [u, v] : null;
+}
+function uvToDoc(u: number, v: number): [number, number] { return apply(pixelToDoc(crCtx!.layer.transform, 1, 1), u, v); }
+
+/** Camera Raw's point curve (CameraRawCurveSettings rgb/red/green/blue, 0…1): click to add, drag, drag off to remove. */
+function crCurveEditor(c: CRCurve, changed: () => void): HTMLElement {
+  const size = 240, chans = ['RGB', 'Red', 'Green', 'Blue'] as const, keys = ['rgb', 'red', 'green', 'blue'] as const;
+  let ch = 0, dragging = -1;
+  const cv = h('canvas', { width: size * 2, height: size * 2, class: 'curve-canvas', id: 'cr-curve', style: `width:${size}px;height:${size}px;touch-action:none` }) as HTMLCanvasElement;
+  const x = cv.getContext('2d')!, colors = ['#ddd', '#ff5a5a', '#4cd964', '#4c8dff'];
+  const pts = () => c[keys[ch]];
+  const value = (p: CRPoint[], t: number) => curveValue(p.map(q => ({ x: q.x * 255, y: q.y * 255 })), t * 255) / 255;
+  const draw = () => {
+    x.setTransform(2, 0, 0, 2, 0, 0); x.clearRect(0, 0, size, size); x.fillStyle = '#1b1b1b'; x.fillRect(0, 0, size, size);
+    x.strokeStyle = '#333'; x.lineWidth = 1; x.beginPath();
+    for (let i = 1; i < 4; i++) { x.moveTo(i * size / 4, 0); x.lineTo(i * size / 4, size); x.moveTo(0, i * size / 4); x.lineTo(size, i * size / 4); }
+    x.stroke(); x.strokeStyle = '#444'; x.beginPath(); x.moveTo(0, size); x.lineTo(size, 0); x.stroke();
+    keys.forEach((k0, i) => {
+      if (i === ch || (c[k0].length === 2 && c[k0][0].y === 0 && c[k0][1].y === 1)) return;
+      x.strokeStyle = colors[i] + '66'; x.beginPath();
+      for (let t = 0; t <= 64; t++) { const y = value(c[k0], t / 64); t ? x.lineTo(t / 64 * size, size - y * size) : x.moveTo(0, size - y * size); }
+      x.stroke();
+    });
+    x.strokeStyle = colors[ch]; x.lineWidth = 1.5; x.beginPath();
+    for (let t = 0; t <= 128; t++) { const y = value(pts(), t / 128); t ? x.lineTo(t / 128 * size, size - y * size) : x.moveTo(0, size - y * size); }
+    x.stroke();
+    for (const p of pts()) { x.fillStyle = '#fff'; x.fillRect(p.x * size - 3, size - p.y * size - 3, 6, 6); }
+  };
+  const at = (e: PointerEvent): CRPoint => { const r = cv.getBoundingClientRect(); return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height)) }; };
+  cv.addEventListener('pointerdown', e => {
+    const v = at(e), p = [...pts()];
+    dragging = p.findIndex(q => Math.hypot(q.x - v.x, q.y - v.y) < 0.04);
+    if (dragging < 0 && p.length < 16) { p.push(v); p.sort((a, b) => a.x - b.x); dragging = p.indexOf(v); }
+    c[keys[ch]] = p; cv.setPointerCapture(e.pointerId); draw(); changed();
+  });
+  cv.addEventListener('pointermove', e => {
+    if (dragging < 0) return;
+    const v = at(e), p = [...pts()], r = cv.getBoundingClientRect();
+    if (dragging === 0) v.x = 0; else if (dragging === p.length - 1) v.x = 1;
+    else v.x = Math.min(p[dragging + 1].x - 0.01, Math.max(p[dragging - 1].x + 0.01, v.x));
+    if (dragging > 0 && dragging < p.length - 1 && (e.clientY < r.top - 30 || e.clientY > r.bottom + 30)) { p.splice(dragging, 1); dragging = -1; }
+    else p[dragging] = v;
+    c[keys[ch]] = p; draw(); changed();
+  });
+  cv.addEventListener('pointerup', () => { dragging = -1; });
+  const presets: Record<string, CRPoint[]> = { Linear: [{ x: 0, y: 0 }, { x: 1, y: 1 }], 'Medium Contrast': [{ x: 0, y: 0 }, { x: 0.25, y: 0.18 }, { x: 0.75, y: 0.82 }, { x: 1, y: 1 }],
+    'Strong Contrast': [{ x: 0, y: 0 }, { x: 0.25, y: 0.10 }, { x: 0.75, y: 0.90 }, { x: 1, y: 1 }] };
+  const chSel = select([...chans], 'RGB', v => { ch = chans.indexOf(v as 'RGB'); draw(); }, { id: 'cr-curve-channel' });
+  const preset = select(['Preset…', ...Object.keys(presets)], 'Preset…', v => { if (presets[v]) { c[keys[ch]] = presets[v].map(q => ({ ...q })); draw(); changed(); } preset.value = 'Preset…'; });
+  draw();
+  return h('div', {}, h('div', { class: 'row' }, chSel, preset, button('Reset', () => { c[keys[ch]] = [{ x: 0, y: 0 }, { x: 1, y: 1 }]; draw(); changed(); })), cv,
+    h('p', { class: 'hint' }, 'Click to add a point · drag points · drag off the graph to remove'));
+}
+
+/** Camera Raw › Color Mixer › Point Color: sample up to eight colors from the image and shift each one. */
+function crPointColor(cr: NonNullable<FilterSettings['cameraRaw']>, s: FilterSettings, changed: () => void): HTMLElement {
+  const box = h('div', { id: 'cr-point-color' });
+  const pts = cr.mixer.points ??= [];
+  let sel = pts.length - 1, sampling = false;
+  const sampleAt = (dpt: [number, number]) => {
+    const uv = layerUV(dpt); if (!uv || !crCtx) return;
+    const o = crCtx.original, px = Math.min(o.width - 1, Math.floor(uv[0] * o.width)), py = Math.min(o.height - 1, Math.floor(uv[1] * o.height));
+    const d = ctx2d(o).getImageData(px, py, 1, 1).data; if (!d[3]) return;
+    // CameraRawSampling: hue from the color wheel, saturation as chroma / max, luminance as (max + min) / 2.
+    const r = d[0] / 255, g = d[1] / 255, b = d[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn;
+    let hue = 0;
+    if (c > 1e-6) { hue = mx === r ? (g - b) / c : mx === g ? 2 + (b - r) / c : 4 + (r - g) / c; hue /= 6; if (hue < 0) hue += 1; }
+    const color = { hue: hue * 360, saturation: mx ? c / mx : 0, luminance: (mx + mn) / 2, hueShift: 0, saturationShift: 0, luminanceShift: 0, hueRange: 30, saturationRange: 0.4, luminanceRange: 0.4 };
+    if (pts[sel]) pts[sel] = { ...color, hueShift: pts[sel].hueShift, saturationShift: pts[sel].saturationShift, luminanceShift: pts[sel].luminanceShift };
+    else if (pts.length < 8) { pts.push(color); sel = pts.length - 1; }
+    sampling = false; app.canvasHook = null; draw(); changed();
+  };
+  const arm = (replace: boolean) => {
+    if (!replace) sel = -1;
+    sampling = true;
+    app.canvasHook = { cursor: 'crosshair', down: sampleAt };
+    draw();
+  };
+  const draw = () => {
+    box.replaceChildren();
+    const sw = h('div', { class: 'row swatches' });
+    pts.forEach((p, i) => {
+      const b = h('button', { class: `swatch${i === sel ? ' sel' : ''}`, title: `Point ${i + 1}`, style: `background:hsl(${p.hue},${Math.round(p.saturation * 100)}%,${Math.round(p.luminance * 100)}%)` });
+      b.addEventListener('click', () => { sel = i; s.crVisualize = s.crVisualize !== undefined ? i : undefined; draw(); changed(); });
+      sw.append(b);
+    });
+    const add = button(sampling ? 'Click the image…' : '+ Sample color', () => arm(false), { id: 'cr-point-sample', class: `btn${sampling ? ' primary' : ''}` });
+    if (pts.length >= 8) add.setAttribute('disabled', '');
+    sw.append(add);
+    box.append(sw);
+    const p = pts[sel];
+    if (!p) { box.append(h('p', { class: 'hint' }, 'Sample a color from the image, then shift its hue, saturation and luminance.')); return; }
+    const sl = (label: string, key: keyof typeof p, min: number, max: number, step = 1, scale = 1) =>
+      slider({ label, min, max, step, value: (p[key] as number) * scale, onInput: v => { (p[key] as number) = v / scale; changed(); } });
+    box.append(sl('Hue Shift', 'hueShift', -100, 100), sl('Sat Shift', 'saturationShift', -100, 100), sl('Lum Shift', 'luminanceShift', -100, 100),
+      h('div', { class: 'group-title' }, 'Range'), sl('Hue', 'hueRange', 5, 180), sl('Saturation', 'saturationRange', 5, 100, 1, 100), sl('Luminance', 'luminanceRange', 5, 100, 1, 100),
+      h('div', { class: 'row' },
+        checkbox('Visualize range', s.crVisualize === sel, v => { s.crVisualize = v ? sel : undefined; changed(); }),
+        button('Resample', () => arm(true)),
+        button('Delete', () => { pts.splice(sel, 1); if (s.crVisualize !== undefined) s.crVisualize = undefined; sel = Math.min(sel, pts.length - 1); draw(); changed(); })));
+  };
+  draw();
+  return box;
+}
+
+/** Camera Raw › Geometry (CameraRawGeometrySettings): Upright Off/Guided, the manual transform and Constrain Crop. */
+function crGeometry(cr: NonNullable<FilterSettings['cameraRaw']>, changed: () => void): HTMLElement {
+  const g = cr.geometry ??= defaultGeometry();
+  const box = h('div', { id: 'cr-geometry' });
+  let draft: [number, number, number, number] | null = null;
+  const hookOn = () => {
+    // Upright › Guided: drag lines along edges that should be straight (up to four), as in Camera Raw.
+    app.canvasHook = {
+      cursor: 'crosshair',
+      down: dpt => { const uv = layerUV(dpt); draft = uv ? [uv[0], uv[1], uv[0], uv[1]] : null; },
+      move: dpt => { if (!draft) return; const uv = layerUV(dpt); if (uv) { draft[2] = uv[0]; draft[3] = uv[1]; } app.needsRender = true; },
+      up: () => {
+        if (draft && Math.hypot(draft[2] - draft[0], draft[3] - draft[1]) > 0.01) {
+          if (g.guides.length >= 4) g.guides.shift();
+          // Stored y up from the bottom, as the Mac app does.
+          g.guides.push({ startX: draft[0], startY: 1 - draft[1], endX: draft[2], endY: 1 - draft[3] });
+          g.upright = 'Guided'; changed(); draw();
+        }
+        draft = null;
+      },
+      draw: (x, S) => {
+        if (!crCtx) return;
+        x.strokeStyle = '#ffd400'; x.lineWidth = 2; x.setLineDash([]);
+        const line = (a: [number, number], b: [number, number]) => { const p = S(...uvToDoc(...a)), q = S(...uvToDoc(...b)); x.beginPath(); x.moveTo(...p); x.lineTo(...q); x.stroke();
+          for (const r of [p, q]) { x.beginPath(); x.arc(r[0], r[1], 3.5, 0, Math.PI * 2); x.fillStyle = '#ffd400'; x.fill(); } };
+        for (const gd of g.guides) line([gd.startX, 1 - gd.startY], [gd.endX, 1 - gd.endY]);
+        if (draft) line([draft[0], draft[1]], [draft[2], draft[3]]);
+      },
+    };
+    app.needsRender = true;
+  };
+  const draw = () => {
+    box.replaceChildren();
+    if (g.upright === 'Guided') hookOn(); else if (app.canvasHook?.draw) { app.canvasHook = null; app.needsRender = true; }
+    const sl = (label: string, key: 'vertical' | 'horizontal' | 'rotate' | 'aspect' | 'scale' | 'offsetX' | 'offsetY', min: number, max: number, step = 1) =>
+      slider({ label, min, max, step, value: g[key], onInput: v => { g[key] = v; changed(); } });
+    box.append(
+      h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Upright'), select(['Off', 'Guided'], g.upright, v => { g.upright = v as 'Off'; changed(); draw(); }, { id: 'cr-upright' }),
+        h('span', { class: 'lbl' }, 'Projection'), select(['Perspective', 'Rectilinear'], g.projection, v => { g.projection = v as 'Perspective'; changed(); })));
+    if (g.upright === 'Guided') box.append(h('p', { class: 'hint' }, `Drag on the image along edges that should be straight (${g.guides.length}/4).`),
+      h('div', { class: 'row' }, button('Clear Guides', () => { g.guides = []; changed(); draw(); })));
+    box.append(sl('Vertical', 'vertical', -100, 100), sl('Horizontal', 'horizontal', -100, 100), sl('Rotate', 'rotate', -45, 45, 0.1), sl('Aspect', 'aspect', -100, 100),
+      sl('Scale', 'scale', -100, 100), sl('Offset X', 'offsetX', -100, 100), sl('Offset Y', 'offsetY', -100, 100),
+      checkbox('Constrain Crop', g.constrainCrop, v => { g.constrainCrop = v; changed(); }));
+  };
+  draw();
   return box;
 }
 
@@ -401,19 +574,22 @@ export function openFilter(kind: FilterKind) {
   };
   const changed = () => { if (!pending) { pending = true; requestAnimationFrame(render); } };
   const title = kind === 'Camera Raw Filter' ? 'Camera Raw Filter' : kind;
-  const panel = floatingPanel(title, () => { setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
+  crCtx = { layer: a, original };
+  const endHooks = () => { app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; crCtx = null; app.needsRender = true; };
+  const panel = floatingPanel(title, () => { endHooks(); setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
   const body = h('div');
   const rebuild = () => body.replaceChildren(controls(kind, s, changed, rebuild));
   rebuild();
   const ok = button('OK', () => {
+    endHooks();
     setCanvas(original);
     openPanel = null; panel.close();
     lastSettings = structuredClone(s);
     app.runFilter(kind, s, seed);
   }, { class: 'btn primary', id: 'filter-ok' });
-  const cancel = button('Cancel', () => { setCanvas(original); openPanel = null; panel.close(); });
+  const cancel = button('Cancel', () => { endHooks(); setCanvas(original); openPanel = null; panel.close(); });
   panel.body.append(body, h('div', { class: 'panel-footer' }, checkbox('Preview', true, v => { preview = v; changed(); }), h('span', { class: 'spacer' }), cancel, ok));
-  openPanel = { panel, cancel: () => setCanvas(original) };
+  openPanel = { panel, cancel: () => { endHooks(); setCanvas(original); } };
   changed();
 }
 

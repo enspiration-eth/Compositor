@@ -13,6 +13,11 @@ import { writeComp, readCompZip, readCompFolder, readPsdFile, fileToCanvas, isIm
 import { toast } from './dom';
 import { subjectMatte, modelLoaded } from '../engine/segment';
 
+export interface CanvasHook {
+  cursor?: string;
+  down?: (dpt: [number, number], e: PointerEvent) => void; move?: (dpt: [number, number], e: PointerEvent) => void; up?: (dpt: [number, number], e: PointerEvent) => void;
+  draw?: (x: CanvasRenderingContext2D, toScreen: (x: number, y: number) => [number, number]) => void;
+}
 export type Tool = 'move' | 'marquee' | 'lasso' | 'wand' | 'crop' | 'brush' | 'spotHealing' | 'cloneStamp' | 'blur' | 'gradient' | 'shape' | 'type' | 'eyedropper' | 'hand' | 'zoom' | 'idle';
 export const TOOLS: { id: Tool; label: string; key: string }[] = [
   { id: 'move', label: 'Move / Transform (V)', key: 'v' }, { id: 'marquee', label: 'Marquee (M)', key: 'm' }, { id: 'lasso', label: 'Lasso (L)', key: 'l' },
@@ -51,6 +56,8 @@ export class App {
   maskTarget = false;    // painting on the active layer's mask instead of its pixels
   listeners = new Set<(what: string) => void>();
   needsRender = true;
+  /** A panel borrowing the canvas (Camera Raw's Point Color eyedropper, Upright guides): it gets the pointer before any tool. */
+  canvasHook: CanvasHook | null = null;
 
   get project(): Project | null { return this.projects[this.current] ?? null; }
   get doc(): Doc | null { return this.project?.doc ?? null; }

@@ -188,6 +188,7 @@ export class CanvasController {
       if (top) { x.beginPath(); x.moveTo(...mid); x.lineTo(...top.s); x.stroke(); }
       x.restore();
     }
+    if (app.canvasHook?.draw) { x.save(); app.canvasHook.draw(x, S); x.restore(); }
     if (this.crop) {
       const c = this.crop, [cx, cy] = S(c.x, c.y), w = c.w * p.zoom, h = c.h * p.zoom;
       x.save(); x.fillStyle = 'rgba(0,0,0,0.55)'; x.beginPath(); x.rect(0, 0, this.overlay.width, this.overlay.height); x.rect(cx, cy, w, h); x.fill('evenodd');
@@ -254,6 +255,7 @@ export class CanvasController {
     this.pointer = s;
     if (e.button === 1 || this.spaceDown || app.tool === 'hand') { this.drag = { kind: 'pan', start: s, startDoc: dpt, data: { ox: p.ox, oy: p.oy } }; return; }
     if (e.button !== 0) return;
+    if (app.canvasHook) { this.drag = { kind: 'hook', start: s, startDoc: dpt }; app.canvasHook.down?.(dpt, e); app.needsRender = true; return; }
     if (app.tool === 'move' && !e.altKey) {
       const g = guideAt(s[0], s[1]);
       if (g) { this.guideDrag = { guide: g, isNew: false, startPos: g.position }; return; }
@@ -317,6 +319,7 @@ export class CanvasController {
     }
     if (!dr) return;
     switch (dr.kind) {
+      case 'hook': app.canvasHook?.move?.(dpt, e); return;
       case 'pan': p.ox = (dr.data!.ox as number) + s[0] - dr.start[0]; p.oy = (dr.data!.oy as number) + s[1] - dr.start[1]; p.fitted = false; app.emit('view'); return;
       case 'zoom': {
         const dx = s[0] - dr.start[0];
@@ -366,6 +369,7 @@ export class CanvasController {
     if (!p || !dr) return;
     const d = p.doc;
     switch (dr.kind) {
+      case 'hook': app.canvasHook?.up?.(app.toDoc(...this.local(e)), e); app.needsRender = true; return;
       case 'zoom': if (!dr.data!.moved) app.zoomStep(dr.data!.out || e.altKey ? -1 : 1, dr.start[0], dr.start[1]); return;
       case 'marquee': {
         const m = this.marquee; this.marquee = null;
@@ -408,7 +412,8 @@ export class CanvasController {
   updateCursor(s: Pt) {
     let c = 'default';
     const t = app.tool;
-    if (this.spaceDown || t === 'hand') c = this.drag?.kind === 'pan' ? 'grabbing' : 'grab';
+    if (app.canvasHook && !this.spaceDown) c = app.canvasHook.cursor ?? 'crosshair';
+    else if (this.spaceDown || t === 'hand') c = this.drag?.kind === 'pan' ? 'grabbing' : 'grab';
     else if (t === 'zoom') c = 'zoom-in';
     else if (['brush', 'spotHealing', 'cloneStamp', 'blur'].includes(t)) c = 'none';
     else if (['marquee', 'lasso', 'wand', 'crop', 'gradient', 'shape', 'eyedropper'].includes(t)) c = 'crosshair';

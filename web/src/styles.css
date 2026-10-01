@@ -185,3 +185,7 @@ body.busy, body.busy * { cursor: progress !important; }
 .floating-panel { max-height: calc(100vh - 150px); }
 .tool-header .slider-label { flex: none; margin-right: 4px; }
 .tool-header .slider-row { flex: none; }
+.swatches { flex-wrap: wrap; gap: 6px; }
+.swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #555; padding: 0; cursor: pointer; }
+.swatch.sel { border-color: #fff; box-shadow: 0 0 0 1px #4c8dff; }
+.hue-spectrum { display: block; margin: 4px 0; }

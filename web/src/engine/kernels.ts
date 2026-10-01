@@ -144,9 +144,9 @@ export function lensDistort(img: ImageData, k: number) {
   });
 }
 export function cameraRaw(img: ImageData, a: { gains: [number, number, number]; exposure: number; contrast: number; highlights: number; shadows: number;
-  whites: number; blacks: number; vibrance: number; saturation: number }) {
+  whites: number; blacks: number; vibrance: number; saturation: number; clipping?: number }) {
   onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw(p, w, h, s, a.gains[0], a.gains[1], a.gains[2], a.exposure, a.contrast,
-    a.highlights, a.shadows, a.whites, a.blacks, a.vibrance, a.saturation, 0));
+    a.highlights, a.shadows, a.whites, a.blacks, a.vibrance, a.saturation, a.clipping ?? 0));
 }
 export function cameraRawEffects(img: ImageData, e: { texture: number; clarity: number; dehaze: number; vignetteAmount: number; vignetteMidpoint: number;
   vignetteRoundness: number; vignetteFeather: number; vignetteHighlights: number }, scale = 1) {
@@ -269,10 +269,10 @@ export class WarpSession {
 
 // ---- Camera Raw's later stages (CameraRawColor.swift, CameraRawDetailOptics.swift, CameraRawGeometryCalibration.swift) ----
 export function cameraRawCurveColor(img: ImageData, a: { tone: number[]; red: number[]; green: number[]; blue: number[]; refineSaturation: number;
-  mixer: number[]; points: number[]; pointCount: number; grade: number[]; blending: number; balance: number }) {
+  mixer: number[]; points: number[]; pointCount: number; grade: number[]; blending: number; balance: number; visualize?: number }) {
   onPremultiplied(img, (p, w, h, s, heap, m) => m._adjust_camera_raw_curve_color(p, w, h, s, heap.floats(a.tone), heap.floats(a.red), heap.floats(a.green),
     heap.floats(a.blue), a.refineSaturation, heap.floats(a.mixer), a.pointCount, heap.floats(a.points.length ? a.points : [0]), heap.floats(a.grade),
-    a.blending, a.balance, -1));
+    a.blending, a.balance, a.visualize ?? -1));
 }
 export function cameraRawEffectsFull(img: ImageData, e: { texture: number; clarity: number; dehaze: number; glow: number; glowStyle: number; glowRange: number;
   glowSpread: number; glowWarmth: number; vignetteAmount: number; vignetteMidpoint: number; vignetteRoundness: number; vignetteFeather: number;

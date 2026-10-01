@@ -103,9 +103,12 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   Object Selection takes the connected part of the subject mask under the click, with closer looks around the
   click as a fallback, and diffuse things such as glows aren't detected. The first use downloads about 4.5 MB of
   model plus a 14 MB runtime (about 3.5 MB gzipped).
-- **Camera Raw:** the processing is complete, but the panel is simplified. The point curve is chosen from presets (no
-  draggable editor), there's no Point Color picker, no Geometry (Upright/perspective) section, no targeted
-  adjustment tool and no clipping overlays.
+- **Camera Raw:** the full pipeline and panel: editable point curves (RGB/Red/Green/Blue, plus presets), Point Color
+  (sample up to eight colors from the image, shift and range sliders, Visualize), Geometry (Upright Off/Guided with
+  guide lines drawn on the canvas, Vertical/Horizontal/Rotate/Aspect/Scale/Offset, Constrain Crop; the perspective
+  warp runs in the wasm distort kernel) and the clipping view (Option/Alt-drag a Light slider, or the Clipping menu;
+  it's the original kernel's `clipping` mode). Not ported: the targeted-adjustment drag on the image, the white
+  balance eyedropper and the sharpening-mask (Option on Masking) view.
 - **TIFF / RAW / HEIC import:** the Mac app uses ImageIO. The web build decodes TIFF (uncompressed, LZW, Deflate, PackBits, JPEG; 8/16-bit; alpha) and TIFF-based camera RAW (DNG, NEF, CR2, ARW, …) with [UTIF](https://github.com/photopea/UTIF.js) (MIT); RAW files without a decodable RGB image fall back to their largest embedded JPEG preview, and there is no RAW develop step. HEIC opens only in browsers that decode it natively (Safari). File › Export TIFF… writes an 8-bit RGBA TIFF.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
 - **Unlinked / placed masks:** ported (link button between the thumbnails, Layer › Mask › Unlink Mask; with the mask selected the Move tool and arrow keys move it alone; `maskPlacement`/`maskLinked` are read and written in `.comp`). Simplification: painting or filtering a mask that sits apart from its layer first resamples it into the layer’s pixel grid (the Mac app paints in the mask’s own grid), and an unlinked mask can be moved but not scaled/rotated on its own.

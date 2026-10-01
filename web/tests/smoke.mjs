@@ -110,6 +110,48 @@ try {
     assert(before.join() !== after.join(), `camera raw changed ${before} -> ${after}`);
   });
 
+  await step('Camera Raw: point curve, Point Color, Geometry, clipping view', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Sky').id); });
+    const before = await page.evaluate(() => { const c = window.compositor.app.active.canvas; return Array.from(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.filter((_, i) => i % 4000 === 0)); });
+    await menu('Filter', 'Camera Raw Filter');
+    await page.waitForSelector('#filter-panel');
+    const sec = name => page.locator(`#filter-panel .cr-section:has(summary:text-is("${name}"))`);
+    const open = async (name, on = true) => { const d = sec(name); if ((await d.evaluate(e => e.open)) !== on) await d.locator('summary').click(); };
+    // Point curve: add a point in the middle and lift it.
+    await open('Curve');
+    const cb = await page.locator('#cr-curve').boundingBox();
+    await page.mouse.move(cb.x + cb.width * 0.5, cb.y + cb.height * 0.5); await page.mouse.down();
+    await page.mouse.move(cb.x + cb.width * 0.5, cb.y + cb.height * 0.3, { steps: 4 }); await page.mouse.up();
+    await open('Curve', false);
+    // Point Color: sample the sky, push its hue.
+    await open('Point Color');
+    await page.click('#cr-point-sample');
+    const [sx, sy] = await toScreen(800, 60); await page.mouse.click(sx, sy);
+    await page.waitForSelector('#cr-point-color .swatch');
+    const hs = page.locator('#cr-point-color .slider-row').first().locator('input[type=number]'); await hs.fill('80'); await hs.press('Enter');
+    await open('Point Color', false);
+    // Geometry: vertical perspective + a guided line.
+    await open('Geometry');
+    const gv = page.locator('#cr-geometry .slider-row').first().locator('input[type=number]'); await gv.fill('40'); await gv.press('Enter');
+    await page.selectOption('#cr-upright', 'Guided');
+    const [g0x, g0y] = await toScreen(300, 200), [g1x, g1y] = await toScreen(1300, 260);
+    await page.mouse.move(g0x, g0y); await page.mouse.down(); await page.mouse.move(g1x, g1y, { steps: 5 }); await page.mouse.up();
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${SHOTS}/10-camera-raw-geometry.png` });
+    // Clipping view (Highlights), then back off.
+    await open('Basic');
+    await page.selectOption('#cr-clipping', 'Highlights');
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/10b-camera-raw-clipping.png` });
+    await page.selectOption('#cr-clipping', 'Off');
+    await page.click('#filter-ok');
+    const r = await page.evaluate(() => { const { app, ctl } = window.compositor; const c = app.active.canvas;
+      return { hook: !!app.canvasHook, px: Array.from(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.filter((_, i) => i % 4000 === 0)), label: app.history.undoLabel }; });
+    assert(!r.hook, 'canvas hook released');
+    let diff = 0; for (let i = 0; i < before.length; i++) diff += Math.abs(before[i] - r.px[i]);
+    assert(diff > 1000, 'camera raw geometry/curve/point color changed the layer ' + diff);
+  });
+
   await step('Gaussian Blur filter', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers[2].id); });
     await menu('Filter', 'Gaussian Blur');

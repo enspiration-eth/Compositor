@@ -264,7 +264,76 @@ export interface CameraRawSettings { temperature: number; tint: number; exposure
   blacks: number; vibrance: number; saturation: number; texture: number; clarity: number; dehaze: number; vignetteAmount: number; vignetteMidpoint: number;
   vignetteRoundness: number; vignetteFeather: number; vignetteHighlights: number; vignetteStyle: number; grainAmount: number; grainSize: number; grainRoughness: number;
   glow: number; glowStyle: number; glowRange: number; glowSpread: number; glowWarmth: number;
-  curve: CRCurve; mixer: { hue: number[]; saturation: number[]; luminance: number[] }; grading: CRGrading; detail: CRDetail; optics: CROptics; calibration: CRCalibration }
+  curve: CRCurve; mixer: { hue: number[]; saturation: number[]; luminance: number[]; points?: CRPointColor[] }; grading: CRGrading; detail: CRDetail; optics: CROptics; calibration: CRCalibration;
+  geometry?: CRGeometry }
+/** CameraRawPointColor: one picked color (hue 0…360, saturation and luminance 0…1) and how far its adjustment reaches. */
+export interface CRPointColor { hue: number; saturation: number; luminance: number; hueShift: number; saturationShift: number; luminanceShift: number;
+  hueRange: number; saturationRange: number; luminanceRange: number }
+/** CameraRawGeometryGuide: normalized 0…1 from the lower-left of the pixel grid, as the Mac app stores it. */
+export interface CRGuide { startX: number; startY: number; endX: number; endY: number }
+/** CameraRawGeometrySettings (CameraRawGeometryCalibration.swift). */
+export interface CRGeometry { upright: 'Off' | 'Guided'; projection: 'Perspective' | 'Rectilinear'; vertical: number; horizontal: number; rotate: number;
+  aspect: number; scale: number; offsetX: number; offsetY: number; constrainCrop: boolean; guides: CRGuide[] }
+export const defaultGeometry = (): CRGeometry => ({ upright: 'Off', projection: 'Perspective', vertical: 0, horizontal: 0, rotate: 0, aspect: 0, scale: 0,
+  offsetX: 0, offsetY: 0, constrainCrop: false, guides: [] });
+const guideLen = (g: CRGuide) => Math.hypot(g.endX - g.startX, g.endY - g.startY);
+export function geometryAdjusts(g?: CRGeometry) {
+  return !!g && ((g.upright === 'Guided' && g.guides.some(x => guideLen(x) > 0.01)) || !!(g.vertical || g.horizontal || g.rotate || g.aspect || g.scale || g.offsetX || g.offsetY));
+}
+function guidedCorrections(guides: CRGuide[]) {
+  const first = guides[0]; if (!first) return [0, 0, 0];
+  const dx = first.endX - first.startX, dy = first.endY - first.startY;
+  if (Math.hypot(dx, dy) <= 1e-4) return [0, 0, 0];
+  let rotate = -Math.atan2(dy, dx) * 180 / Math.PI;
+  if (rotate > 45) rotate -= 90; else if (rotate < -45) rotate += 90;
+  let vertical = 0, horizontal = 0;
+  const second = guides[1];
+  if (second) {
+    const sx = second.endX - second.startX, sy = second.endY - second.startY;
+    if (Math.hypot(sx, sy) > 1e-4) {
+      const a2 = Math.atan2(sy, sx) * 180 / Math.PI;
+      vertical = Math.abs(a2) > 45 ? (a2 > 0 ? 25 : -25) : 0;
+      horizontal = Math.abs(a2) <= 45 ? (a2 > 0 ? 25 : -25) : 0;
+    }
+  }
+  return [vertical, horizontal, rotate];
+}
+/** CameraRawGeometrySettings.outputCorners, converted from Core Image's y-up to pixel rows (TL, TR, BR, BL). */
+export function geometryCorners(g0: CRGeometry, w: number, h: number): number[] {
+  const cl = (v: number, lo = -100, hi = 100) => Math.min(hi, Math.max(lo, v || 0));
+  const g = { ...g0, vertical: cl(g0.vertical), horizontal: cl(g0.horizontal), rotate: cl(g0.rotate, -45, 45), aspect: cl(g0.aspect), scale: cl(g0.scale), offsetX: cl(g0.offsetX), offsetY: cl(g0.offsetY) };
+  let [vertical, horizontal, rotation] = [g.vertical, g.horizontal, g.rotate];
+  if (g.upright === 'Guided') { const c = guidedCorrections(g.guides.filter(x => guideLen(x) > 0.01)); vertical += c[0]; horizontal += c[1]; rotation += c[2]; }
+  const strength = g.projection === 'Perspective' ? 1 : 0.55;
+  const v = vertical / 100 * w * 0.18 * strength, hz = horizontal / 100 * h * 0.18 * strength;
+  const aspectScale = 1 + g.aspect / 200, zoom = 1 + g.scale / 100;
+  const shiftX = g.offsetX / 100 * w * 0.15, shiftY = g.offsetY / 100 * h * 0.15;
+  let pts: [number, number][] = [[-v + shiftX, h + shiftY], [w + v + shiftX, h + shiftY], [w + hz + shiftX, -shiftY], [-hz + shiftX, -shiftY]];
+  const cx = w / 2 + shiftX, cy = h / 2 + shiftY, r = rotation * Math.PI / 180, cos = Math.cos(r), sin = Math.sin(r);
+  pts = pts.map(([x, y]) => [cx + (x - cx) * cos - (y - cy) * sin, cy + (x - cx) * sin + (y - cy) * cos]);
+  if (aspectScale !== 1) pts = pts.map(([x, y]) => [cx + (x - cx) * aspectScale, cy + (y - cy) / aspectScale]);
+  if (zoom !== 1) pts = pts.map(([x, y]) => [cx + (x - cx) * zoom, cy + (y - cy) * zoom]);
+  return pts.flatMap(([x, y]) => [x, h - y]);
+}
+/** CameraRawGeometrySettings.apply: the perspective warp (the wasm distort kernel), then Constrain Crop. */
+export function applyGeometry(img: ImageData, g: CRGeometry): ImageData {
+  const w = img.width, h = img.height;
+  const r = K.distortWarp(img, w, h, geometryCorners(g, w, h));
+  if (!r.mode) return img;
+  if (!g.constrainCrop) return r.img;
+  const [x0, y0, x1, y1] = K.alphaBounds(r.img);
+  const cw = x1 - x0, ch = y1 - y0;
+  if (cw < 1 || ch < 1 || (cw >= w && ch >= h)) return r.img;
+  const src = canvasOf(w, h); ctx2d(src).putImageData(r.img, 0, 0);
+  const out = canvasOf(w, h), x = ctx2d(out), k = Math.min(w / cw, h / ch);
+  x.imageSmoothingQuality = 'high';
+  x.drawImage(src, x0, y0, cw, ch, (w - cw * k) / 2, (h - ch * k) / 2, cw * k, ch * k);
+  return x.getImageData(0, 0, w, h);
+}
+const pointAdjusts = (p?: CRPointColor[]) => !!p?.some(q => q.hueShift || q.saturationShift || q.luminanceShift);
+/** CameraRawMixerSettings.pointFloats. */
+const pointFloats = (p: CRPointColor[]) => p.slice(0, 8).flatMap(q => [q.hue / 360, q.saturation, q.luminance, q.hueShift / 100, q.saturationShift / 100,
+  q.luminanceShift / 100, Math.min(180, Math.max(5, q.hueRange)) / 360, Math.min(1, Math.max(0.05, q.saturationRange)), Math.min(1, Math.max(0.05, q.luminanceRange))]);
 const linearCR = (): CRPoint[] => [{ x: 0, y: 0 }, { x: 1, y: 1 }];
 const wheel = (): CRWheel => ({ hue: 0, saturation: 0, luminance: 0 });
 export const CR_MIXER_NAMES = ['Reds', 'Oranges', 'Yellows', 'Greens', 'Aquas', 'Blues', 'Purples', 'Magentas'];
@@ -307,6 +376,8 @@ export interface FilterSettings {
   distortion: number; curves: CurvesSettings; exposure: ExposureSettings; gradientMap: GradientMapSettings; grain: GrainSettings;
   blackWhite: BlackWhiteSettings; colorBalance: ColorBalanceSettings; dither: DitherSettings; cameraRaw: CameraRawSettings;
   levels: LevelsSettings; hueSat: HueSaturationSettings;
+  /** Panel-only previews, never saved: Camera Raw's Option-drag clipping view (1 highlights, 2 shadows) and Point Color's Visualize. */
+  crClipping?: number; crVisualize?: number;
 }
 export const defaultFilterSettings = (): FilterSettings => ({
   radius: 1, angle: 0, distance: 10, amount: 10, gaussian: false, monochromatic: false,
@@ -492,7 +563,14 @@ export function applyFilter(kind: FilterKind, s: FilterSettings, img: ImageData,
       // CameraRawSettings.apply: calibration, the basic grade, Curve + Color Mixer + Color Grading, effects and grain,
       // then optics and detail, each the Mac app's own C kernel.
       const cr = { ...defaultCameraRaw(), ...s.cameraRaw }, warm = cr.temperature / 100, mag = cr.tint / 100;
-      const cal = cr.calibration;
+      const cal = cr.calibration, clip = s.crClipping ?? 0, vis = s.crVisualize ?? -1;
+      if (clip) {
+        // The clipping view replaces the grade (CameraRawSettings.apply with `clipping`).
+        K.cameraRaw(img, { gains: [1 + 0.35 * warm + 0.15 * mag, 1 - 0.30 * mag, 1 - 0.35 * warm + 0.15 * mag], exposure: cr.exposure, contrast: cr.contrast,
+          highlights: cr.highlights, shadows: cr.shadows, whites: cr.whites, blacks: cr.blacks, vibrance: cr.vibrance, saturation: cr.saturation, clipping: clip });
+        return img;
+      }
+      if (vis < 0 && geometryAdjusts(cr.geometry)) img = applyGeometry(img, cr.geometry!);
       if (cal.shadowTint || cal.redHue || cal.redSaturation || cal.greenHue || cal.greenSaturation || cal.blueHue || cal.blueSaturation) K.cameraRawCalibration(img, cal);
       if (cr.temperature || cr.tint || cr.exposure || cr.contrast || cr.highlights || cr.shadows || cr.whites || cr.blacks || cr.vibrance || cr.saturation)
         K.cameraRaw(img, { gains: [1 + 0.35 * warm + 0.15 * mag, 1 - 0.30 * mag, 1 - 0.35 * warm + 0.15 * mag], exposure: cr.exposure, contrast: cr.contrast,
@@ -500,11 +578,13 @@ export function applyFilter(kind: FilterKind, s: FilterSettings, img: ImageData,
       const g = cr.grading, wheels = [g.shadows, g.midtones, g.highlights, g.global];
       const adjustsMixer = [...cr.mixer.hue, ...cr.mixer.saturation, ...cr.mixer.luminance].some(v => v !== 0);
       const adjustsGrading = wheels.some(w => w.saturation !== 0 || w.luminance !== 0);
-      if (crAdjustsCurve(cr.curve) || adjustsMixer || adjustsGrading) {
+      const pts = cr.mixer.points ?? [];
+      if (crAdjustsCurve(cr.curve) || adjustsMixer || adjustsGrading || pointAdjusts(pts) || vis >= 0) {
         const c = cr.curve, table = (f: (x: number) => number) => Array.from({ length: 256 }, (_, i) => f(i / 255));
         K.cameraRawCurveColor(img, { tone: table(x => crPoint(crParametric(c, x), c.rgb)), red: table(x => crPoint(x, c.red)), green: table(x => crPoint(x, c.green)),
           blue: table(x => crPoint(x, c.blue)), refineSaturation: c.refineSaturation / 100, mixer: [...cr.mixer.hue, ...cr.mixer.saturation, ...cr.mixer.luminance].map(v => v / 100),
-          points: [], pointCount: 0, grade: wheels.flatMap(w => [w.hue / 360, w.saturation / 100, w.luminance / 100]), blending: g.blending / 100, balance: g.balance / 100 });
+          points: pointFloats(pts), pointCount: Math.min(8, pts.length), grade: wheels.flatMap(w => [w.hue / 360, w.saturation / 100, w.luminance / 100]), blending: g.blending / 100, balance: g.balance / 100,
+          visualize: vis });
       }
       if (cr.texture || cr.clarity || cr.dehaze || cr.glow || cr.vignetteAmount) K.cameraRawEffectsFull(img, cr, ctx.scale);
       if (cr.grainAmount > 0) K.grain(img, cr.grainAmount, 0.5 + (cr.grainSize / 100) * 19.5, cr.grainRoughness, ctx.seed, 0, 0, 1 / ctx.scale);
