@@ -77,6 +77,8 @@ button { font: inherit; color: inherit; }
 .resize-edge { width: 5px; margin: 0 -2px; cursor: col-resize; z-index: 3; position: relative; }
 .resize-edge::before { content: ''; position: absolute; left: 2px; top: 0; bottom: 0; width: 1px; background: var(--line2); }
 .text-editor { position: absolute; background: rgba(0,0,0,0.04); border: 1px dashed #4c8dff; outline: none; resize: none; overflow: hidden; padding: 0; margin: 0; white-space: pre; z-index: 5; caret-color: #4c8dff; }
+.text-editor.live { background: transparent; }
+.text-editor.live::selection { background: rgba(76,141,255,0.35); color: transparent; }
 
 /* layers panel */
 .layers-panel { width: 252px; flex: none; display: flex; flex-direction: column; background: var(--panel); min-height: 0; }
@@ -186,6 +188,6 @@ body.busy, body.busy * { cursor: progress !important; }
 .tool-header .slider-label { flex: none; margin-right: 4px; }
 .tool-header .slider-row { flex: none; }
 .swatches { flex-wrap: wrap; gap: 6px; }
-.swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #555; padding: 0; cursor: pointer; }
-.swatch.sel { border-color: #fff; box-shadow: 0 0 0 1px #4c8dff; }
+.pc-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #555; padding: 0; cursor: pointer; }
+.pc-swatch.sel { border-color: #fff; box-shadow: 0 0 0 1px #4c8dff; }
 .hue-spectrum { display: block; margin: 4px 0; }

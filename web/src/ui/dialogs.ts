@@ -320,7 +320,7 @@ function crPointColor(cr: NonNullable<FilterSettings['cameraRaw']>, s: FilterSet
     box.replaceChildren();
     const sw = h('div', { class: 'row swatches' });
     pts.forEach((p, i) => {
-      const b = h('button', { class: `swatch${i === sel ? ' sel' : ''}`, title: `Point ${i + 1}`, style: `background:hsl(${p.hue},${Math.round(p.saturation * 100)}%,${Math.round(p.luminance * 100)}%)` });
+      const b = h('button', { class: `pc-swatch${i === sel ? ' sel' : ''}`, title: `Point ${i + 1}`, style: `background:hsl(${p.hue},${Math.round(p.saturation * 100)}%,${Math.round(p.luminance * 100)}%)` });
       b.addEventListener('click', () => { sel = i; s.crVisualize = s.crVisualize !== undefined ? i : undefined; draw(); changed(); });
       sw.append(b);
     });

@@ -6,7 +6,7 @@ import { h, icon, slider, select, checkbox, button, showMenu, closeMenus, toHex,
 import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel } from './dialogs';
 import { fileToCanvas } from '../engine/files';
 import { view, setView, clearGuides } from './guides';
-import { newPixelLayer, renderText, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
+import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
 import { ADJUSTMENT_KINDS, FILTER_MENU, IMAGE_ADJUSTMENTS, type FilterKind } from '../engine/adjustments';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -320,8 +320,15 @@ function renderHeader() {
       break;
     case 'shape':
       hd.append(title('Shape'), seg([['Rectangle', 'Rectangle'], ['Ellipse', 'Ellipse'], ['Line', 'Line']], app.shape.kind, v => app.shape.kind = v));
-      if (app.shape.kind === 'Rectangle') hd.append(slider({ label: 'Corner Radius', min: 0, max: 500, value: app.shape.cornerRadius, unit: 'px', width: 230, onInput: v => app.shape.cornerRadius = v }));
-      if (app.shape.kind === 'Line') hd.append(slider({ label: 'Line Width', min: 1, max: 200, value: app.shape.lineWidth, unit: 'px', width: 210, onInput: v => app.shape.lineWidth = v }));
+      // A selected shape layer is still its shape: these edit it (redrawn, not stretched), as well as the next one drawn.
+      const live = a?.shape && a.canvas ? a : null;
+      const editShape = (patch: Partial<NonNullable<Layer['shape']>>, label: string) => { if (live?.shape) app.updateShape(live, { ...live.shape, ...patch }, label); };
+      if (app.shape.kind === 'Rectangle' || live?.shape?.kind === 'Rectangle') hd.append(slider({ label: 'Corner Radius', min: 0, max: 500, value: live?.shape?.kind === 'Rectangle' ? live.shape.cornerRadius : app.shape.cornerRadius, unit: 'px', width: 230,
+        onInput: v => { app.shape.cornerRadius = v; editShape({ cornerRadius: v }, 'Corner Radius'); }, id: 'shape-radius' }));
+      if (app.shape.kind === 'Line' || live?.shape?.kind === 'Line') hd.append(slider({ label: 'Line Width', min: 1, max: 200, value: live?.shape?.lineWidth ?? app.shape.lineWidth, unit: 'px', width: 210,
+        onInput: v => { app.shape.lineWidth = v; editShape({ lineWidth: v }, 'Line Width'); } }));
+      if (live?.shape) { const w = h('input', { type: 'color', value: toHex(live.shape), class: 'well', id: 'shape-color', title: 'Shape color' }) as HTMLInputElement;
+        w.addEventListener('input', () => editShape({ ...fromHex(w.value) }, 'Shape Color')); hd.append(w); }
       break;
     case 'type': {
       hd.append(title('Type'));
@@ -329,14 +336,22 @@ function renderHeader() {
       const textLayer = a?.text ? a : null;
       const style = textLayer?.text ?? { ...app.type, red: app.fg.red, green: app.fg.green, blue: app.fg.blue };
       const set = (patch: Record<string, unknown>) => {
-        Object.assign(app.type, patch);
-        if (textLayer?.text) app.updateText(textLayer, { ...textLayer.text, ...patch });
+        if (!('red' in patch)) Object.assign(app.type, patch);
+        if (ctl.applyTextStyle(patch)) return;
+        if (!textLayer && 'red' in patch) { app.fg = patch as never; app.emit('colors'); return; }
+        if (textLayer?.text) {
+          const t = structuredClone(textLayer.text); const { red, green, blue, fontName, ...rest } = patch as Record<string, never>;
+          if (red !== undefined) setTextColor(t, { red, green, blue });
+          if (fontName) setTextFont(t, fontName);
+          app.updateText(textLayer, { ...t, ...rest });
+        }
       };
       hd.append(select(fonts.includes(style.fontName) ? fonts : [style.fontName, ...fonts], style.fontName, v => set({ fontName: v })),
         slider({ label: 'Size', min: 4, max: 1000, value: Math.round(style.fontSize), unit: 'px', width: 200, onInput: () => {}, onCommit: v => set({ fontSize: v }) }),
         seg([['Left', 'Left'], ['Center', 'Center'], ['Right', 'Right']], style.alignment, v => set({ alignment: v })),
         slider({ label: 'Tracking', min: -50, max: 200, value: style.tracking, width: 190, onInput: () => {}, onCommit: v => set({ tracking: v }) }));
-      if (textLayer) { const w = h('input', { type: 'color', value: toHex(style), class: 'well' }) as HTMLInputElement; w.addEventListener('change', () => set({ ...fromHex(w.value) })); hd.append(w); }
+      { const w = h('input', { type: 'color', value: toHex(style), class: 'well', id: 'type-color', title: 'Text color (the selected letters while editing)' }) as HTMLInputElement;
+        w.addEventListener('mousedown', () => { /* keep the editor's selection */ }); w.addEventListener('change', () => set({ ...fromHex(w.value) })); hd.append(w); }
       break;
     }
     case 'eyedropper': hd.append(title('Eyedropper'), h('span', { class: 'hint' }, 'Click to pick the foreground color · Option-click for background')); break;

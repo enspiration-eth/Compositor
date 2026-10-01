@@ -17,7 +17,74 @@ export const BLEND_MODES: BlendMode[] = BLEND_GROUPS.flat();
 
 export interface Transform { x: number; y: number; w: number; h: number; rotation: number; flipX: boolean; flipY: boolean; sampling: 'High quality' | 'Smooth' | 'Nearest' }
 export interface TextStyle { content: string; fontName: string; fontSize: number; red: number; green: number; blue: number;
-  alignment: 'Left' | 'Center' | 'Right'; tracking: number; leading: number; boxSize?: { width: number; height: number } }
+  alignment: 'Left' | 'Center' | 'Right'; tracking: number; leading: number; boxSize?: { width: number; height: number };
+  /** LayerTextColorRun / LayerTextFontRun: letters in another color or face, UTF-16 offsets, sorted, not overlapping. */
+  colorRuns?: { location: number; length: number; red: number; green: number; blue: number }[];
+  fontRuns?: { location: number; length: number; fontName: string }[] }
+type RGB3 = { red: number; green: number; blue: number };
+const sameRGB = (a: RGB3, b: RGB3) => a.red === b.red && a.green === b.green && a.blue === b.blue;
+// ---- LayerTextStyle run editing (Document/TypeTool.swift) ----
+function unitColors(t: TextStyle): RGB3[] {
+  const base = { red: t.red, green: t.green, blue: t.blue }, out = Array.from({ length: t.content.length }, () => base);
+  for (const r of t.colorRuns ?? []) for (let i = Math.max(0, r.location); i < Math.min(out.length, r.location + r.length); i++) out[i] = { red: r.red, green: r.green, blue: r.blue };
+  return out;
+}
+function setUnitColors(t: TextStyle, colors: RGB3[]) {
+  const base = { red: t.red, green: t.green, blue: t.blue }, runs: NonNullable<TextStyle['colorRuns']> = [];
+  colors.forEach((c, i) => {
+    if (sameRGB(c, base)) return;
+    const last = runs[runs.length - 1];
+    if (last && last.location + last.length === i && sameRGB(last, c)) last.length++; else runs.push({ location: i, length: 1, red: c.red, green: c.green, blue: c.blue });
+  });
+  t.colorRuns = runs.length ? runs : undefined;
+}
+function unitFonts(t: TextStyle): string[] {
+  const out = Array.from({ length: t.content.length }, () => t.fontName);
+  for (const r of t.fontRuns ?? []) for (let i = Math.max(0, r.location); i < Math.min(out.length, r.location + r.length); i++) out[i] = r.fontName;
+  return out;
+}
+function setUnitFonts(t: TextStyle, fonts: string[]) {
+  if (fonts.length && fonts.every(f => f === fonts[0])) { t.fontName = fonts[0]; t.fontRuns = undefined; return; }
+  const runs: NonNullable<TextStyle['fontRuns']> = [];
+  fonts.forEach((f, i) => {
+    if (f === t.fontName) return;
+    const last = runs[runs.length - 1];
+    if (last && last.location + last.length === i && last.fontName === f) last.length++; else runs.push({ location: i, length: 1, fontName: f });
+  });
+  t.fontRuns = runs.length ? runs : undefined;
+}
+/** LayerTextStyle.setColor: paints [start, end); an empty range or the whole text recolors all of it. */
+export function setTextColor(t: TextStyle, c: RGB3, start = 0, end = 0) {
+  const n = t.content.length; start = Math.max(0, Math.min(start, n)); end = Math.max(start, Math.min(end, n));
+  if (start === end || (start === 0 && end === n)) { t.red = c.red; t.green = c.green; t.blue = c.blue; t.colorRuns = undefined; return; }
+  const colors = unitColors(t); for (let i = start; i < end; i++) colors[i] = c; setUnitColors(t, colors);
+}
+/** LayerTextStyle.setFont. */
+export function setTextFont(t: TextStyle, name: string, start = 0, end = 0) {
+  const n = t.content.length; start = Math.max(0, Math.min(start, n)); end = Math.max(start, Math.min(end, n));
+  if (start === end || (start === 0 && end === n)) { t.fontName = name; t.fontRuns = undefined; return; }
+  const fonts = unitFonts(t); for (let i = start; i < end; i++) fonts[i] = name; setUnitFonts(t, fonts);
+}
+/** Keeps runs on the letters they belong to as `t.content` becomes `next` (one contiguous edit, as typing makes). */
+export function retargetRuns(t: TextStyle, next: string): TextStyle {
+  const out: TextStyle = structuredClone(t);
+  const prev = t.content;
+  if (prev === next) return out;
+  if (!out.colorRuns && !out.fontRuns) { out.content = next; return out; }
+  // LayerTextStyle.replaceCharacters: new letters take the color and face of the one before, as typing does.
+  let a = 0; while (a < prev.length && a < next.length && prev[a] === next[a]) a++;
+  let b = 0; while (b < prev.length - a && b < next.length - a && prev[prev.length - 1 - b] === next[next.length - 1 - b]) b++;
+  const start = a, end = prev.length - b, length = next.length - a - b;
+  const colors = unitColors(t), fonts = unitFonts(t);
+  const ic = start > 0 ? colors[start - 1] : (end > start ? colors[start] : colors[0] ?? { red: t.red, green: t.green, blue: t.blue });
+  const iff = start > 0 ? fonts[start - 1] : (end > start ? fonts[start] : fonts[0] ?? t.fontName);
+  colors.splice(start, end - start, ...Array.from({ length }, () => ic));
+  fonts.splice(start, end - start, ...Array.from({ length }, () => iff));
+  out.content = next;
+  if (out.colorRuns) setUnitColors(out, colors);
+  if (out.fontRuns) setUnitFonts(out, fonts);
+  return out;
+}
 export interface ShapeStyle { kind: 'Rectangle' | 'Ellipse' | 'Line'; red: number; green: number; blue: number; cornerRadius: number; lineWidth?: number;
   start?: { x: number; y: number }; end?: { x: number; y: number } }
 export interface Effects {
@@ -275,6 +342,7 @@ export function wrapText(t: TextStyle, ctx: CanvasRenderingContext2D, maxWidth?:
 export const TEXT_PADDING = 12;
 /** Renders a text layer's pixels; returns the canvas and its size in document pixels. */
 export function renderText(t: TextStyle): HTMLCanvasElement {
+  if (t.colorRuns?.length || t.fontRuns?.length) return renderRichText(t);
   const meas = ctx2d(canvasOf(4, 4)); meas.font = cssFont(t);
   (meas as unknown as { letterSpacing: string }).letterSpacing = `${t.tracking}px`;
   const boxW = t.boxSize ? t.boxSize.width - TEXT_PADDING * 2 : undefined;
@@ -289,6 +357,58 @@ export function renderText(t: TextStyle): HTMLCanvasElement {
   x.textAlign = t.alignment === 'Center' ? 'center' : t.alignment === 'Right' ? 'right' : 'left';
   const ax = t.alignment === 'Center' ? w / 2 : t.alignment === 'Right' ? w - TEXT_PADDING : TEXT_PADDING;
   lines.forEach((line, i) => x.fillText(line, ax, TEXT_PADDING + lh * i + lh / 2));
+  return c;
+}
+/** Text with color and font runs (CoreText's attributed string on the Mac): laid out letter-run by letter-run. */
+function renderRichText(t: TextStyle): HTMLCanvasElement {
+  const colors = unitColors(t), fonts = unitFonts(t);
+  const meas = ctx2d(canvasOf(4, 4)); (meas as unknown as { letterSpacing: string }).letterSpacing = `${t.tracking}px`;
+  const fontCss = (name: string) => cssFont({ ...t, fontName: name });
+  const width = (from: number, to: number) => {
+    let w = 0, i = from;
+    while (i < to) { let j = i + 1; while (j < to && fonts[j] === fonts[i]) j++; meas.font = fontCss(fonts[i]); w += meas.measureText(t.content.slice(i, j)).width; i = j; }
+    return w;
+  };
+  // Lines as [start, end) offsets into content.
+  const boxW = t.boxSize ? t.boxSize.width - TEXT_PADDING * 2 : undefined;
+  const lines: [number, number][] = [];
+  let pos = 0;
+  for (const para of t.content.split('\n')) {
+    const p0 = pos, p1 = pos + para.length;
+    if (!boxW) lines.push([p0, p1]);
+    else {
+      let ls = p0, last = p0;
+      const re = /\S+\s*/g; let m: RegExpExecArray | null;
+      while ((m = re.exec(para))) {
+        const we = p0 + m.index + m[0].length;
+        if (last > ls && width(ls, we) > boxW) { lines.push([ls, last]); ls = last; }
+        last = we;
+      }
+      lines.push([ls, p1]);
+    }
+    pos = p1 + 1;
+  }
+  const lh = t.leading > 0 ? t.leading : t.fontSize * 1.2;
+  const widths = lines.map(([a, b]) => width(a, b).valueOf());
+  const textW = Math.max(1, ...lines.map(([a, b]) => width(a, t.content.slice(a, b).trimEnd().length + a)));
+  const w = Math.ceil(t.boxSize ? t.boxSize.width : textW + TEXT_PADDING * 2);
+  const h = Math.ceil(t.boxSize ? Math.max(t.boxSize.height, lines.length * lh + TEXT_PADDING * 2) : lines.length * lh + TEXT_PADDING * 2);
+  const c = canvasOf(w, h), x = ctx2d(c);
+  (x as unknown as { letterSpacing: string }).letterSpacing = `${t.tracking}px`;
+  x.textBaseline = 'middle'; x.textAlign = 'left';
+  lines.forEach(([a, b], li) => {
+    const lw = width(a, a + t.content.slice(a, b).trimEnd().length);
+    let px = t.alignment === 'Center' ? (w - lw) / 2 : t.alignment === 'Right' ? w - TEXT_PADDING - lw : TEXT_PADDING;
+    const py = TEXT_PADDING + lh * li + lh / 2;
+    let i = a;
+    while (i < b) {
+      let j = i + 1; while (j < b && fonts[j] === fonts[i] && sameRGB(colors[j], colors[i])) j++;
+      const seg = t.content.slice(i, j);
+      x.font = fontCss(fonts[i]); x.fillStyle = rgbCss(colors[i]); x.fillText(seg, px, py);
+      px += x.measureText(seg).width; i = j;
+    }
+  });
+  void widths;
   return c;
 }
 export function renderShape(s: ShapeStyle, w: number, h: number): HTMLCanvasElement {

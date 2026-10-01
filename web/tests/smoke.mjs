@@ -127,7 +127,7 @@ try {
     await open('Point Color');
     await page.click('#cr-point-sample');
     const [sx, sy] = await toScreen(800, 60); await page.mouse.click(sx, sy);
-    await page.waitForSelector('#cr-point-color .swatch');
+    await page.waitForSelector('#cr-point-color .pc-swatch');
     const hs = page.locator('#cr-point-color .slider-row').first().locator('input[type=number]'); await hs.fill('80'); await hs.press('Enter');
     await open('Point Color', false);
     // Geometry: vertical perspective + a guided line.
@@ -265,6 +265,44 @@ try {
     assert(!s.active && s.label === 'Distort' && Math.abs(s.t.w - c[2]) > 30 && s.t.y !== c[1], 'distort applied ' + JSON.stringify({ s, c }));
   });
 
+  await step('live shape: redrawn when scaled, style editable', async () => {
+    await page.click('.rail-btn[data-tool="shape"]');
+    await page.evaluate(() => { const { app } = window.compositor; app.shape.kind = 'Rectangle'; app.shape.cornerRadius = 40; app.emit('tool'); });
+    const drag = async (a, b, mods = []) => { const [x0, y0] = await toScreen(...a), [x1, y1] = await toScreen(...b); for (const m of mods) await page.keyboard.down(m); await page.mouse.move(x0, y0); await page.mouse.down(); for (let i = 1; i <= 6; i++) await page.mouse.move(x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6); await page.mouse.up(); for (const m of mods) await page.keyboard.up(m); };
+    await drag([1000, 600], [1200, 700]);
+    const s0 = await page.evaluate(() => { const a = window.compositor.app.active; return { shape: a.shape?.kind, cw: a.canvas.width, t: a.transform }; });
+    assert(s0.shape === 'Rectangle' && s0.cw === 200, 'shape drawn ' + JSON.stringify(s0));
+    await page.click('.rail-btn[data-tool="move"]');
+    await drag([s0.t.x + s0.t.w, s0.t.y + s0.t.h], [s0.t.x + s0.t.w + 200, s0.t.y + s0.t.h + 100]);
+    const s1 = await page.evaluate(() => { const a = window.compositor.app.active; return { shape: !!a.shape, cw: a.canvas.width, ch: a.canvas.height, t: a.transform }; });
+    assert(s1.shape && Math.abs(s1.cw - s1.t.w) <= 1 && Math.abs(s1.ch - s1.t.h) <= 1 && s1.cw > 300, 'shape redrawn at new size ' + JSON.stringify(s1));
+    await page.click('.rail-btn[data-tool="shape"]');
+    const r = page.locator('#shape-radius input[type=number], .slider-row:has-text("Corner Radius") input[type=number]').first(); await r.fill('5'); await r.press('Enter');
+    const s2 = await page.evaluate(() => { const { app } = window.compositor; return { r: app.active.shape?.cornerRadius, label: app.history.undoLabel }; });
+    assert(s2.r === 5 && s2.label === 'Corner Radius', 'corner radius edited ' + JSON.stringify(s2));
+  });
+
+  await step('text color/font runs on selected letters', async () => {
+    await page.click('.rail-btn[data-tool="type"]');
+    { const [x, y] = await toScreen(300, 900); await page.mouse.click(x, y); }
+    await page.waitForSelector('textarea.text-editor');
+    await page.keyboard.type('Live Type');
+    await page.keyboard.press('Control+Enter');
+    const t = await page.evaluate(() => window.compositor.app.active.transform);
+    const [x, y] = await toScreen(t.x + t.w / 2, t.y + t.h / 2); await page.mouse.click(x, y);
+    await page.waitForSelector('textarea.text-editor');
+    assert(await page.evaluate(() => { const ta = document.querySelector('textarea.text-editor'); ta.setSelectionRange(0, 4); return ta.value === 'Live Type' && !!ta._ctx.layer; }), 'editing the existing text layer');
+    await page.evaluate(() => { const w = document.getElementById('type-color'); w.value = '#ff2a2a'; w.dispatchEvent(new Event('change')); });
+    await page.waitForTimeout(100);
+    await page.evaluate(() => { const ta = document.querySelector('textarea.text-editor'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+    await page.keyboard.type('!');
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `${SHOTS}/11-text-runs.png` });
+    await page.keyboard.press('Control+Enter');
+    const r = await page.evaluate(() => { const a = window.compositor.app.active; return { content: a.text.content, runs: a.text.colorRuns, label: window.compositor.app.history.undoLabel }; });
+    assert(r.content.endsWith('!') && r.runs?.length === 1 && r.runs[0].location === 0 && r.runs[0].length === 4 && r.runs[0].red === 1, 'color run ' + JSON.stringify(r));
+  });
+
   await step('magic wand selection (wasm flood fill + trace)', async () => {
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers[0].id); });
     await page.click('.rail-btn[data-tool="wand"]');
@@ -330,7 +368,7 @@ try {
     await page.click('.layer-row.active .mask-link');
     await drag([500, 700], [500, 750]);
     const r3 = await page.evaluate(() => { const { app } = window.compositor; const a = app.active; return { linked: a.maskLinked, x: a.maskPlacement?.x, y: a.maskPlacement?.y, ty: a.transform.y }; });
-    assert(r3.linked === true && Math.abs(r3.ty - r2.t.y - 50) <= 2, 'relinked ' + JSON.stringify(r3));
+    assert(r3.linked === true && Math.abs(r3.ty - r2.t.y - 50) <= 8 /* may snap to another layer's edge */, 'relinked ' + JSON.stringify(r3));
     await page.evaluate(() => window.compositor.app.toggleMaskLink());
   });
 
@@ -349,6 +387,7 @@ try {
     assert(manifest.guides?.length === 1, 'manifest guides');
     const ml = manifest.layers.find(l => l.maskLinked === false);
     assert(ml && ml.maskPlacement?.origin?.length === 2, 'manifest unlinked mask placement');
+    assert(manifest.layers.some(l => l.text?.colorRuns?.length === 1), 'manifest text colorRuns');
     const hl = manifest.layers.find(l => l.adjustment?.hsvSettings);
     assert(hl && Array.isArray(hl.adjustment.hsvSettings.adjustments) && hl.adjustment.hsvSettings.adjustments.includes('Greens'), 'manifest hsvSettings (Mac encoding)');
     console.log(`(manifest v${manifest.version}, ${manifest.layers.length} layers, ${Object.keys(files).length} entries) `);

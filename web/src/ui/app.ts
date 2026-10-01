@@ -2,7 +2,7 @@
 // projects (tabs), tool state, colors, and every editing action the menus, keys and panels call.
 import {
   type Doc, type Layer, type BlendMode, type Effects, type EffectKey, type Transform, History, newDoc, newPixelLayer, uuid, cloneCanvas,
-  getLayer, descendants, ancestors, childrenOf, layerMatrix, solidMask, fullTransform, renderText, rgbCss, BLEND_MODES, invert, apply,
+  getLayer, descendants, ancestors, childrenOf, layerMatrix, solidMask, fullTransform, renderText, rgbCss, BLEND_MODES, invert, apply, renderShape,
   bakeMask, toggleMaskLink, maskInLayerGrid, eachTransform,
 } from '../engine/document';
 import { Renderer } from '../engine/render';
@@ -477,7 +477,7 @@ export class App {
   }
   setTransform(l: Layer, t: Transform, label = 'Transform', coalesce = false) {
     if (!coalesce) this.edit(label);
-    l.transform = t; this.changed('transform');
+    l.transform = t; this.redrawShape(l); this.changed('transform');
   }
   canvasSize(w: number, h: number, ax: number, ay: number) {
     const d = this.doc; if (!d) return;
@@ -541,6 +541,26 @@ export class App {
     (e as Record<string, unknown>)[key] = (e as Record<string, unknown>)[key] ?? defaults[key];
     a.effects = e; a.rev++;
     this.changed('layers');
+  }
+
+  // ---------- shapes ----------
+  /** ShapeTool.redrawShape: a shape layer scaled to a new size draws its shape again at that size, so a rounded corner
+   *  keeps its radius instead of stretching. Part of the edit that changed the size. */
+  redrawShape(l: Layer) {
+    if (!l.shape || !l.canvas) return;
+    const w = Math.max(1, Math.round(Math.abs(l.transform.w))), h = Math.max(1, Math.round(Math.abs(l.transform.h)));
+    if ((w === l.canvas.width && h === l.canvas.height) || w * h > 64e6) return;
+    // A mask that follows the layer's pixel grid stays exactly where it is while that grid changes size.
+    if (l.mask && !l.maskPlacement) { l.maskPlacement = { ...l.transform }; l.maskBase = { ...l.transform }; }
+    l.canvas = renderShape(l.shape, w, h); l.rev++;
+  }
+  /** Edit a live shape's style (color, corner radius, line width), redrawn at its current size. */
+  updateShape(l: Layer, style: NonNullable<Layer['shape']>, label = 'Edit Shape') {
+    if (this.history?.undoLabel !== label) this.edit(label);
+    const w = Math.max(1, Math.round(Math.abs(l.transform.w))), h = Math.max(1, Math.round(Math.abs(l.transform.h)));
+    if (l.mask && !l.maskPlacement && l.canvas && (l.canvas.width !== w || l.canvas.height !== h)) { l.maskPlacement = { ...l.transform }; l.maskBase = { ...l.transform }; }
+    l.shape = style; l.canvas = renderShape(style, w, h); l.rev++;
+    this.changed('pixels');
   }
 
   // ---------- text ----------

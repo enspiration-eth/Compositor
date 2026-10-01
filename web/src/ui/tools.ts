@@ -7,7 +7,7 @@ import type { Guide } from '../engine/document';
 // the document (engine/render.ts); a 2D overlay above it draws marching ants, transform handles, crop and cursors.
 import { app, type Tool } from './app';
 import { type Layer, type Mat, type Transform, layerMatrix, invert, apply, cloneCanvas, rgbCss, layerContains, layerCorners, renderShape,
-  isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer, maskTransformOf, bakeMask } from '../engine/document';
+  isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer, maskTransformOf, bakeMask, retargetRuns, setTextColor, setTextFont } from '../engine/document';
 import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
 import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds } from '../engine/kernels';
@@ -383,7 +383,10 @@ export class CanvasController {
         if (!pts || pts.length < 3) { if (dr.data!.mode === 'replace') app.deselect(); app.needsRender = true; return; }
         app.edit('Lasso'); Sel.combine(d, Sel.polygonSelection(d, pts, app.marqueeFeather), dr.data!.mode as Sel.SelMode); app.emit('selection'); return;
       }
-      case 'move': if (dr.data!.moved) app.emit('transform'); else app.history?.undoStack.pop(); return;
+      case 'move':
+        if (!dr.data!.moved) { app.history?.undoStack.pop(); return; }
+        if ((dr.data!.hit as { kind?: string } | null)?.kind === 'scale') for (const l of (dr.data!.layers as Layer[] | undefined) ?? []) app.redrawShape(l);
+        app.emit('transform'); return;
       case 'moveSel': app.emit('selection'); return;
       case 'gradient': {
         const line = this.gradientLine; this.gradientLine = null;
@@ -941,11 +944,11 @@ export class CanvasController {
     if (hit) { app.setActive(hit.id); this.openTextEditor(hit, dpt); return; }
     this.openTextEditor(null, dpt);
   }
-  openTextEditor(layer: Layer | null, dpt: Pt) {
+  openTextEditor(layer: Layer | null, dpt: Pt, selection?: [number, number]) {
     this.commitText();
     const p = app.project!;
-    const style = layer?.text ?? { content: '', fontName: app.type.fontName, fontSize: app.type.fontSize, red: app.fg.red, green: app.fg.green, blue: app.fg.blue,
-      alignment: app.type.alignment, tracking: app.type.tracking, leading: app.type.leading };
+    const style: NonNullable<Layer['text']> = structuredClone(layer?.text ?? { content: '', fontName: app.type.fontName, fontSize: app.type.fontSize, red: app.fg.red, green: app.fg.green, blue: app.fg.blue,
+      alignment: app.type.alignment, tracking: app.type.tracking, leading: app.type.leading });
     const ta = document.createElement('textarea');
     ta.className = 'text-editor'; ta.value = style.content; ta.spellcheck = false;
     const scale = layer?.canvas ? layer.transform.w / layer.canvas.width : 1;
@@ -955,31 +958,64 @@ export class CanvasController {
     Object.assign(ta.style, { left: `${sx}px`, top: `${sy}px`, fontSize: `${fs}px`, lineHeight: `${(style.leading || style.fontSize * 1.2) * p.zoom * scale}px`,
       color: rgbCss(style), textAlign: style.alignment.toLowerCase(), fontFamily: `"${style.fontName}", Helvetica, Arial, sans-serif`,
       letterSpacing: `${style.tracking * p.zoom * scale}px`, minWidth: `${Math.max(40, fs * 2)}px` });
-    if (layer) layer.visible = false, app.needsRender = true;
+    // Editing a text layer: the layer itself shows the letters live (with their color and font runs) under a
+    // see-through editor that only draws the caret and selection.
+    const original = layer ? { text: layer.text, canvas: layer.canvas, transform: { ...layer.transform } } : null;
+    if (layer) { ta.style.color = 'transparent'; ta.style.caretColor = rgbCss(style); ta.classList.add('live'); }
     const autosize = () => { ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 4}px`; ta.style.width = 'auto'; ta.style.width = `${Math.max(ta.scrollWidth + 8, fs * 2)}px`; };
-    ta.addEventListener('input', autosize);
+    const ctx = { layer, style, origin, scale, original };
+    const live = () => { if (layer && ctx.style.content) this.showLiveText(layer, ctx.style, scale); };
+    ta.addEventListener('input', () => { ctx.style = retargetRuns(ctx.style, ta.value); live(); autosize(); });
     ta.addEventListener('keydown', e => {
       e.stopPropagation();
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.commitText(); }
       if (e.key === 'Escape') { e.preventDefault(); this.commitText(true); }
     });
-    (ta as unknown as { _ctx: unknown })._ctx = { layer, style, origin, scale };
+    (ta as unknown as { _ctx: unknown })._ctx = ctx;
     this.stage.append(ta); this.textEditor = ta;
-    requestAnimationFrame(() => { ta.focus(); autosize(); });
+    requestAnimationFrame(() => { ta.focus(); autosize(); if (selection) ta.setSelectionRange(selection[0], selection[1]); });
+  }
+  private showLiveText(l: Layer, t: NonNullable<Layer['text']>, scale: number) {
+    l.text = t; l.canvas = renderText(t);
+    l.transform = { ...l.transform, w: l.canvas.width * scale, h: l.canvas.height * scale }; l.rev++; app.needsRender = true;
+  }
+  /** The Type options while text is being edited: color and font go to the selected letters (runs), the rest to all of it. */
+  applyTextStyle(patch: Partial<NonNullable<Layer['text']>>): boolean {
+    const ta = this.textEditor; if (!ta) return false;
+    const ctx = (ta as unknown as { _ctx: { layer: Layer | null; style: NonNullable<Layer['text']>; scale: number } })._ctx;
+    const sel: [number, number] = [ta.selectionStart, ta.selectionEnd];
+    if (!ctx.layer) {
+      // New text becomes a layer first, then takes the style like any other.
+      this.commitText();
+      const l = app.active; if (!l?.text) return true;
+      this.openTextEditor(l, [l.transform.x, l.transform.y], sel);
+      return this.applyTextStyle(patch);
+    }
+    const t = structuredClone(ctx.style);
+    const { red, green, blue, fontName, ...rest } = patch;
+    if (red !== undefined && green !== undefined && blue !== undefined) setTextColor(t, { red, green, blue }, sel[0], sel[1]);
+    if (fontName) setTextFont(t, fontName, sel[0], sel[1]);
+    Object.assign(t, rest);
+    ctx.style = t;
+    this.showLiveText(ctx.layer, t, ctx.scale);
+    if (Object.keys(rest).length) { const l = ctx.layer; this.commitText(); this.openTextEditor(l, [l.transform.x, l.transform.y], sel); }
+    else requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(sel[0], sel[1]); });
+    return true;
   }
   commitText(cancel = false) {
     const ta = this.textEditor; if (!ta) return;
     this.textEditor = null;
-    const { layer, style, origin, scale } = (ta as unknown as { _ctx: { layer: Layer | null; style: NonNullable<Layer['text']>; origin: Pt; scale: number } })._ctx;
+    const { layer, style, origin, scale, original } = (ta as unknown as { _ctx: { layer: Layer | null; style: NonNullable<Layer['text']>; origin: Pt; scale: number;
+      original: { text: Layer['text']; canvas: HTMLCanvasElement | null; transform: Transform } | null } })._ctx;
     ta.remove();
-    if (layer) layer.visible = true;
+    if (layer && original) { layer.text = original.text; layer.canvas = original.canvas; layer.transform = original.transform; layer.rev++; }
     const content = ta.value;
     if (cancel || (!layer && !content.trim())) { app.needsRender = true; app.emit('layers'); return; }
     const d = app.doc!;
     const text = { ...style, content };
     if (layer) {
       if (!content.trim()) { app.setActive(layer.id); app.deleteLayers(); return; }
-      app.updateText(layer, text);
+      if (JSON.stringify(text) !== JSON.stringify(original?.text)) app.updateText(layer, text); else { app.needsRender = true; app.emit('layers'); }
     } else {
       app.edit('Type');
       const canvas = renderText(text);
