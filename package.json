@@ -1,0 +1,16 @@
+{
+  "name": "compositor-web-deploy",
+  "private": true,
+  "description": "One-command deploy of Compositor for the web (web/). `npm install && npm start` builds and serves it on $PORT.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "npm ci --prefix web --include=dev --no-audit --no-fund",
+    "build": "npm run build --prefix web",
+    "start": "node web/server.mjs",
+    "dev": "npm run dev --prefix web",
+    "test": "npm run test:e2e --prefix web"
+  }
+}
