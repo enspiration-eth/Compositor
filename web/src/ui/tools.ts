@@ -10,7 +10,8 @@ import { type Layer, type Mat, type Transform, layerMatrix, invert, apply, clone
   isEffectivelyVisible, newPixelLayer, renderText, TEXT_PADDING, getLayer } from '../engine/document';
 import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
-import { wandMask, spotHeal } from '../engine/kernels';
+import { wandMask, spotHeal, withHeap, kernels } from '../engine/kernels';
+import { subjectMatte, saliency } from '../engine/segment';
 import { toast } from './dom';
 
 type Pt = [number, number];
@@ -482,7 +483,52 @@ export class CanvasController {
     if (pts && pts.length >= 3) { app.edit('Polygonal Lasso'); Sel.combine(d, Sel.polygonSelection(d, pts, app.marqueeFeather), mode); app.emit('selection'); }
     app.needsRender = true;
   }
+  /** Object Selection (ObjectSelection.swift): the subject region under the click. Vision finds instances; the web
+   *  model finds salient objects, so this takes the connected part of the subject mask that holds the click, looking
+   *  again at the area around the click when the whole-image pass saw only background there. */
+  async objectClick(dpt: Pt, mode: Sel.SelMode) {
+    const d = app.doc!, x = Math.floor(dpt[0]), y = Math.floor(dpt[1]);
+    if (x < 0 || y < 0 || x >= d.width || y >= d.height) return;
+    const src = canvasOf(d.width, d.height), sx = ctx2d(src);
+    if (app.objectSel.sampleAll || !app.active?.canvas) sx.putImageData(app.renderer.readComposite(d), 0, 0);
+    else { const a = app.active!, m = layerMatrix(a); sx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]); sx.drawImage(a.canvas!, 0, 0); }
+    const found = await app.busyWith('Finding the object', async () => {
+      let m = await subjectMatte(src);
+      if (m[y * d.width + x] < 0.5) {
+        // Closer looks at squares around the click, half then a quarter of the canvas across.
+        let hit: Float32Array | null = null;
+        for (const frac of [2, 4]) {
+          const side = Math.max(32, Math.round(Math.max(d.width, d.height) / frac));
+          const cw = Math.min(side, d.width), ch = Math.min(side, d.height);
+          const x0 = Math.round(Math.max(0, Math.min(d.width - cw, x - cw / 2))), y0 = Math.round(Math.max(0, Math.min(d.height - ch, y - ch / 2)));
+          const crop = canvasOf(cw, ch); ctx2d(crop).drawImage(src, -x0, -y0);
+          const local = await saliency(crop);
+          if (local[(y - y0) * cw + (x - x0)] < 0.5) continue;
+          hit = new Float32Array(d.width * d.height);
+          for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) hit[(j + y0) * d.width + i + x0] = local[j * cw + i];
+          break;
+        }
+        if (!hit) return null;
+        m = hit;
+      }
+      if (app.objectSel.edgeOffset) {
+        // Positive values erode the mask inward; negative expand it (the Mac app's edgeOffset).
+        const bin = new Float32Array(m.length); for (let i = 0; i < m.length; i++) bin[i] = m[i] >= 0.5 ? 1 : 0;
+        withHeap((heap, k) => { const p = heap.floats(bin); k._matte_shift_edge(p, d.width, d.height, -app.objectSel.edgeOffset); bin.set(kernels().HEAPF32.subarray(p >> 2, (p >> 2) + bin.length)); });
+        m = bin;
+      }
+      // The connected region under the click: flood-fill the thresholded mask with the original wand kernel.
+      const img = new ImageData(d.width, d.height);
+      for (let i = 0; i < m.length; i++) { const v = m[i] >= 0.5 ? 255 : 0; img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255; }
+      if (img.data[(y * d.width + x) * 4] === 0) return null;
+      return wandMask(img, x, y, 0, 0, true);
+    });
+    if (found === undefined) return;
+    if (!found) { toast('No object found there.'); return; }
+    app.edit('Object Selection'); Sel.combine(d, Sel.maskBytesToCanvas(d, found), mode); app.emit('selection');
+  }
   wandClick(dpt: Pt, mode: Sel.SelMode) {
+    if (app.wandMode === 'object') { void this.objectClick(dpt, mode); return; }
     const d = app.doc!;
     const x = Math.floor(dpt[0]), y = Math.floor(dpt[1]);
     if (x < 0 || y < 0 || x >= d.width || y >= d.height) return;

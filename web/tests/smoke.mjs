@@ -164,6 +164,37 @@ try {
     await page.screenshot({ path: `${SHOTS}/03-editor-selection.png` });
   });
 
+  await step('Select Subject (U²-Net in onnxruntime wasm)', async () => {
+    await page.evaluate(() => window.compositor.app.deselect());
+    await menu('Select', 'Subject');
+    await page.waitForFunction(() => !window.compositor.app.busy && window.compositor.app.history.undoLabel === 'Select Subject', null, { timeout: 90000 });
+    assert((await st()).sel, 'subject selected');
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/05-select-subject.png` });
+  });
+
+  await step('Object Selection click', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.deselect(); app.wandMode = 'object'; app.emit('tool'); });
+    await page.click('.rail-btn[data-tool="wand"]');
+    const [x, y] = await toScreen(450, 530); await page.mouse.click(x, y);
+    await page.waitForFunction(() => !window.compositor.app.busy && window.compositor.app.history.undoLabel === 'Object Selection', null, { timeout: 60000 });
+    const n = await page.evaluate(() => { const d = window.compositor.app.doc.selection.getContext('2d').getImageData(0, 0, 1600, 1000).data; let c = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 127) c++; return c; });
+    assert(n > 15000 && n < 80000, 'object = the stroke, px ' + n);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/06-object-selection.png` });
+    await page.evaluate(() => { const { app } = window.compositor; app.wandMode = 'wand'; app.deselect(); });
+  });
+
+  await step('Remove Background panel → layer mask', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Sun').id); });
+    await menu('Filter', 'Remove Background');
+    await page.waitForSelector('#filter-panel');
+    await page.click('#filter-panel .segmented button:has-text("Advanced")');
+    await page.waitForFunction(() => !window.compositor.app.busy && document.getElementById('rb-status')?.textContent === '', null, { timeout: 60000 });
+    await page.click('#filter-ok');
+    await page.waitForFunction(() => window.compositor.app.active.mask && window.compositor.app.history.undoLabel === 'Remove Background', null, { timeout: 60000 });
+  });
+
   await step('export PNG + save .comp', async () => {
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportImage('png'))]);
     assert(/\.png$/.test(dl.suggestedFilename()), dl.suggestedFilename());

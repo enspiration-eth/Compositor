@@ -12,6 +12,8 @@ re-implements the platform layers (AppKit/SwiftUI, Metal, Core Image) with web A
 |---|---|---|
 | Pixel kernels (levels, hue/sat cube, gradient map, B&W, color balance, grain, noise, vignette, tonal contrast, lens correction, Camera Raw, magic wand flood fill + contour tracing, spot healing, content-aware fill, dither, alpha bounds) | C in `Compositor/Rendering/*.c` | **The same C files, compiled unchanged to WebAssembly** with Emscripten (`wasm/build.sh` → `src/wasm/pixels.{mjs,wasm}`) |
 | Smudge and Liquify (`WarpStroke` CPU path in `Document/SmudgeLiquify.swift`) | Swift (+ Metal) | Translated line for line to C (`wasm/src/WarpPixels.c`) and compiled into the same wasm module |
+| Remove Background's matte refinement (`GuidedMatte.swift` guided filter, Shift Edge, Contrast) | Swift + Core Image | Translated to C (`wasm/src/MattePixels.c`), in the same wasm module |
+| Subject detection (Remove Background, Select Subject, Object Selection) | Apple Vision | U²-Net-p (Apache-2.0, `public/models/u2netp.onnx`) on onnxruntime-web's WebAssembly backend, loaded on first use only |
 | libdispatch / Blocks (used by `DitherPixels.c`) | system | Small shims in `wasm/shim/`: a serial `dispatch_apply` and the Blocks runtime symbols, so the C sources compile as-is |
 | Settings, table builders (Levels, Curves Hermite spline, Hue/Sat cube, Exposure, Dither…) | Swift | Line-by-line TypeScript ports (`src/engine/adjustments.ts`) feeding the wasm kernels |
 | Document model (layers, folders, masks, clipping, transforms, effects, text/shape metadata) | Swift + CoreGraphics | TypeScript (`src/engine/document.ts`), same field names as `manifest.json` |
@@ -79,11 +81,12 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   (wasm), crop, brush/eraser (size, hardness, opacity, smoothing; paints on masks too), spot healing (wasm), clone stamp,
   Liquify/Blur/Smudge (Liquify and Smudge run the Mac app's warp algorithm in wasm), gradient, shape, type, eyedropper, hand, zoom
 - **Selections:** add/subtract/intersect, all, deselect, inverse, expand, contract, feather, layer pixels, marching ants
-  (traced by the wasm `wand_trace`), Content-Aware Fill (wasm)
+  (traced by the wasm `wand_trace`), Content-Aware Fill (wasm), Select Subject and Object Selection (on-device ML)
 - **Image adjustments, destructive or as adjustment layers:** Levels (histogram from wasm), Curves, Hue/Saturation, Exposure,
   Gradient Map, Black & White, Color Balance, Grain, Invert
 - **Filters:** Gaussian Blur, Motion Blur, Add Noise, Vignette, Bloom/Glow, Dither, Tonal Contrast, Lens Correction,
-  Camera Raw (basic, presence, color and effects sections)
+  Camera Raw (basic, presence, color and effects sections), Remove Background (Basic/Advanced with Refine Edges,
+  Contrast, Shift Edge; adds a layer mask)
 - **Rulers, guides and grid:** rulers you drag guides out of (⌘R); guides saved in the project's manifest, moved
   or deleted with the Move tool, locked or cleared, or added by position; a layout grid with Grid Settings (⌘'); Snap
   (⇧⌘;) to guides, grid, layers and document bounds for move, marquee, crop and shape
@@ -93,8 +96,11 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 
 ## Missing or simplified, and why
 
-- **Remove Background, Select Subject, Object Selection:** these depend on Apple's Vision framework, which has no
-  browser equivalent. They would need a bundled ML segmentation model.
+- **Remove Background, Select Subject, Object Selection** run on an open salient-object model (U²-Net-p) instead of
+  Apple Vision. The model is good at clear foreground subjects, but it doesn't separate instances the way Vision does.
+  Object Selection takes the connected part of the subject mask under the click, with closer looks around the
+  click as a fallback, and diffuse things such as glows aren't detected. The first use downloads about 4.5 MB of
+  model plus a 14 MB runtime (about 3.5 MB gzipped).
 - **Camera Raw:** only the sliders the shared C kernel implements in one pass. Curves, mixer, grading, detail and optics
   are absent.
 - **RAW / HEIC / TIFF import:** these need ImageIO. The browser can only decode what its own image decoders support.

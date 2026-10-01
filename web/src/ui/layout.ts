@@ -166,6 +166,8 @@ function buildMenubar() {
       { label: 'Expand…', action: () => showSelectionAmount('expand'), disabled: !app.doc?.selection },
       { label: 'Contract…', action: () => showSelectionAmount('contract'), disabled: !app.doc?.selection },
       { label: 'Feather…', action: () => showSelectionAmount('feather'), disabled: !app.doc?.selection },
+      { separator: true },
+      { label: 'Subject', action: () => app.selectSubject(), disabled: !app.doc },
     ]],
     ['Filter', () => [
       ...FILTER_MENU.map(k => ({ label: `${k}…`, action: () => openFilter(k as FilterKind), disabled: !app.active })),
@@ -297,8 +299,12 @@ function renderHeader() {
       hd.append(title(t === 'marquee' ? 'Marquee' : t === 'lasso' ? 'Lasso' : 'Magic Wand'));
       if (t === 'marquee') hd.append(seg([['rectangle', 'Rectangle'], ['ellipse', 'Ellipse']], app.marqueeKind, v => app.marqueeKind = v));
       if (t === 'lasso') hd.append(seg([['freehand', 'Freehand'], ['polygonal', 'Polygonal']], app.lassoKind, v => { app.lassoKind = v; ctl.lasso = null; }));
-      if (t === 'wand') hd.append(slider({ label: 'Tolerance', min: 0, max: 255, value: app.wand.tolerance, width: 210, onInput: v => app.wand.tolerance = v }),
+      if (t === 'wand') hd.append(seg([['wand', 'Magic Wand'], ['object', 'Object']], app.wandMode, v => { app.wandMode = v; app.emit('tool'); }));
+      if (t === 'wand' && app.wandMode === 'wand') hd.append(slider({ label: 'Tolerance', min: 0, max: 255, value: app.wand.tolerance, width: 210, onInput: v => app.wand.tolerance = v }),
         checkbox('Contiguous', app.wand.contiguous, v => app.wand.contiguous = v), checkbox('Sample all layers', app.wand.sampleAll, v => app.wand.sampleAll = v));
+      if (t === 'wand' && app.wandMode === 'object') hd.append(checkbox('Sample all layers', app.objectSel.sampleAll, v => app.objectSel.sampleAll = v),
+        slider({ label: 'Edge', min: -10, max: 10, value: app.objectSel.edgeOffset, unit: 'px', width: 170, onInput: v => app.objectSel.edgeOffset = v }),
+        button('Select Subject', () => app.selectSubject()));
       if (t !== 'wand') hd.append(slider({ label: 'Feather', min: 0, max: 100, value: app.marqueeFeather, unit: 'px', width: 190, onInput: v => app.marqueeFeather = v }));
       hd.append(button('Select All', () => app.selectAll()), button('Deselect', () => app.deselect()), button('Inverse', () => app.inverseSelection()),
         button('Expand…', () => showSelectionAmount('expand')), button('Contract…', () => showSelectionAmount('contract')), button('Feather…', () => showSelectionAmount('feather')));
@@ -349,8 +355,8 @@ function renderStatus() {
   const hints: Record<string, string> = {
     marquee: 'Drag a shape · Shift add · Option subtract · Drag inside to move · Delete clears · ⌘D deselect',
     lasso: app.lassoKind === 'freehand' ? 'Drag to select · Drag inside to move · Shift add · Option subtract · ⌘D deselect' : 'Click corners · Click start, double-click or Enter to close · Escape cancel',
-    wand: 'Click to select similar colors · Shift add · Option subtract · ⌘D deselect',
     brush: (app.brush.mode === 'erase' ? 'Drag to erase' : 'Drag to paint') + ' · [ ] size · Shift-[ ] hardness · 1–0 opacity · Shift-click straight line · Space to pan',
+    wand: app.wandMode === 'object' ? 'Click an object to select it · Shift add · Option subtract' : 'Click to select similar colors · Shift add · Option subtract · ⌘D deselect',
     blur: (app.smearMode === 'blur' ? 'Drag to soften' : app.smearMode === 'liquify' ? 'Drag to push pixels' : 'Drag to smudge') + ' · [ ] size · Space to pan',
     cloneStamp: 'Option-click to set the source · Drag to clone · [ ] size · Space to pan',
     spotHealing: 'Drag over blemishes to heal · [ ] size · Space to pan',

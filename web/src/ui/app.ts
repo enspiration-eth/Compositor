@@ -10,6 +10,7 @@ import * as Sel from '../engine/selection';
 import { contentFill, alphaBounds } from '../engine/kernels';
 import { writeComp, readCompZip, readCompFolder, readPsdFile, fileToCanvas, isImageFile, isPsd, isCompZip, download, canvasToBlob } from '../engine/files';
 import { toast } from './dom';
+import { subjectMatte, modelLoaded } from '../engine/segment';
 
 export type Tool = 'move' | 'marquee' | 'lasso' | 'wand' | 'crop' | 'brush' | 'spotHealing' | 'cloneStamp' | 'blur' | 'gradient' | 'shape' | 'type' | 'eyedropper' | 'hand' | 'zoom' | 'idle';
 export const TOOLS: { id: Tool; label: string; key: string }[] = [
@@ -35,6 +36,9 @@ export class App {
   marqueeFeather = 0;
   lassoKind: 'freehand' | 'polygonal' = 'freehand';
   wand = { tolerance: 32, contiguous: true, sampleAll: true };
+  wandMode: 'wand' | 'object' = 'wand';
+  objectSel = { sampleAll: true, edgeOffset: 0 };
+  busy = false;
   smearMode: 'liquify' | 'blur' | 'smudge' = 'blur';
   smearStrength = 0.5;
   clone = { aligned: true, sampleAll: false };
@@ -338,6 +342,26 @@ export class App {
   }
 
   // ---------- selection ----------
+  /** Runs `work` with a busy cursor and status, one at a time (the Mac app's isProjectBusy). */
+  async busyWith<T>(label: string, work: () => Promise<T>): Promise<T | undefined> {
+    if (this.busy) return undefined;
+    this.busy = true; document.body.classList.add('busy');
+    const t = setTimeout(() => toast(`${label}${modelLoaded() ? '' : ' (loading the subject model the first time)'}…`), 150);
+    try { return await work(); }
+    catch (e) { console.warn(e); toast(`${label} failed: ${(e as Error).message}`, 'error'); return undefined; }
+    finally { clearTimeout(t); this.busy = false; document.body.classList.remove('busy'); }
+  }
+  /** Select → Subject (SubjectRemoval.swift selectSubject): the foreground of the canvas as shown, as a selection. */
+  async selectSubject(mode: Sel.SelMode = 'replace') {
+    const d = this.doc; if (!d) return;
+    const shown = canvasOf(d.width, d.height); ctx2d(shown).putImageData(this.renderer.readComposite(d), 0, 0);
+    const m = await this.busyWith('Finding the subject', () => subjectMatte(shown));
+    if (!m || this.doc !== d) return;
+    const bytes = new Uint8Array(m.length); let any = false;
+    for (let i = 0; i < m.length; i++) if (m[i] >= 0.5) { bytes[i] = 255; any = true; }
+    if (!any) { toast('No subject found.'); return; }
+    this.edit('Select Subject'); Sel.combine(d, Sel.maskBytesToCanvas(d, bytes), mode); this.emit('selection');
+  }
   selectAll() { const d = this.doc; if (!d) return; this.edit('Select All'); Sel.selectAll(d); this.emit('selection'); }
   deselect() { const d = this.doc; if (!d?.selection) return; this.edit('Deselect'); d.selection = null; d.selRev++; this.emit('selection'); }
   inverseSelection() { const d = this.doc; if (!d) return; this.edit('Inverse'); Sel.invertSelection(d); this.emit('selection'); }

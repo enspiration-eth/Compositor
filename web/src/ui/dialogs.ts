@@ -10,6 +10,7 @@ import { levelsHistogram } from '../engine/kernels';
 import { type Layer, type EffectKey, EFFECT_NAMES, cloneCanvas } from '../engine/document';
 import * as Sel from '../engine/selection';
 import { view, setView, addGuide } from './guides';
+import { subjectMatte, matteToMask, defaultMatte, type MatteSettings } from '../engine/segment';
 
 let openPanel: { panel: Panel; cancel: () => void } | null = null;
 export function closeOpenPanel() { if (openPanel) { openPanel.cancel(); openPanel.panel.close(); openPanel = null; } }
@@ -239,6 +240,7 @@ export function openFilter(kind: FilterKind) {
   const d = app.doc, a = app.active;
   if (!d || !a) { toast('Open an image first.'); return; }
   if (kind === 'Content-Aware Fill') { app.contentAwareFill(); return; }
+  if (kind === 'Remove Background') { openRemoveBackground(); return; }
   if (a.adjustment) {
     if (a.adjustment.kind === kind) return editAdjustment(a);
     toast('Select a pixel layer to filter, or add an adjustment layer.'); return;
@@ -258,7 +260,7 @@ export function openFilter(kind: FilterKind) {
   const setCanvas = (c: HTMLCanvasElement) => { if (onMask) a.mask = c; else a.canvas = c; a.rev++; app.needsRender = true; };
   const render = () => {
     pending = false;
-    if (!preview || kind === 'Remove Background') { setCanvas(original); return; }
+    if (!preview) { setCanvas(original); return; }
     try {
       const img = imageDataOf(original);
       const scale = original.width / a.transform.w;
@@ -277,7 +279,6 @@ export function openFilter(kind: FilterKind) {
   const ok = button('OK', () => {
     setCanvas(original);
     openPanel = null; panel.close();
-    if (kind === 'Remove Background') return;
     lastSettings = structuredClone(s);
     app.runFilter(kind, s, seed);
   }, { class: 'btn primary', id: 'filter-ok' });
@@ -464,4 +465,63 @@ export function showNewGuide() {
   modal('New Guide', h('div', {}, h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Orientation'), seg),
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Position'), pos, h('span', { class: 'unit' }, 'px'))),
     [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => { addGuide(axis, +pos.value || 0); } }]);
+}
+
+// Remove Background (SubjectRemoval.swift): a layer mask that hides everything but the subject. Basic is the model's
+// mask as it comes; Advanced refines it (Refine Edges = guided filter, Contrast, Shift Edge), all in wasm.
+let lastMatte: MatteSettings = defaultMatte();
+export function openRemoveBackground() {
+  const d = app.doc, a = app.active;
+  if (!d || !a?.canvas || a.adjustment || a.isGroup) { toast('Select a pixel layer first.'); return; }
+  const layer = a, original = a.canvas, s: MatteSettings = { ...lastMatte };
+  let preview = true, current: Float32Array | null = null, token = 0, closed = false;
+  const status = h('p', { class: 'hint', id: 'rb-status' }, 'Finding the subject…');
+  const setCanvas = (c: HTMLCanvasElement) => { layer.canvas = c; layer.rev++; app.needsRender = true; };
+  const render = async () => {
+    const my = ++token;
+    try {
+      // The preview refines on a copy at most 1400 px across, as the Mac app's does, so sliders stay responsive.
+      const m = await app.busyWith('Finding the subject', () => subjectMatte(original, s, 1400)) ?? null;
+      if (closed || my !== token || !m) return;
+      current = m; status.textContent = '';
+      if (!preview) { setCanvas(original); return; }
+      const c = cloneCanvas(original), x = ctx2d(c), alpha = canvasOf(c.width, c.height), ax = ctx2d(alpha), img = ax.createImageData(c.width, c.height);
+      for (let i = 0; i < m.length; i++) { img.data[i * 4 + 3] = Math.round(m[i] * 255); }
+      ax.putImageData(img, 0, 0); x.globalCompositeOperation = 'destination-in'; x.drawImage(alpha, 0, 0);
+      setCanvas(c);
+    } catch (e) { status.textContent = (e as Error).message; }
+  };
+  const panel = floatingPanel('Remove Background', () => { closed = true; setCanvas(original); openPanel = null; }, { width: 340, id: 'filter-panel' });
+  const body = h('div');
+  const rebuild = () => {
+    const advanced = s.quality === 'Advanced';
+    const segc = h('div', { class: 'segmented' }, ...(['Basic', 'Advanced'] as const).map(q => h('button', { class: q === s.quality ? 'on' : '', onclick: () => { s.quality = q; rebuild(); void render(); } }, q)));
+    body.replaceChildren(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Quality'), segc));
+    if (advanced) body.append(h('div', { class: 'controls' },
+      slider({ label: 'Refine Edges', min: 0, max: 40, value: s.refineEdges, onInput: v => { s.refineEdges = v; }, onCommit: () => void render() }),
+      slider({ label: 'Contrast', min: 0, max: 100, value: s.matteContrast, onInput: v => { s.matteContrast = v; }, onCommit: () => void render() }),
+      slider({ label: 'Shift Edge', min: -10, max: 10, value: s.shiftEdge, unit: 'px', onInput: v => { s.shiftEdge = v; }, onCommit: () => void render() })));
+    body.append(status, h('p', { class: 'hint' }, 'Hides the background with a layer mask. Subject detection runs on your device (U²-Net in WebAssembly).'));
+  };
+  rebuild();
+  const ok = button('OK', async () => {
+    const opts = { ...s };
+    closed = true; setCanvas(original); openPanel = null; panel.close();
+    lastMatte = opts;
+    const m = await app.busyWith('Removing the background', () => subjectMatte(original, opts));
+    if (!m || layer.canvas !== original) return;
+    app.edit('Remove Background');
+    let mask = matteToMask(m, original.width, original.height);
+    if (layer.mask) {
+      // Both masks hide: what either one hides stays hidden.
+      const c = cloneCanvas(layer.mask), x = ctx2d(c); x.globalCompositeOperation = 'multiply'; x.drawImage(mask, 0, 0, c.width, c.height); mask = c;
+    }
+    layer.mask = mask; layer.maskEnabled = true; layer.rev++;
+    app.changed('layers');
+  }, { class: 'btn primary', id: 'filter-ok' });
+  const cancel = button('Cancel', () => { closed = true; setCanvas(original); openPanel = null; panel.close(); });
+  panel.body.append(body, h('div', { class: 'panel-footer' }, checkbox('Preview', true, v => { preview = v; if (!v) setCanvas(original); else void render(); }), h('span', { class: 'spacer' }), cancel, ok));
+  openPanel = { panel, cancel: () => { closed = true; setCanvas(original); } };
+  void current;
+  void render();
 }
