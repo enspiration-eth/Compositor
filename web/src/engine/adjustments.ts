@@ -292,7 +292,7 @@ export interface CRDetail { sharpenAmount: number; sharpenRadius: number; sharpe
 export interface CROptics { removeChromaticAberration: boolean; enableLensProfile: boolean; profileDistortion: number; profileVignetting: number; distortion: number;
   purpleAmount: number; purpleHueLow: number; purpleHueHigh: number; greenAmount: number; greenHueLow: number; greenHueHigh: number; vignetteAmount: number; vignetteMidpoint: number }
 export interface CRCalibration { process: number; shadowTint: number; redHue: number; redSaturation: number; greenHue: number; greenSaturation: number; blueHue: number; blueSaturation: number }
-export interface CameraRawSettings { temperature: number; tint: number; exposure: number; contrast: number; highlights: number; shadows: number; whites: number;
+export interface CameraRawSettings { whiteBalance?: 'Custom' | 'Auto'; temperature: number; tint: number; exposure: number; contrast: number; highlights: number; shadows: number; whites: number;
   blacks: number; vibrance: number; saturation: number; texture: number; clarity: number; dehaze: number; vignetteAmount: number; vignetteMidpoint: number;
   vignetteRoundness: number; vignetteFeather: number; vignetteHighlights: number; vignetteStyle: number; grainAmount: number; grainSize: number; grainRoughness: number;
   glow: number; glowStyle: number; glowRange: number; glowSpread: number; glowWarmth: number;
@@ -399,6 +399,29 @@ function crParametric(c: CRCurve, tone: number) {
   }
   return crPoint(tone, anchors);
 }
+/** CameraRawSettings.neutralize: the Temperature and Tint that make a linear-light color neutral, or null. */
+export function crNeutralize(r: number, g: number, b: number): { temperature: number; tint: number } | null {
+  if (r <= 1e-4 || g <= 1e-4 || b <= 1e-4) return null;
+  const a1 = 0.35 * r, b1 = 0.15 * r + 0.30 * g, c1 = g - r, a2 = -0.35 * b, b2 = 0.15 * b + 0.30 * g, c2 = g - b;
+  const det = a1 * b2 - a2 * b1;
+  if (Math.abs(det) <= 1e-8) return null;
+  const warm = (c1 * b2 - c2 * b1) / det, magenta = (a1 * c2 - a2 * c1) / det;
+  if (!isFinite(warm) || !isFinite(magenta)) return null;
+  return { temperature: warm * 100, tint: magenta * 100 };
+}
+export const srgbDecode = (e: number) => e <= 0.04045 ? e / 12.92 : Math.pow((e + 0.055) / 1.055, 2.4);
+/** CameraRawSettings.autoBalance: gray-world average of the opaque pixels in linear light, then neutralize. */
+export function crAutoBalance(img: ImageData) {
+  const d = img.data, lut = new Float64Array(256).map((_, i) => srgbDecode(i / 255));
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) { if (!d[i + 3]) continue; r += lut[d[i]]; g += lut[d[i + 1]]; b += lut[d[i + 2]]; n++; }
+  return n ? crNeutralize(r / n, g / n, b / n) : null;
+}
+/** CameraRawMixerSettings.weights(forHue:): how much each of the eight families owns a hue. */
+export const crMixerWeights = (deg: number) => [0, 30, 60, 120, 180, 240, 270, 300].map(c => { let d = Math.abs(deg - c); if (d > 180) d = 360 - d; return Math.max(0, 1 - d / 40); });
+/** CameraRawCurveSettings.region(for:): the parametric slider owning a tone. */
+export const crCurveRegion = (c: CRCurve, tone: number): 'shadows' | 'darks' | 'lights' | 'highlights' =>
+  tone < c.shadowSplit / 100 ? 'shadows' : tone < c.darkSplit / 100 ? 'darks' : tone < c.lightSplit / 100 ? 'lights' : 'highlights';
 const crAdjustsCurve = (c: CRCurve) => !!(c.shadows || c.darks || c.lights || c.highlights || c.refineSaturation) || !isLinearCR(c.rgb) || !isLinearCR(c.red) || !isLinearCR(c.green) || !isLinearCR(c.blue);
 
 export interface FilterSettings {
@@ -410,6 +433,8 @@ export interface FilterSettings {
   levels: LevelsSettings; hueSat: HueSaturationSettings;
   /** Panel-only previews, never saved: Camera Raw's Option-drag clipping view (1 highlights, 2 shadows) and Point Color's Visualize. */
   crClipping?: number; crVisualize?: number;
+  /** Camera Raw's Option-drag on Masking: the sharpening edge mask instead of the grade. */
+  crSharpenMask?: boolean;
 }
 export const defaultFilterSettings = (): FilterSettings => ({
   radius: 1, angle: 0, distance: 10, amount: 10, gaussian: false, monochromatic: false,
@@ -564,6 +589,11 @@ export function applyFilter(kind: FilterKind, s: FilterSettings, img: ImageData,
       // then optics and detail, each the Mac app's own C kernel.
       const cr = { ...defaultCameraRaw(), ...s.cameraRaw }, warm = cr.temperature / 100, mag = cr.tint / 100;
       const cal = cr.calibration, clip = s.crClipping ?? 0, vis = s.crVisualize ?? -1;
+      if (s.crSharpenMask) {
+        // CameraRawSettings.apply with `sharpenMask`: only the mask overlay, painted from the original.
+        K.cameraRawSharpenMask(img, cr.detail, ctx.scale);
+        return img;
+      }
       if (clip) {
         // The clipping view replaces the grade (CameraRawSettings.apply with `clipping`).
         K.cameraRaw(img, { gains: [1 + 0.35 * warm + 0.15 * mag, 1 - 0.30 * mag, 1 - 0.35 * warm + 0.15 * mag], exposure: cr.exposure, contrast: cr.contrast,

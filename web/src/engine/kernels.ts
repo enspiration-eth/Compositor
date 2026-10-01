@@ -285,6 +285,9 @@ export function cameraRawDetail(img: ImageData, d: { sharpenAmount: number; shar
   onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_detail(p, w, h, s, d.sharpenAmount, d.sharpenRadius, d.sharpenDetail, d.sharpenMasking,
     d.noiseLuminance, d.noiseLuminanceDetail, d.noiseLuminanceContrast, d.noiseColor, d.noiseColorDetail, d.noiseColorSmoothness, scale));
 }
+export function cameraRawSharpenMask(img: ImageData, d: { sharpenRadius: number; sharpenDetail: number; sharpenMasking: number }, scale = 1) {
+  onPremultiplied(img, (p, w, h, s, _heap, m) => m._adjust_camera_raw_sharpen_mask_overlay(p, w, h, s, d.sharpenRadius, d.sharpenDetail, d.sharpenMasking, scale));
+}
 export function cameraRawOptics(img: ImageData, o: { removeChromaticAberration: boolean; enableLensProfile: boolean; profileDistortion: number;
   profileVignetting: number; distortionK: number; purpleAmount: number; purpleHueLow: number; purpleHueHigh: number; greenAmount: number;
   greenHueLow: number; greenHueHigh: number; vignetteAmount: number; vignetteMidpoint: number }, scale = 1) {

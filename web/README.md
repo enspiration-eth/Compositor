@@ -115,8 +115,10 @@ source, builds, runs the smoke test and deploys on every push to `web`.
   (sample up to eight colors from the image, shift and range sliders, Visualize), Geometry (Upright Off/Guided with
   guide lines drawn on the canvas, Vertical/Horizontal/Rotate/Aspect/Scale/Offset, Constrain Crop; the perspective
   warp runs in the wasm distort kernel) and the clipping view (Option/Alt-drag a Light slider, or the Clipping menu;
-  it's the original kernel's `clipping` mode). Not ported: the targeted-adjustment drag on the image, the white
-  balance eyedropper and the sharpening-mask (Option on Masking) view.
+  it's the original kernel's `clipping` mode). White Balance Auto (gray-world) and the eyedropper (`neutralize`), the
+  Defringe eyedropper, the targeted-adjustment drags for the Curve (parametric region or nearest point) and the Color
+  Mixer (Hue/Saturation/Luminance families weighted by hue), and the sharpening mask (Option/Alt-drag Masking, the
+  original `adjust_camera_raw_sharpen_mask_overlay` kernel) are ported too.
 - **TIFF / RAW / HEIC import:** the Mac app uses ImageIO. The web build decodes TIFF (uncompressed, LZW, Deflate, PackBits, JPEG; 8/16-bit; alpha) and TIFF-based camera RAW (DNG, NEF, CR2, ARW, …) with [UTIF](https://github.com/photopea/UTIF.js) (MIT); RAW files without a decodable RGB image fall back to their largest embedded JPEG preview, and there is no RAW develop step. HEIC opens only in browsers that decode it natively (Safari). File › Export TIFF… writes an 8-bit RGBA TIFF.
 - **PSD import** uses `ag-psd` instead of the app's Swift reader, so some adjustment/effect records may differ.
 - **Unlinked / placed masks:** ported (link button between the thumbnails, Layer › Mask › Unlink Mask; with the mask selected the Move tool and arrow keys move it alone; `maskPlacement`/`maskLinked` are read and written in `.comp`). Simplification: painting or filtering a mask that sits apart from its layer first resamples it into the layer’s pixel grid (the Mac app paints in the mask’s own grid), and an unlinked mask can be moved but not scaled/rotated on its own.

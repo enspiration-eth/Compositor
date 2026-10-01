@@ -153,6 +153,52 @@ try {
     assert(diff > 1000, 'camera raw geometry/curve/point color changed the layer ' + diff);
   });
 
+  await step('Camera Raw: Auto/eyedropper white balance, defringe picker, targeted mixer, sharpen-mask view', async () => {
+    await menu('Filter', 'Camera Raw Filter');
+    await page.waitForSelector('#filter-panel');
+    const sec = name => page.locator(`#filter-panel .cr-section:has(summary:text-is("${name}"))`);
+    const open = async (name, on = true) => { const d = sec(name); if ((await d.evaluate(e => e.open)) !== on) await d.locator('summary').click(); };
+    const val = async (name, i) => +(await sec(name).locator('.slider-row').nth(i).locator('input[type=number]').inputValue());
+    await open('Basic');
+    await page.selectOption('#cr-wb', 'Auto');
+    await page.waitForTimeout(200);
+    const autoT = await val('Basic', 0), autoTint = await val('Basic', 1);
+    assert(autoT !== 0 || autoTint !== 0, `auto white balance moved temperature/tint ${autoT}/${autoTint}`);
+    await page.click('#cr-wb-picker');
+    const [sx, sy] = await toScreen(500, 420); await page.mouse.click(sx, sy);
+    await page.waitForTimeout(200);
+    const pickT = await val('Basic', 0);
+    assert(Math.abs(pickT) <= 100 && Math.abs(autoT) <= 100 && (await page.inputValue('#cr-wb')) === 'Custom', `eyedropper set temperature ${pickT} (auto ${autoT})`);
+    await page.click('#cr-wb-picker'); await open('Basic', false);
+    // Targeted Color Mixer (saturation): drag upward on the sky.
+    await open('Color Mixer');
+    await page.click('#cr-mixer-target');
+    await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move(sx, sy - 120, { steps: 5 }); await page.mouse.up();
+    await page.waitForTimeout(200);
+    const sats = []; for (let i = 8; i < 16; i++) sats.push(await val('Color Mixer', i));
+    assert(sats.some(v => v > 0), 'targeted mixer raised a family saturation ' + sats);
+    await page.click('#cr-mixer-target'); await open('Color Mixer', false);
+    // Defringe eyedropper on the sky (blue → nearer the purple center).
+    await open('Optics');
+    await page.click('#cr-defringe-picker'); await page.mouse.click(sx, sy);
+    await page.waitForTimeout(200);
+    const purple = await page.evaluate(() => [...document.querySelectorAll('#filter-panel .slider-row')].filter(r => /Purple amount|Green amount/.test(r.textContent)).map(r => +r.querySelector('input[type=number]').value));
+    assert(purple.includes(50), 'defringe picker set an amount ' + purple);
+    await page.click('#cr-defringe-picker'); await open('Optics', false);
+    // Option-drag Masking: the sharpen mask replaces the preview while held.
+    await open('Detail');
+    const row = sec('Detail').locator('.slider-row').nth(3).locator('input[type=range]');
+    await row.dispatchEvent('pointerdown', { altKey: true, bubbles: true });
+    await page.waitForFunction(() => { const c = window.compositor.app.active.canvas, d = c.getContext('2d').getImageData(c.width >> 1, 40, 1, 1).data; return d[0] === d[1] && d[1] === d[2]; }, null, { timeout: 20000 });
+    await page.screenshot({ path: `${SHOTS}/14-camera-raw-sharpen-mask.png` });
+    await row.dispatchEvent('pointerup', { bubbles: true });
+    await page.waitForFunction(() => { const c = window.compositor.app.active.canvas, d = c.getContext('2d').getImageData(c.width >> 1, 40, 1, 1).data; return !(d[0] === d[1] && d[1] === d[2]); }, null, { timeout: 20000 });
+    await open('Detail', false); await open('Color Mixer');
+    await page.screenshot({ path: `${SHOTS}/14b-camera-raw-targeted.png` });
+    await page.locator('#filter-panel button:text-is("Cancel")').click();
+    assert(!(await page.evaluate(() => !!window.compositor.app.canvasHook)), 'canvas hook released');
+  });
+
   await step('filters in Web Workers: strips match the whole-image result', async () => {
     const r = await page.evaluate(async () => {
       const { applyFilter, applyFilterAsync, poolSize, defaultFilterSettings } = window.compositor.filters;

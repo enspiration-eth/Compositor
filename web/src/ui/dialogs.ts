@@ -6,6 +6,7 @@ import {
   type FilterKind, type FilterSettings, defaultFilterSettings, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
   curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, CR_MIXER_NAMES, type CRPoint,
   rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry, bandCentered, bandInclude, bandExclude, sampledHue,
+  crNeutralize, srgbDecode, crAutoBalance, crMixerWeights, crCurveRegion,
 } from '../engine/adjustments';
 import { levelsHistogram } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
@@ -74,7 +75,8 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
     case 'Camera Raw Filter': {
       // Camera Raw's panel sections (CameraRawPanel.swift): Basic, Curve, Color Mixer, Color Grading, Detail, Optics,
       // Effects and Calibration, each driving the Mac app's C kernels.
-      const cr = s.cameraRaw = { ...defaultCameraRaw(), ...s.cameraRaw };
+      // Filled in place, so canvas tools armed before a rebuild keep editing the live settings.
+      const cr = s.cameraRaw = Object.assign(s.cameraRaw ?? {}, { ...defaultCameraRaw(), ...s.cameraRaw });
       const section = (title: string, build: (add: (el: HTMLElement) => void) => void) => {
         const d = h('details', { class: 'cr-section' }) as HTMLDetailsElement;
         d.open = crOpen.has(title);
@@ -97,7 +99,17 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
       const k = <T extends object>(o: T, key: keyof T, label: string, min: number, max: number, step = 1, unit = '') =>
         S(label, () => o[key] as unknown as number, v => { (o[key] as unknown as number) = v; }, min, max, step, unit);
       section('Basic', add => {
-        add(sub('White Balance')); add(k(cr, 'temperature', 'Temperature', -100, 100)); add(k(cr, 'tint', 'Tint', -100, 100));
+        add(sub('White Balance'));
+        add(h('div', { class: 'row', title: 'Auto balances the average color. Custom follows Temperature and Tint.' }, h('span', { class: 'lbl' }, 'White Balance'),
+          select(['Custom', 'Auto'], cr.whiteBalance ?? 'Custom', v => { cr.whiteBalance = v; if (v === 'Auto') crAutoWB(cr); changed(); rebuild(); }, { id: 'cr-wb' }),
+          crArmButton('wb', '⊙', 'White Balance tool: click something neutral on the original layer', 'cr-wb-picker', rebuild, dpt => {
+            const p = crSample(dpt); if (!p) return;
+            const solved = crNeutralize(srgbDecode(p[0]), srgbDecode(p[1]), srgbDecode(p[2]));
+            if (!solved) { toast('That color can’t be neutralized.'); return; }
+            cr.temperature = crClamp(solved.temperature); cr.tint = crClamp(solved.tint); cr.whiteBalance = 'Custom'; changed(); rebuild();
+          })));
+        const wb = (key: 'temperature' | 'tint', label: string) => S(label, () => cr[key], v => { cr[key] = v; cr.whiteBalance = 'Custom'; }, -100, 100);
+        add(wb('temperature', 'Temperature')); add(wb('tint', 'Tint'));
         add(sub('Light'));
         add(h('div', { class: 'row', title: 'Or hold Option (Alt) while dragging Exposure, Highlights, Whites, Shadows or Blacks' }, h('span', { class: 'lbl' }, 'Clipping'), clipSel));
         const kc = (key: 'exposure' | 'highlights' | 'shadows' | 'whites' | 'blacks', label: string, min: number, max: number, step: number, clip: number) =>
@@ -111,12 +123,26 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         const c = cr.curve;
         add(sub('Parametric')); add(k(c, 'highlights', 'Highlights', -100, 100)); add(k(c, 'lights', 'Lights', -100, 100)); add(k(c, 'darks', 'Darks', -100, 100)); add(k(c, 'shadows', 'Shadows', -100, 100));
         add(k(c, 'shadowSplit', 'Shadow split', 5, 90)); add(k(c, 'darkSplit', 'Midtone split', 7, 95)); add(k(c, 'lightSplit', 'Light split', 9, 98));
+        add(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Targeted'), select(['Parametric', 'Point'], crCurveTarget, v => { crCurveTarget = v; }, { id: 'cr-curve-target-page' }),
+          crTargetButton('curve', 'Drag up or down on the picture to move the curve for the tone under the pointer', 'cr-curve-target', rebuild, () => {
+            const start = structuredClone(cr.curve);
+            return (sample, delta) => {
+              if (crCurveTarget === 'Parametric') { const key = crCurveRegion(start, sample.tone); cr.curve[key] = Math.min(100, Math.max(-100, start[key] + delta)); }
+              else cr.curve.rgb = crNudged(start.rgb, sample.tone, delta / 100);
+              changed();
+            };
+          })));
         add(sub('Point curve'));
         add(crCurveEditor(c, changed));
         add(k(c, 'refineSaturation', 'Refine saturation', -100, 100));
       });
       section('Color Mixer', add => {
         const m = cr.mixer;
+        add(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Targeted'), select(['Hue', 'Saturation', 'Luminance'], crMixerTarget, v => { crMixerTarget = v; }, { id: 'cr-mixer-target-tab' }),
+          crTargetButton('mixer', 'Drag up or down on the picture to adjust the color families under the pointer', 'cr-mixer-target', rebuild, sample => {
+            const arr = crMixerTarget === 'Hue' ? m.hue : crMixerTarget === 'Saturation' ? m.saturation : m.luminance, start = [...arr], w = crMixerWeights(sample.hue);
+            return (_s, delta) => { w.forEach((wt, i) => { if (wt > 0) arr[i] = Math.min(100, Math.max(-100, start[i] + delta * wt)); }); changed(); };
+          })));
         for (const [tab, arr] of [['Hue', m.hue], ['Saturation', m.saturation], ['Luminance', m.luminance]] as const) {
           add(sub(tab)); CR_MIXER_NAMES.forEach((n, i) => add(S(n, () => arr[i], v => { arr[i] = v; }, -100, 100)));
         }
@@ -131,7 +157,12 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
       });
       section('Detail', add => {
         const d = cr.detail;
-        add(sub('Sharpening')); add(k(d, 'sharpenAmount', 'Amount', 0, 150)); add(k(d, 'sharpenRadius', 'Radius', 0, 100)); add(k(d, 'sharpenDetail', 'Detail', 0, 100)); add(k(d, 'sharpenMasking', 'Masking', 0, 100));
+        add(sub('Sharpening')); add(k(d, 'sharpenAmount', 'Amount', 0, 150)); add(k(d, 'sharpenRadius', 'Radius', 0, 100)); add(k(d, 'sharpenDetail', 'Detail', 0, 100)); 
+        // Option-drag Masking: the edge mask (adjust_camera_raw_sharpen_mask_overlay) while the pointer is down.
+        const masking = k(d, 'sharpenMasking', 'Masking', 0, 100); masking.title = 'Limits sharpening to stronger edges. Hold Option (Alt) while dragging to see the mask.';
+        masking.addEventListener('pointerdown', e => { if (e.altKey) { s.crSharpenMask = true; changed(); } });
+        const maskOff = () => { if (s.crSharpenMask) { s.crSharpenMask = undefined; changed(); } };
+        masking.addEventListener('pointerup', maskOff); masking.addEventListener('pointercancel', maskOff); add(masking);
         add(sub('Noise Reduction')); add(k(d, 'noiseLuminance', 'Luminance', 0, 100)); add(k(d, 'noiseLuminanceDetail', 'Detail', 0, 100)); add(k(d, 'noiseLuminanceContrast', 'Contrast', 0, 100));
         add(k(d, 'noiseColor', 'Color', 0, 100)); add(k(d, 'noiseColorDetail', 'Color detail', 0, 100)); add(k(d, 'noiseColorSmoothness', 'Smoothness', 0, 100));
       });
@@ -141,7 +172,15 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         add(h('div', { class: 'row' }, checkbox('Use Profile Corrections', o.enableLensProfile, v => { o.enableLensProfile = v; changed(); })));
         add(k(o, 'profileDistortion', 'Profile distortion', 0, 100)); add(k(o, 'profileVignetting', 'Profile vignetting', 0, 100));
         add(k(o, 'distortion', 'Distortion', -100, 100));
-        add(sub('Defringe')); add(k(o, 'purpleAmount', 'Purple amount', 0, 100)); add(k(o, 'purpleHueLow', 'Purple hue from', 0, 360, 1, '°')); add(k(o, 'purpleHueHigh', 'Purple hue to', 0, 360, 1, '°'));
+        add(sub('Defringe'));
+        add(h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Fringe Selector'), crArmButton('defringe', '⊙', 'Click a purple or green fringe on the layer', 'cr-defringe-picker', rebuild, dpt => {
+          const p = crSample(dpt); if (!p) return;
+          const hue = crHue(p[0], p[1], p[2]), span = 25;
+          if (Math.abs(hue - 290) < Math.abs(hue - 90)) { o.purpleHueLow = Math.max(0, hue - span); o.purpleHueHigh = Math.min(360, hue + span); if (!o.purpleAmount) o.purpleAmount = 50; }
+          else { o.greenHueLow = Math.max(0, hue - span); o.greenHueHigh = Math.min(360, hue + span); if (!o.greenAmount) o.greenAmount = 50; }
+          changed(); rebuild();
+        })));
+        add(k(o, 'purpleAmount', 'Purple amount', 0, 100)); add(k(o, 'purpleHueLow', 'Purple hue from', 0, 360, 1, '°')); add(k(o, 'purpleHueHigh', 'Purple hue to', 0, 360, 1, '°'));
         add(k(o, 'greenAmount', 'Green amount', 0, 100)); add(k(o, 'greenHueLow', 'Green hue from', 0, 360, 1, '°')); add(k(o, 'greenHueHigh', 'Green hue to', 0, 360, 1, '°'));
         add(sub('Vignette')); add(k(o, 'vignetteAmount', 'Amount', -100, 100)); add(k(o, 'vignetteMidpoint', 'Midpoint', 0, 100));
       });
@@ -162,7 +201,7 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
         add(sub('Green Primary')); add(k(c, 'greenHue', 'Hue', -100, 100)); add(k(c, 'greenSaturation', 'Saturation', -100, 100));
         add(sub('Blue Primary')); add(k(c, 'blueHue', 'Hue', -100, 100)); add(k(c, 'blueSaturation', 'Saturation', -100, 100));
       });
-      box.append(h('div', { class: 'row' }, button('Reset All', () => { s.cameraRaw = defaultCameraRaw(); changed(); rebuild(); })));
+      box.append(h('div', { class: 'row' }, button('Reset All', () => { crDisarm(); s.cameraRaw = defaultCameraRaw(); changed(); rebuild(); })));
       break;
     }
     case 'Remove Background':
@@ -244,6 +283,65 @@ function layerUV(dpt: [number, number]): [number, number] | null {
 }
 function uvToDoc(u: number, v: number): [number, number] { return apply(pixelToDoc(crCtx!.layer.transform, 1, 1), u, v); }
 
+/** Straight RGB (0…1) of the original layer under a document point, or null off the layer or on a transparent pixel. */
+function crSample(dpt: [number, number]): [number, number, number] | null {
+  const uv = layerUV(dpt); if (!uv || !crCtx) return null;
+  const o = crCtx.original, px = Math.min(o.width - 1, Math.floor(uv[0] * o.width)), py = Math.min(o.height - 1, Math.floor(uv[1] * o.height));
+  const d = ctx2d(o).getImageData(px, py, 1, 1).data;
+  return d[3] ? [d[0] / 255, d[1] / 255, d[2] / 255] : null;
+}
+const crClamp = (v: number) => Math.round(Math.min(100, Math.max(-100, v)) * 10) / 10;
+/** White Balance › Auto (applyCameraRawAutoWhiteBalance): gray-world balance of the original layer. */
+function crAutoWB(cr: NonNullable<FilterSettings['cameraRaw']>) {
+  if (!crCtx) return;
+  const o = crCtx.original, solved = crAutoBalance(ctx2d(o).getImageData(0, 0, o.width, o.height));
+  if (solved) { cr.temperature = crClamp(solved.temperature); cr.tint = crClamp(solved.tint); } else toast('Auto white balance found nothing to balance.');
+}
+/** Camera Raw's canvas tools (White Balance and Defringe eyedroppers, the targeted Curve and Color Mixer drags). One is armed at a time. */
+let crArmed: 'wb' | 'defringe' | 'curve' | 'mixer' | null = null;
+let crCurveTarget: 'Parametric' | 'Point' = 'Parametric', crMixerTarget: 'Hue' | 'Saturation' | 'Luminance' = 'Saturation';
+function crDisarm() { crArmed = null; app.canvasHook = null; app.needsRender = true; }
+function crArmButton(mode: NonNullable<typeof crArmed>, label: string, tip: string, id: string, rebuild: () => void, click: (dpt: [number, number]) => void) {
+  return button(label, () => {
+    if (crArmed === mode) { crDisarm(); rebuild(); return; }
+    crArmed = mode; app.canvasHook = { cursor: 'crosshair', down: dpt => click(dpt) }; rebuild();
+  }, { class: `btn small${crArmed === mode ? ' on' : ''}`, title: `${tip}. Click again to stop.`, id });
+}
+/** hueDegrees: 0 for grays. */
+function crHue(r: number, g: number, b: number) {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn;
+  if (c <= 1e-6) return 0;
+  const hh = (mx === r ? (g - b) / c : mx === g ? 2 + (b - r) / c : 4 + (r - g) / c) * 60;
+  return hh < 0 ? hh + 360 : hh;
+}
+/** CameraRawSampling (cameraRawSample): tone as Rec. 709 luma, hue in degrees. */
+type CRSample = { tone: number; hue: number };
+function crTargetButton(mode: 'curve' | 'mixer', tip: string, id: string, rebuild: () => void, begin: (s: CRSample) => (s: CRSample, delta: number) => void) {
+  return button('↕', () => {
+    if (crArmed === mode) { crDisarm(); rebuild(); return; }
+    crArmed = mode;
+    let drag: { y: number; sample: CRSample; apply: (s: CRSample, delta: number) => void } | null = null;
+    app.canvasHook = { cursor: 'ns-resize',
+      down: dpt => {
+        const p = crSample(dpt); if (!p) return;
+        const sample = { tone: 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2], hue: crHue(p[0], p[1], p[2]) };
+        drag = { y: dpt[1], sample, apply: begin(sample) };
+      },
+      // dragCameraRaw: 0.35 per document point, upward positive.
+      move: dpt => { if (drag) drag.apply(drag.sample, (drag.y - dpt[1]) * 0.35); },
+      up: () => { if (drag) { drag = null; rebuild(); } } };
+    rebuild();
+  }, { class: `btn small${crArmed === mode ? ' on' : ''}`, title: `${tip}. Click again to stop.`, id });
+}
+/** CameraRawCurveSettings.nudged: move the point nearest the tone by `delta`. */
+function crNudged(pts: CRPoint[], tone: number, delta: number): CRPoint[] {
+  const p = pts.map(q => ({ ...q }));
+  if (!p.length) return p;
+  let best = 0; p.forEach((q, i) => { if (Math.abs(q.x - tone) < Math.abs(p[best].x - tone)) best = i; });
+  p[best].y = Math.min(1, Math.max(0, p[best].y + delta));
+  return p;
+}
+
 /** Camera Raw's point curve (CameraRawCurveSettings rgb/red/green/blue, 0…1): click to add, drag, drag off to remove. */
 function crCurveEditor(c: CRCurve, changed: () => void): HTMLElement {
   const size = 240, chans = ['RGB', 'Red', 'Green', 'Blue'] as const, keys = ['rgb', 'red', 'green', 'blue'] as const;
@@ -314,7 +412,7 @@ function crPointColor(cr: NonNullable<FilterSettings['cameraRaw']>, s: FilterSet
   };
   const arm = (replace: boolean) => {
     if (!replace) sel = -1;
-    sampling = true;
+    sampling = true; crArmed = null;
     app.canvasHook = { cursor: 'crosshair', down: sampleAt };
     draw();
   };
@@ -378,7 +476,8 @@ function crGeometry(cr: NonNullable<FilterSettings['cameraRaw']>, changed: () =>
   };
   const draw = () => {
     box.replaceChildren();
-    if (g.upright === 'Guided') hookOn(); else if (app.canvasHook?.draw) { app.canvasHook = null; app.needsRender = true; }
+    // A Camera Raw eyedropper or targeted tool keeps the canvas until it's switched off.
+    if (g.upright === 'Guided' && !crArmed) hookOn(); else if (!crArmed && app.canvasHook?.draw) { app.canvasHook = null; app.needsRender = true; }
     const sl = (label: string, key: 'vertical' | 'horizontal' | 'rotate' | 'aspect' | 'scale' | 'offsetX' | 'offsetY', min: number, max: number, step = 1) =>
       slider({ label, min, max, step, value: g[key], onInput: v => { g[key] = v; changed(); } });
     box.append(
@@ -658,7 +757,7 @@ export function openFilter(kind: FilterKind) {
   const changed = () => { if (!pending) { pending = true; requestAnimationFrame(() => void render()); } };
   const title = kind === 'Camera Raw Filter' ? 'Camera Raw Filter' : kind;
   crCtx = { layer: a, original };
-  const endHooks = () => { closed = true; generation++; hsArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; crCtx = null; app.needsRender = true; };
+  const endHooks = () => { closed = true; generation++; hsArmed = null; crArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; s.crSharpenMask = undefined; crCtx = null; app.needsRender = true; };
   const panel = floatingPanel(title, () => { endHooks(); setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
   const body = h('div');
   const rebuild = () => body.replaceChildren(controls(kind, s, changed, rebuild));
