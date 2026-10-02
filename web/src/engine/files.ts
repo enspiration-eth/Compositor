@@ -1,4 +1,5 @@
 import { isTiffName, tiffToCanvas } from './tiff';
+import { limitCanvas } from './limits';
 import { parseRaw, rawDevelopHook, DevelopCancelled } from './raw';
 // File formats. A Photoshop.eth project (.comp) is a folder: manifest.json + images/<UUID>.png (+ <UUID>.mask.png),
 // exactly as IO/ProjectStore.swift writes it. Browsers can't save a package folder, so the web app saves the same
@@ -6,7 +7,7 @@ import { parseRaw, rawDevelopHook, DevelopCancelled } from './raw';
 // .comp folder. Images open through the browser's own decoders; PSDs through ag-psd (the Mac app has its own
 // Swift PSD reader, IO/PSD, which depends on Core Graphics).
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
-import { readPsd, type Layer as PsdLayer } from 'ag-psd';
+import type { Layer as PsdLayer } from 'ag-psd'; // ag-psd itself loads with the first PSD (readPsdFile).
 import { type Doc, type Guide, type Layer, type BlendMode, type TextStyle, type Effects, type ShapeStyle, BLEND_MODES, newDoc, newPixelLayer, uuid, fullTransform, maskPlacementOf, renderText, renderShape, cssFont, cssFamilyGuess, TEXT_PADDING } from './document';
 import { canvasOf, ctx2d, type AdjustmentRecord, type HueSaturationSettings, type ColorRangeName, hueSatToMac, hueSatFromMac, newAdjustment, normalizeRange, identityRange } from './adjustments';
 
@@ -376,6 +377,7 @@ function psdEffects(fx: NonNullable<PsdLayer['effects']>, notes: string[]): Effe
   return Object.keys(e).length ? e : undefined;
 }
 export async function readPsdFile(bytes: ArrayBuffer, name: string): Promise<{ doc: Doc; conversions: PsdConversion[] }> {
+  const { readPsd } = await import('ag-psd');
   const psd = readPsd(bytes, { skipThumbnail: true });
   const doc = newDoc(psd.width, psd.height, name.replace(/\.ps[db]$/i, ''));
   const conversions: PsdConversion[] = [];
@@ -449,6 +451,9 @@ export async function readPsdFile(bytes: ArrayBuffer, name: string): Promise<{ d
 }
 
 export async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
+  return limitCanvas(await decodeFileToCanvas(file), file.name);
+}
+async function decodeFileToCanvas(file: File): Promise<HTMLCanvasElement> {
   if (/\.svg$/i.test(file.name) || file.type === 'image/svg+xml') return svgToCanvas(file);
   if (isTiffName(file.name, file.type)) {
     // A RAW with a Bayer mosaic is developed in the Develop sheet (RawDevelopSheet); anything else uses its RGB image or preview.

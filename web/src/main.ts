@@ -30,3 +30,12 @@ async function boot() {
   window.addEventListener('beforeunload', e => { if (app.projects.some(p => p.doc.dirty)) { e.preventDefault(); e.returnValue = ''; } });
 }
 boot().finally(() => splashShown.then(hideSplash));
+
+// Installable app (manifest.webmanifest) that starts offline: the service worker caches the shell and the wasm.
+if ('serviceWorker' in navigator && import.meta.env.PROD && /^https?:$/.test(location.protocol)) {
+  const hadController = !!navigator.serviceWorker.controller;
+  window.addEventListener('load', () => { navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(e => console.warn('service worker', e)); });
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) import('./ui/dom').then(m => m.toast('Photoshop.eth was updated. Reload to use the new version.'));
+  });
+}

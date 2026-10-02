@@ -39,7 +39,7 @@ export class App {
   tool: Tool = 'brush';
   fg: RGB = { red: 0, green: 0, blue: 0 };
   bg: RGB = { red: 1, green: 1, blue: 1 };
-  brush = { size: 40, hardness: 0.8, opacity: 1, smoothing: 0.1, mode: 'paint' as 'paint' | 'erase' };
+  brush = { size: 40, hardness: 0.8, opacity: 1, smoothing: 0.1, mode: 'paint' as 'paint' | 'erase', pressure: true };
   marqueeKind: 'rectangle' | 'ellipse' = 'rectangle';
   marqueeFeather = 0;
   lassoKind: 'freehand' | 'polygonal' = 'freehand';

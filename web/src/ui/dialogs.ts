@@ -1,5 +1,6 @@
 // Panels and sheets: UI/FilterSheet.swift, LevelsSheet.swift, CurvesControls.swift, HueSaturationSheet.swift,
 // EffectsSheet.swift, NewCanvasSheet.swift, CanvasSizeSheet.swift, ImageSizeSheet.swift, JPEGExportSheet.swift.
+import { limits, fitsLimits } from '../engine/limits';
 import { app } from './app';
 import { h, slider, select, checkbox, colorWell, button, toHex, floatingPanel, modal, toast, type Panel } from './dom';
 import {
@@ -1062,10 +1063,13 @@ export const PRESETS: ({ title: string; width: number; height: number } | null)[
   { title: 'YouTube Thumb', width: 1080, height: 608 },
 ];
 export function newCanvasForm(onCreate: (w: number, h: number) => void, extra?: HTMLElement): HTMLElement {
-  const w = h('input', { type: 'number', value: 1920, min: 1, max: 30000, id: 'new-width', class: 'dim' }) as HTMLInputElement;
-  const hh = h('input', { type: 'number', value: 1080, min: 1, max: 30000, id: 'new-height', class: 'dim' }) as HTMLInputElement;
-  const dim = (i: HTMLInputElement) => { const v = i.value.trim(); return /^\d+$/.test(v) && +v >= 1 && +v <= 30000 ? +v : null; };
-  const valid = () => dim(w) !== null && dim(hh) !== null;
+  const max = limits.maxSide;
+  const w = h('input', { type: 'number', value: 1920, min: 1, max, id: 'new-width', class: 'dim', inputmode: 'numeric' }) as HTMLInputElement;
+  const hh = h('input', { type: 'number', value: 1080, min: 1, max, id: 'new-height', class: 'dim', inputmode: 'numeric' }) as HTMLInputElement;
+  const dim = (i: HTMLInputElement) => { const v = i.value.trim(); return /^\d+$/.test(v) && +v >= 1 && +v <= max ? +v : null; };
+  // Phones and tablets also cap the area (engine/limits.ts).
+  const tooBig = () => dim(w) !== null && dim(hh) !== null && !fitsLimits(dim(w)!, dim(hh)!);
+  const valid = () => dim(w) !== null && dim(hh) !== null && !tooBig();
   for (const i of [w, hh]) {
     i.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') create(); });
     i.addEventListener('input', () => sync());
@@ -1082,7 +1086,8 @@ export function newCanvasForm(onCreate: (w: number, h: number) => void, extra?: 
   const createBtn = button('Create canvas', create, { class: 'btn primary', id: 'create-canvas' });
   function sync() {
     const ok = valid();
-    hint.textContent = ok ? 'Transparent canvas · sRGB' : 'Enter whole numbers from 1 to 30,000 pixels.';
+    hint.textContent = ok ? 'Transparent canvas · sRGB' : tooBig() ? `Too big for this device: up to ${Math.round(limits.maxPixels / 1e6 * 10) / 10} megapixels.`
+      : `Enter whole numbers from 1 to ${max.toLocaleString('en-US')} pixels.`;
     hint.classList.toggle('warn', !ok); createBtn.disabled = !ok;
     preset.value = PRESETS.find(p => p && String(p.width) === w.value.trim() && String(p.height) === hh.value.trim())?.title ?? 'Custom';
   }
@@ -1138,7 +1143,7 @@ export function showCanvasSize() {
     const fin = px + (dr.relative ? o : 0);
     if (wAxis) { dr.width = fin; if (dr.locked) dr.height = fin * H0 / W0; } else { dr.height = fin; if (dr.locked) dr.width = fin * W0 / H0; }
   };
-  const valid = () => isFinite(dr.width) && isFinite(dr.height) && Math.round(dr.width) >= 1 && Math.round(dr.width) <= 30000 && Math.round(dr.height) >= 1 && Math.round(dr.height) <= 30000;
+  const valid = () => isFinite(dr.width) && isFinite(dr.height) && Math.round(dr.width) >= 1 && Math.round(dr.width) <= 30000 && Math.round(dr.height) >= 1 && Math.round(dr.height) <= 30000 && fitsLimits(Math.round(dr.width), Math.round(dr.height));
   const w = h('input', { type: 'number', class: 'dim', id: 'canvas-width', step: 'any' }) as HTMLInputElement;
   const hh = h('input', { type: 'number', class: 'dim', id: 'canvas-height', step: 'any' }) as HTMLInputElement;
   const unitLbl = [h('span', { class: 'unit' }), h('span', { class: 'unit' })];
@@ -1147,7 +1152,7 @@ export function showCanvasSize() {
     if (skip !== w) w.value = fmtNum(shown(true)); if (skip !== hh) hh.value = fmtNum(shown(false));
     unitLbl.forEach(u => { u.textContent = { Pixels: 'px', Percent: '%', Inches: 'in', Centimeters: 'cm' }[dr.unit]; });
     const ok = valid(); result.classList.toggle('warn', !ok);
-    result.textContent = ok ? `New: ${Math.round(dr.width)} × ${Math.round(dr.height)} pixels · ${fmtBytes(Math.round(dr.width) * Math.round(dr.height) * 4)} uncompressed` : 'Final dimensions must be 1–30,000 pixels per side.';
+    result.textContent = ok ? `New: ${Math.round(dr.width)} × ${Math.round(dr.height)} pixels · ${fmtBytes(Math.round(dr.width) * Math.round(dr.height) * 4)} uncompressed` : (limits.mobile ? `Final dimensions must fit this device: up to ${limits.maxSide.toLocaleString('en-US')} pixels per side and ${Math.round(limits.maxPixels / 1e6 * 10) / 10} megapixels.` : 'Final dimensions must be 1–30,000 pixels per side.');
   };
   w.addEventListener('input', () => { if (w.value !== '' && isFinite(+w.value)) { set(+w.value, true); refresh(w); } });
   hh.addEventListener('input', () => { if (hh.value !== '' && isFinite(+hh.value)) { set(+hh.value, false); refresh(hh); } });
@@ -1201,7 +1206,7 @@ export function showImageSize() {
   const W0 = d.width, H0 = d.height;
   const st = { width: W0, height: H0, resolution: d.resolution || 72, last: d.resolution || 72, locked: true, resample: true, unit: 'Pixels' as Unit, sampling: 'High quality' as 'High quality' | 'Smooth' | 'Nearest' };
   const valid = () => isFinite(st.width) && isFinite(st.height) && isFinite(st.resolution) && st.resolution >= 1 && st.resolution <= 9600
-    && Math.round(st.width) >= 1 && Math.round(st.width) <= 30000 && Math.round(st.height) >= 1 && Math.round(st.height) <= 30000
+    && Math.round(st.width) >= 1 && Math.round(st.width) <= 30000 && Math.round(st.height) >= 1 && Math.round(st.height) <= 30000 && fitsLimits(Math.round(st.width), Math.round(st.height))
     && (!st.resample || Math.round(st.width) * Math.round(st.height) <= 100_000_000);
   const display = (px: number, o: number) => st.unit === 'Percent' ? px / o * 100 : st.unit === 'Inches' ? px / st.resolution : st.unit === 'Centimeters' ? px / st.resolution * 2.54 : px;
   const setDim = (v: number, isW: boolean) => {
@@ -1228,7 +1233,7 @@ export function showImageSize() {
     samplingRow.style.display = st.resample ? '' : 'none';
     note.textContent = st.resample ? 'Resizes layer pixels and applies existing transforms. Undo restores the originals.' : 'Only print dimensions and resolution change. Pixels stay unchanged.';
     const ok = valid(); result.classList.toggle('warn', !ok);
-    result.textContent = ok ? `Result: ${Math.round(st.width)} × ${Math.round(st.height)} pixels` : 'Use 1–30,000 pixels per side, up to 100 megapixels, and 1–9,600 pixels/inch.';
+    result.textContent = ok ? `Result: ${Math.round(st.width)} × ${Math.round(st.height)} pixels` : (limits.mobile ? `Use up to ${limits.maxSide.toLocaleString('en-US')} pixels per side and ${Math.round(limits.maxPixels / 1e6 * 10) / 10} megapixels on this device, and 1–9,600 pixels/inch.` : 'Use 1–30,000 pixels per side, up to 100 megapixels, and 1–9,600 pixels/inch.');
     const btn = document.querySelector('#image-size-modal .modal-buttons .primary') as HTMLButtonElement | null; if (btn) btn.disabled = !ok;
   };
   unitSel.addEventListener('change', () => { st.unit = unitSel.value as Unit; refresh(); });

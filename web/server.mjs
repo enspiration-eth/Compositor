@@ -20,7 +20,7 @@ const TYPES = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.webp': 'image/webp', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8', '.map': 'application/json',
-  '.onnx': 'application/octet-stream', '.woff2': 'font/woff2',
+  '.onnx': 'application/octet-stream', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json',
 };
 
 const port = Number(process.env.PORT) || 3000;

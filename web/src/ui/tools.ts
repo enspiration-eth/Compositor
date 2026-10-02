@@ -1,3 +1,5 @@
+import { setGpuTextureLimit } from '../engine/limits';
+import { installCanvasGestures, lastPointerType } from './gestures';
 import { pickerOpen, sampleForPicker } from './colorpicker';
 import { translateTextKey } from './shortcuts';
 import { Renderer } from '../engine/render';
@@ -21,12 +23,18 @@ interface Stroke {
   layer: Layer; target: HTMLCanvasElement; orig: HTMLCanvasElement; buffer: HTMLCanvasElement; sel: HTMLCanvasElement | null;
   inv: Mat; scale: number; last: Pt | null; smooth: Pt | null; kind: 'paint' | 'erase' | 'mask' | 'heal' | 'clone' | 'smear';
   color: string; cloneOffset?: Pt; source?: HTMLCanvasElement; opacity?: number; dirty: [number, number, number, number] | null; lastLayerPt?: Pt;
-  warp?: WarpSession; warpLast?: Pt;
+  warp?: WarpSession; warpLast?: Pt; pressure?: number;
 }
 
 export class CanvasController {
   stage: HTMLElement; gl: HTMLCanvasElement; overlay: HTMLCanvasElement; octx: CanvasRenderingContext2D;
-  dpr = Math.max(1, window.devicePixelRatio || 1);
+  // Phones report 3×; the canvas is drawn at no more than 2× there to save GPU memory and fill rate.
+  dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, navigator.maxTouchPoints > 0 && Math.min(screen.width, screen.height) < 820 ? 2 : 8));
+  /** Pen pressure (0–1) for the brush; 1 for the mouse and fingers. */
+  pressure = 1;
+  private dabPressure = 1;
+  /** Set by the layout: the long-press menu on the canvas. */
+  onContextMenu: ((clientX: number, clientY: number) => void) | null = null;
   pointer: Pt | null = null;       // last pointer in stage coords
   spaceDown = false;
   private drag: { kind: string; start: Pt; startDoc: Pt; data?: Record<string, unknown> } | null = null;
@@ -55,6 +63,13 @@ export class CanvasController {
     stage.append(this.gl, this.overlay);
     app.renderer = new Renderer(this.gl);
     app.renderer.onAsyncResult = () => { app.needsRender = true; };
+    setGpuTextureLimit(app.renderer.gl.getParameter(app.renderer.gl.MAX_TEXTURE_SIZE) as number);
+    // Mobile browsers drop the GPU context when the tab goes to the background; rebuild the renderer when it's back.
+    this.gl.addEventListener('webglcontextlost', e => e.preventDefault());
+    this.gl.addEventListener('webglcontextrestored', () => {
+      try { app.renderer = new Renderer(this.gl); app.renderer.onAsyncResult = () => { app.needsRender = true; }; app.needsRender = true; }
+      catch (err) { console.error(err); }
+    });
     const wrap = stage.parentElement ?? stage;
     this.rulerX = document.createElement('canvas'); this.rulerX.className = 'ruler ruler-x';
     this.rulerY = document.createElement('canvas'); this.rulerY.className = 'ruler ruler-y';
@@ -79,11 +94,9 @@ export class CanvasController {
     this.layoutRulers();
     this.octx = this.overlay.getContext('2d')!;
     new ResizeObserver(() => this.resize()).observe(stage);
-    stage.addEventListener('pointerdown', e => this.down(e));
-    stage.addEventListener('pointermove', e => this.move(e));
-    stage.addEventListener('pointerup', e => this.up(e));
-    stage.addEventListener('pointercancel', e => this.up(e));
-    stage.addEventListener('dblclick', e => this.dblclick(e));
+    // Mouse events go straight to down/move/up; touch and pen go through the gesture layer (gestures.ts).
+    installCanvasGestures(this, stage, { contextMenu: (x, y) => this.onContextMenu?.(x, y) });
+    stage.addEventListener('dblclick', e => { if (lastPointerType === 'mouse') this.dblclick(e); });
     stage.addEventListener('pointerleave', () => { this.pointer = null; app.needsRender = true; });
     stage.addEventListener('wheel', e => this.wheel(e), { passive: false });
     stage.addEventListener('contextmenu', e => e.preventDefault());
@@ -276,7 +289,8 @@ export class CanvasController {
     if (this.textEditor && e.target !== this.textEditor) { this.commitText(); }
     const p = app.project; if (!p) return;
     if ((e.target as HTMLElement).tagName === 'TEXTAREA') return;
-    this.stage.setPointerCapture(e.pointerId);
+    try { this.stage.setPointerCapture(e.pointerId); } catch { /* a tap replayed after its pointer lifted */ }
+    this.pressure = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 1;
     const s = this.local(e);
     let dpt = app.toDoc(...s);
     if (['marquee', 'crop', 'shape'].includes(app.tool)) dpt = snapPoint(...dpt);
@@ -351,7 +365,10 @@ export class CanvasController {
     this.updateCursor(s);
     if (this.stroke && e.buttons & 1) {
       const events = (e.getCoalescedEvents?.() ?? [e]);
-      for (const ev of events) this.strokeTo(app.toDoc(...this.local(ev)));
+      for (const ev of events.length ? events : [e]) {
+        this.pressure = ev.pointerType === 'pen' && ev.pressure > 0 ? ev.pressure : 1;
+        this.strokeTo(app.toDoc(...this.local(ev)));
+      }
       return;
     }
     if (!dr) return;
@@ -768,6 +785,27 @@ export class CanvasController {
   }
   applyCrop() { if (!this.crop) return; const c = this.crop; this.crop = null; app.cropTo(c); }
   cancelCrop() { this.crop = null; app.needsRender = true; }
+  /** Drops the interaction in progress without keeping it: a second finger turned the touch into a pinch, or a long
+   *  press opened the context menu. Whatever the down already recorded in history is rolled back. */
+  abortInteraction() {
+    const rollback = () => { const h = app.history; if (!h?.undoStack.length) return; app.undo(); h.redoStack.pop(); app.emit('history'); };
+    const st = this.stroke;
+    if (st) { this.stroke = null; st.warp?.dispose(); rollback(); }
+    const dr = this.drag; this.drag = null;
+    if (dr) switch (dr.kind) {
+      case 'marquee': this.marquee = null; break;
+      case 'lasso': this.lasso = null; break;
+      case 'polyLasso': if (this.lasso) { this.lasso.pop(); if (this.lasso.length < 2) this.lasso = null; } break;
+      case 'shape': this.shapeRect = null; break;
+      case 'gradient': this.gradientLine = null; rollback(); break;
+      case 'move': if (dr.data?.moved) rollback(); else app.history?.undoStack.pop(); break;
+      case 'moveSel': rollback(); break;
+      case 'sample': this.ring = null; break;
+      case 'hook': app.canvasHook?.up?.(dr.startDoc, new PointerEvent('pointerup')); break;
+    }
+    this.guideDrag = null;
+    app.needsRender = true;
+  }
 
   // ---------- painting ----------
   beginStroke(dpt: Pt, shift: boolean) {
@@ -828,7 +866,7 @@ export class CanvasController {
     const k = 1 - Math.min(0.95, app.brush.smoothing * 0.9);
     st.smooth = !st.smooth || first ? dpt : [st.smooth[0] + (dpt[0] - st.smooth[0]) * k, st.smooth[1] + (dpt[1] - st.smooth[1]) * k];
     const p = st.smooth;
-    if (!st.last) { this.dab(p); st.last = p; }
+    if (!st.last) { this.dabPressure = this.pressure; this.dab(p); st.last = p; st.pressure = this.pressure; }
     else this.dabLine(st.last, p);
     this.recomposite();
   }
@@ -860,14 +898,18 @@ export class CanvasController {
     const dist = Math.hypot(to[0] - from[0], to[1] - from[1]);
     if (dist < spacing) return;
     const n = Math.floor(dist / spacing);
-    for (let i = 1; i <= n; i++) { const t = i * spacing / dist; this.dab([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]); }
+    const p0 = st.pressure ?? this.pressure, p1 = this.pressure;
+    for (let i = 1; i <= n; i++) { const t = i * spacing / dist; this.dabPressure = p0 + (p1 - p0) * t; this.dab([from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]); }
     st.last = [from[0] + (to[0] - from[0]) * n * spacing / dist, from[1] + (to[1] - from[1]) * n * spacing / dist];
+    st.pressure = p0 + (p1 - p0) * n * spacing / dist;
     this.recomposite();
   }
   dab(p: Pt) {
     const st = this.stroke!;
     const [lx, ly] = apply(st.inv, p[0], p[1]);
-    const r = Math.max(0.5, app.brush.size / 2 * st.scale), hard = app.brush.hardness;
+    // Pen pressure scales the tip (BrushControls' pressure option), from 15% at the lightest touch.
+    const pressure = app.brush.pressure && st.kind !== 'smear' ? 0.15 + 0.85 * Math.min(1, Math.max(0, this.dabPressure)) : 1;
+    const r = Math.max(0.5, app.brush.size / 2 * st.scale * pressure), hard = app.brush.hardness;
     const grow = (x0: number, y0: number, x1: number, y1: number) => {
       const d0 = st.dirty; st.dirty = d0 ? [Math.min(d0[0], x0), Math.min(d0[1], y0), Math.max(d0[2], x1), Math.max(d0[3], y1)] : [x0, y0, x1, y1];
     };

@@ -2,9 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- viewport-fit=cover for the safe areas; no page zoom (the canvas pinches itself); the keyboard resizes the layout. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="description" content="Photoshop.eth — the Photoshop alternative for Mac, running in your browser." />
+  <meta name="theme-color" content="#1e1e1e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Photoshop.eth" />
+  <meta name="format-detection" content="telephone=no" />
   <title>Photoshop.eth</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
   <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 </head>

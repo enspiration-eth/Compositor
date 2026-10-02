@@ -293,3 +293,134 @@ body.busy, body.busy * { cursor: progress !important; }
 .psd-conversion:last-child { border-bottom: none; }
 .psd-layer { font-weight: 600; }
 .psd-message { color: var(--text2); margin-top: 2px; }
+
+/* ===================== Phones and tablets =====================
+   body.touch: a touch screen (bigger hit targets, the modifier bar). body.compact: max-width 820px or max-height
+   500px (menu bar folded into ☰, Layers as a drawer). body.phone: portrait phone (tools along the bottom, Layers as a
+   bottom sheet). The classes come from ui/mobile.ts; the media queries below mirror them for the first paint. */
+html, body { overscroll-behavior: none; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+html { height: 100%; height: 100dvh; }
+body { touch-action: manipulation; }
+#app { padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+.stage, .stage canvas { -webkit-user-select: none; user-select: none; }
+.tb-menu, .tb-layers, .tb-touch, .sheet-close, .sheet-backdrop, .mod-bar, .menu-hint { display: none; }
+.tb-btn:disabled { opacity: 0.35; cursor: default; }
+.menu-hint { color: var(--text3); font-size: 11px; padding: 4px 8px 6px; }
+
+/* Touch: 44 px targets, 16 px text fields (iOS zooms the page into smaller ones), always-visible tab close. */
+body.touch .tb-touch, body.touch .mod-bar, body.touch .menu-hint { display: flex; }
+body.touch .tb-btn { height: 44px; min-width: 44px; border-radius: 22px; }
+body.touch .tb-group .tb-btn { border-radius: 0; }
+body.touch .toolbar { height: 56px; }
+body.touch .tab { height: 40px; }
+body.touch .tab-close { opacity: 0.8; width: 44px; height: 40px; margin-left: -8px; }
+body.touch .rail-btn { width: 44px; height: 44px; }
+body.touch .tool-rail { width: 60px; gap: 4px; }
+body.touch .tool-header { height: 52px; gap: 14px; }
+body.touch .segmented button { min-height: 40px; padding: 4px 12px; }
+body.touch .btn { height: 40px; padding: 0 16px; border-radius: 20px; }
+body.touch .btn.small { height: 36px; }
+body.touch .popup { height: 40px; border-radius: 20px; padding: 3px 12px; }
+body.touch input[type=number], body.touch input[type=text], body.touch .text-field, body.touch select, body.touch textarea:not(.text-editor) { font-size: 16px; min-height: 40px; }
+body.touch .check { min-height: 44px; }
+body.touch .check input { width: 22px; height: 22px; }
+body.touch .slider-range { height: 32px; }
+body.touch .slider-label { touch-action: none; padding: 10px 0; }
+body.touch .layer-row { height: 52px; }
+body.touch .eye { width: 40px; height: 44px; }
+body.touch .disclosure { width: 32px; height: 44px; }
+body.touch .foot-btn { min-width: 44px; min-height: 44px; justify-content: center; align-items: center; }
+body.touch .fx { padding: 6px 8px; }
+body.touch .menu-item { min-height: 44px; font-size: 15px; padding: 4px 12px 4px 6px; }
+body.touch .panel-close { width: 26px; height: 26px; left: 8px; color: #600; }
+body.touch .panel-title { height: 44px; }
+body.touch .swatch { width: 30px; height: 30px; }
+body.touch .swatch.bg { left: 16px; top: 16px; }
+body.touch .palette { width: 48px; height: 50px; }
+body.touch .swap { width: 22px; height: 22px; right: -8px; top: -8px; }
+body.touch .reset-colors { width: 16px; height: 16px; left: -6px; bottom: -6px; }
+body.touch .welcome-recent .recent-item { padding: 10px 0; }
+body.touch .anchor-grid { grid-template-columns: repeat(3, 40px); } body.touch .anchor { width: 40px; height: 40px; }
+body.touch .pc-swatch { width: 36px; height: 36px; }
+body.touch .cr-section > summary { min-height: 44px; }
+body.touch .cr-eye, body.touch .cr-clip-tri { min-width: 36px; min-height: 36px; }
+
+/* On-screen modifier keys (Shift / Option / Command), bottom-left of the canvas. */
+.mod-bar { position: absolute; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 6; gap: 6px; flex-direction: row; }
+.mod-btn { width: 44px; height: 44px; border-radius: 22px; border: 1px solid rgba(255,255,255,0.18); background: rgba(40,40,42,0.82); color: var(--text); font-size: 17px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.mod-btn.on { background: var(--accent); border-color: var(--accent2); color: #fff; }
+body.compact .mod-bar, body.phone .mod-bar { bottom: 10px; }
+
+/* Compact: the menu bar becomes ☰ in the toolbar, Layers a drawer from the right. */
+body.compact .menubar { display: none; }
+body.compact .tb-menu, body.compact .tb-layers { display: inline-flex; }
+body.compact .toolbar { gap: 4px; padding: 0 6px; }
+body.compact .tabs { max-width: none; flex: 1 1 auto; min-width: 0; }
+body.compact .tab { min-width: 0; max-width: 160px; padding: 0 8px 0 4px; }
+body.compact .toolbar .spacer { flex: 0 0 0; }
+body.compact .tb-wide { display: none; }
+body.compact .tool-header { padding: 0 10px; gap: 10px; }
+body.compact .status-bar .hint, body.compact .status-bar span:nth-child(3) { display: none; }
+body.compact .resize-edge { display: none; }
+body.compact .layers-panel { position: fixed; z-index: 60; top: 0; right: 0; bottom: 0; width: min(340px, 88vw) !important; padding-top: env(safe-area-inset-top); padding-right: env(safe-area-inset-right); padding-bottom: env(safe-area-inset-bottom);
+  transform: translateX(105%); transition: transform 0.22s ease; box-shadow: -12px 0 40px rgba(0,0,0,0.5); border-left: 1px solid var(--line); visibility: hidden; }
+body.compact.layers-open .layers-panel { transform: none; visibility: visible; }
+body.compact .sheet-close { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: -12px -12px -12px 6px; border: none; background: none; color: var(--text2); border-radius: 22px; }
+body.compact .sheet-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(0,0,0,0.35); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+body.compact.layers-open .sheet-backdrop { opacity: 1; pointer-events: auto; }
+body.compact.layers-open .tb-layers { background: var(--accent); border-color: var(--accent2); }
+body.compact .layers-head { padding: 12px 14px; }
+body.compact .status-bar { height: 24px; padding: 0 10px; padding-bottom: env(safe-area-inset-bottom); box-sizing: content-box; }
+
+/* Menus and sheets fit the screen. Drill-down menus (touch/compact) scroll instead of flying out. */
+.menu.drill { max-height: calc(var(--vvh, 100dvh) - 12px); overflow-y: auto; max-width: calc(100vw - 8px); overscroll-behavior: contain; }
+.menu.drill .menu-label { padding-right: 12px; white-space: normal; }
+body.compact .floating-panel { left: 0 !important; right: 0 !important; top: auto !important; bottom: 0 !important; width: auto !important; max-height: min(62dvh, calc(var(--vvh, 100dvh) - 60px));
+  border-radius: 14px 14px 0 0; padding-bottom: env(safe-area-inset-bottom); }
+body.compact .floating-panel .panel-title { cursor: default; }
+body.compact .panel-body { overscroll-behavior: contain; }
+body.compact .effects-split { flex-direction: column; } body.compact .effect-list { width: auto; border-right: none; border-bottom: 1px solid #3a3a3a; padding: 0 0 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+body.compact .modal-back { padding: max(10px, env(safe-area-inset-top)) 8px 8px; align-items: flex-start; }
+body.compact .modal { min-width: 0; width: 100%; max-width: 560px; max-height: calc(var(--vvh, 100dvh) - 20px - env(safe-area-inset-top)); overflow-y: auto; padding: 14px 14px; overscroll-behavior: contain; }
+body.compact #psd-modal { min-width: 0; }
+body.compact .modal .lbl { min-width: 84px; }
+body.compact .shortcut-list { columns: 1; }
+body.compact .shortcuts-editor { width: 100%; }
+body.compact .shortcut-recorder { min-width: 100px; }
+body.compact .cp { flex-wrap: wrap; justify-content: center; }
+body.compact .lv-fields { width: auto; }
+body.compact .anchor-note { max-width: none; }
+body.compact .modal-buttons { flex-wrap: wrap; }
+body.compact .welcome { align-items: flex-start; overflow-y: auto; padding: 12px; }
+body.compact .welcome-card { width: min(420px, 100%); padding: 18px; }
+body.compact .toast { max-width: calc(100vw - 24px); bottom: calc(76px + env(safe-area-inset-bottom)); }
+.modal canvas, .floating-panel canvas { max-width: 100%; }
+
+/* Portrait phones: the tools run along the bottom, Layers is a bottom sheet, no status bar. */
+body.phone .main { flex-direction: column; }
+body.phone .stage-wrap { order: 1; flex: 1; min-height: 0; }
+body.phone .tool-rail { order: 2; width: 100%; height: calc(60px + env(safe-area-inset-bottom)); flex-direction: row; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); gap: 4px; border-right: none; border-top: 1px solid var(--line2);
+  overflow-x: auto; overflow-y: hidden; touch-action: pan-x; background: #202020; }
+body.phone .tool-rail .palette { margin: 0 6px 0 10px; }
+body.phone .status-bar { display: none; }
+body.phone .hdr-title { display: none; }
+body.phone .tool-header { height: 50px; }
+body.phone .layers-panel { top: auto; left: 0; width: auto !important; height: min(64dvh, 560px); border-left: none; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0;
+  transform: translateY(105%); box-shadow: 0 -12px 40px rgba(0,0,0,0.5); padding-right: 0; }
+body.phone .layers-panel::before { content: ''; display: block; width: 40px; height: 5px; border-radius: 3px; background: #555; margin: 6px auto 0; flex: none; }
+body.phone .tabs .tab { max-width: 120px; }
+
+
+/* Short landscape phones: everything vertical is tight. */
+@media (max-height: 500px) {
+  body.touch .toolbar { height: 46px; }
+  body.touch .tool-header { height: 44px; }
+  .status-bar { display: none; }
+  body.touch .tool-rail { padding: 6px 0; }
+  body.compact .floating-panel { left: auto !important; right: 0 !important; top: 0 !important; width: min(380px, 50vw) !important; max-height: none; border-radius: 14px 0 0 14px; }
+}
+body.touch .menubar { height: 44px; }
+body.touch .menubar-item { padding: 12px 12px; font-size: 14px; }
+body.touch:not(.compact) .layers-panel { min-width: 290px; }
+body.touch .layers-foot { padding: 0 4px; }
+body.touch .tool-header .slider-val { margin-right: 8px; }
