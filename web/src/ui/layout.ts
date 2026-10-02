@@ -678,6 +678,8 @@ export async function loadSample() {
   tl.effects = { shadow: { angle: 120, distance: 8, blur: 16, red: 0, green: 0, blue: 0, opacity: 0.45 } };
   d.layers.push(sun, hills, tl);
   d.activeId = tl.id; d.selectedIds = [tl.id]; d.dirty = false;
+  // The Sky was drawn after newCanvas showed (and cached) its blank thumbnail.
+  for (const l of d.layers) l.rev++;
   app.fit(); app.emit('layers');
 }
 
@@ -749,6 +751,7 @@ function thumb(c: HTMLCanvasElement, rev: number, key: string): HTMLElement {
   box.append(h('img', { src: url, alt: key }));
   return box;
 }
+let lastRowClick: { id: string; t: number } | null = null;
 function layerRow(l: Layer, depth: number): HTMLElement {
   const d = app.doc!;
   const selected = d.selectedIds.includes(l.id), active = d.activeId === l.id;
@@ -790,12 +793,19 @@ function layerRow(l: Layer, depth: number): HTMLElement {
   }
   const row = h('div', { class: `layer-row${selected ? ' sel' : ''}${active ? ' active' : ''}${isEffectivelyVisible(d, l) ? '' : ' hidden'}`, draggable: true, 'data-id': l.id }, ...parts);
   row.addEventListener('click', e => {
+    // A click re-renders the panel, so the second click of a double-click lands on a new row; Chromium still fires
+    // dblclick on the parent, Gecko and WebKit don't. Pair the clicks here instead.
+    const now = performance.now();
+    if (e.detail >= 2 || (lastRowClick && lastRowClick.id === l.id && now - lastRowClick.t < 450 && !e.altKey && !e.shiftKey && !e.metaKey && !e.ctrlKey)) {
+      lastRowClick = null;
+      if (!(e.target as HTMLElement).closest('button, input, .mask-thumb')) { if (l.adjustment) editAdjustment(l); else renameLayer(l); return; }
+    } else lastRowClick = { id: l.id, t: now };
     if (e.altKey && !l.isGroup) { app.setActive(l.id); app.toggleClip(); return; }
     app.setActive(l.id, e.shiftKey || e.metaKey || e.ctrlKey);
     if (!(e.target as HTMLElement).closest('.mask-thumb')) app.maskTarget = false;
     app.emit('layers');
   });
-  row.addEventListener('dblclick', e => { e.stopPropagation(); if (l.adjustment) editAdjustment(l); else renameLayer(l); });
+  row.addEventListener('dblclick', e => e.stopPropagation());
   row.addEventListener('contextmenu', e => {
     e.preventDefault(); app.setActive(l.id);
     showMenu([
