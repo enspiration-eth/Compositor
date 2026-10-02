@@ -11,6 +11,7 @@ import {
   type RGB,
 } from '../engine/adjustments';
 import { download } from '../engine/files';
+import { asShotSettings, developRaw, isAsShot, resetRaw, setRawDevelopHook, type RawImage } from '../engine/raw';
 import { levelsHistogram, colorRangeMask, cameraRawScope, cameraRawClipOverlay, SCOPE_SIDE } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
 import { SHORTCUTS, chordFor, chordLabel, chordOf, saveShortcuts, shortcutOverrides, shortcutProblem, type Chord } from './shortcuts';
@@ -1344,6 +1345,59 @@ export function showExportJpeg() {
   okRef.b = document.querySelector('#jpeg-modal .modal-buttons .btn.primary') as HTMLButtonElement;
   layout(); encode();
 }
+/** RawDevelopSheet: a RAW holds more range than a layer, so what to keep is chosen here. The preview develops a quick
+ *  superpixel copy while the sliders move; Import develops the full frame once (demosaiced in wasm). */
+export function showRawDevelop(name: string, raw: RawImage): Promise<HTMLCanvasElement | null> {
+  return new Promise(resolve => {
+    let st = asShotSettings(raw);
+    const FW = 560, FH = 340;
+    const prev = h('canvas', { class: 'raw-preview', id: 'raw-preview' }) as HTMLCanvasElement;
+    const spin = h('div', { class: 'jpeg-busy', id: 'raw-busy' }, 'Developing…');
+    const frame = h('div', { class: 'raw-frame', style: `width:${FW}px;height:${FH}px` }, prev, spin);
+    let token = 0, timer = 0, first = true;
+    const refresh = () => {
+      const my = ++token; spin.style.display = '';
+      clearTimeout(timer);
+      // Just enough to coalesce a burst of slider changes.
+      timer = window.setTimeout(async () => {
+        const c = await developRaw(raw, st, 1000);
+        if (my !== token) return;
+        const k = Math.min(FW / c.width, FH / c.height);
+        prev.width = Math.round(c.width * k * devicePixelRatio); prev.height = Math.round(c.height * k * devicePixelRatio);
+        prev.style.width = `${Math.round(c.width * k)}px`; prev.style.height = `${Math.round(c.height * k)}px`;
+        const x = ctx2d(prev); x.imageSmoothingQuality = 'high'; x.drawImage(c, 0, 0, prev.width, prev.height);
+        spin.style.display = 'none'; first = false;
+      }, first ? 0 : 60);
+    };
+    const sliders = h('div', { class: 'controls' });
+    const reset = button('Reset', () => { st = resetRaw(st); build(); refresh(); }, { id: 'raw-reset' });
+    const build = () => {
+      const sl = (label: string, key: 'exposure' | 'temperature' | 'tint' | 'boost', min: number, max: number, step: number, unit: string) =>
+        slider({ label, min, max, step, unit, value: st[key], id: `raw-${key}`, width: 470, onInput: v => { st = { ...st, [key]: v }; reset.disabled = isAsShot(st); refresh(); } });
+      sliders.replaceChildren(sl('Exposure', 'exposure', -3, 3, 0.01, 'EV'), sl('Temperature', 'temperature', 2000, 12000, 1, 'K'), sl('Tint', 'tint', -150, 150, 1, ''), sl('Boost', 'boost', 0, 1, 0.01, ''));
+      reset.disabled = isAsShot(st);
+    };
+    build();
+    const info = h('p', { class: 'hint' }, `${raw.width.toLocaleString()} × ${raw.height.toLocaleString()} sensor pixels · as shot ${st.asShotTemperature} K, tint ${st.asShotTint}`);
+    let settled = false;
+    const close = modal(`Develop “${name}”`, h('div', { class: 'raw-develop' }, frame, sliders, h('div', { class: 'row' }, reset, h('span', { style: 'flex:1' }), info)), [
+      { label: 'Cancel', onClick: () => { if (!settled) { settled = true; token++; resolve(null); } } },
+      { label: 'Import', primary: true, onClick: () => {
+        if (settled) return;
+        settled = true; token++;
+        const busy = toastBusy('Developing the full frame…');
+        developRaw(raw, st).then(c => { busy(); close(); resolve(c); }, e => { busy(); close(); toast(`Couldn’t develop ${name}: ${(e as Error).message}`, 'error'); resolve(null); });
+        return false;
+      } },
+    ], 'raw-modal');
+    refresh();
+  });
+}
+function toastBusy(text: string) {
+  const t = h('div', { class: 'toast info show', id: 'busy-toast' }, text); document.body.append(t);
+  return () => t.remove();
+}
+setRawDevelopHook(showRawDevelop);
 /** KeyboardShortcutsSheet: click a shortcut, press its new chord; changes apply on Save. */
 export function showShortcuts() {
   const draft: Record<string, Chord> = { ...shortcutOverrides() };

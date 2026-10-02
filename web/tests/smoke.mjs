@@ -2,7 +2,7 @@
 // any console error or broken core action. Usage: npm run build && npm run test:e2e  (SHOTS=dir to save screenshots)
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, existsSync } from 'node:fs';
 
 const URL_ = process.env.URL || 'http://localhost:4173/';
 const SHOTS = process.env.SHOTS || '/workspace/compositor-shots';
@@ -1000,6 +1000,115 @@ try {
     }
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportTiff())]);
     assert(/\.tif$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  });
+
+  await step('Camera RAW: Develop sheet (DNG mosaic demosaiced in wasm, as-shot white balance, Temperature, Import)', async () => {
+    const files = [['bayer.dng', readFileSync(new URL('./fixtures/bayer.dng', import.meta.url)).toString('base64')]];
+    // A real camera file for the screenshot, when one is around (not part of the repository).
+    if (process.env.RAW_SAMPLE && existsSync(process.env.RAW_SAMPLE)) files.push([process.env.RAW_SAMPLE.split('/').pop(), readFileSync(process.env.RAW_SAMPLE).toString('base64')]);
+    for (const [name, b64] of files) {
+      const n0 = await page.evaluate(() => window.compositor.app.projects.length);
+      await page.evaluate(([b64, name]) => {
+        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        window.__rawOpen = window.compositor.app.openFiles([new File([bytes], name)]);
+      }, [b64, name]);
+      await page.waitForSelector('#raw-modal');
+      await page.waitForFunction(() => document.getElementById('raw-busy').style.display === 'none', null, { timeout: 15000 });
+      const pv = (fx, fy) => page.evaluate(([fx, fy]) => { const c = document.getElementById('raw-preview'); return Array.from(c.getContext('2d').getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data); }, [fx, fy]);
+      if (name === 'bayer.dng') {
+        const t0 = +(await page.inputValue('#raw-temperature'));
+        assert(Math.abs(t0 - 6504) < 30, 'as-shot temperature from the neutral: ' + t0);
+        const red = await pv(0.25, 0.5), gray = await pv(0.75, 0.5);
+        assert(red[0] > 150 && red[1] < 90 && red[2] < 90, 'red patch ' + red);
+        assert(Math.abs(gray[0] - gray[2]) < 8 && Math.abs(gray[0] - gray[1]) < 8 && gray[1] > 80 && gray[1] < 150, 'gray stays neutral ' + gray);
+        assert(await page.isDisabled('#raw-reset'), 'Reset off while as shot');
+        await page.fill('#raw-temperature', '3000'); await page.press('#raw-temperature', 'Enter');
+        await page.waitForFunction(() => document.getElementById('raw-busy').style.display === 'none');
+        await page.waitForTimeout(150);
+        const cool = await pv(0.75, 0.5);
+        assert(cool[2] > cool[0] + 30, 'a lower temperature renders bluer ' + cool);
+        await page.click('#raw-reset');
+        assert(+(await page.inputValue('#raw-temperature')) === t0, 'Reset goes back to as shot');
+        await page.fill('#raw-exposure', '1'); await page.press('#raw-exposure', 'Enter');
+      } else await page.screenshot({ path: `${SHOTS}/28-raw-develop.png` });
+      await page.click('#raw-modal .btn.primary');
+      await page.evaluate(() => window.__rawOpen);
+      const r = await page.evaluate(() => { const { app } = window.compositor, d = app.doc, l = d.layers.find(x => x.canvas);
+        const px = (x, y) => Array.from(l.canvas.getContext('2d').getImageData(x, y, 1, 1).data); return { n: app.projects.length, w: d.width, h: d.height, red: px(30, 48), gray: px(96, 48) }; });
+      assert(r.n === n0 + 1, 'opened as a project');
+      if (name === 'bayer.dng') {
+        assert(r.w === 128 && r.h === 96, 'full size ' + JSON.stringify(r));
+        assert(Math.abs(r.gray[0] - r.gray[2]) < 8 && r.gray[1] > 140, 'developed +1 EV and neutral ' + r.gray);
+        assert(r.red[0] > 200 && r.red[2] < 120, 'red ' + r.red);
+      }
+    }
+    // Cancel leaves nothing behind and no error.
+    const n1 = await page.evaluate(() => window.compositor.app.projects.length);
+    await page.evaluate(([b64]) => { window.__rawOpen = window.compositor.app.openFiles([new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], 'again.dng')]); }, [files[0][1]]);
+    await page.waitForSelector('#raw-modal'); await page.keyboard.press('Escape'); await page.evaluate(() => window.__rawOpen);
+    assert(await page.evaluate(n => window.compositor.app.projects.length === n && !document.querySelector('.toast.error'), n1), 'cancel opens nothing');
+  });
+
+  await step('Project tabs: drag a layer to another tab or to New, reorder tabs', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.switchTo(app.projects.findIndex(p => p.doc.layers.some(l => l.name === 'Sun'))); });
+    const names = () => page.evaluate(() => window.compositor.app.projects.map(p => p.doc.name));
+    const src = await page.evaluate(() => window.compositor.app.current);
+    const dest = await page.evaluate(s => [...document.querySelectorAll('.tabs .tab')].map(t => +t.dataset.index).find(i => i !== s && getComputedStyle(document.querySelector(`.tabs .tab[data-index="${i}"]`)).display !== 'none'), src);
+    const n0 = await page.evaluate(i => window.compositor.app.projects[i].doc.layers.length, dest);
+    await page.dragAndDrop('.layer-row:has(.layer-name:text-is("Sun"))', `.tabs .tab[data-index="${dest}"]`);
+    const r = await page.evaluate(i => { const { app } = window.compositor, d = app.projects[i].doc, l = d.layers[d.layers.length - 1];
+      return { cur: app.current, n: d.layers.length, name: l.name, cx: l.transform.x + l.transform.w / 2, cy: l.transform.y + l.transform.h / 2, w: d.width, h: d.height }; }, dest);
+    assert(r.cur === dest && r.n === n0 + 1 && r.name === 'Sun', 'layer copied into the other tab ' + JSON.stringify(r));
+    assert(Math.abs(r.cx - r.w / 2) <= 1 && Math.abs(r.cy - r.h / 2) <= 1, 'centered there');
+    await page.evaluate(i => window.compositor.app.switchTo(i), src);
+    const count = (await names()).length;
+    await page.dragAndDrop('.layer-row:has(.layer-name:text-is("Sun"))', '#newCanvasToolbar');
+    assert((await names()).length === count + 1 && await page.evaluate(() => window.compositor.app.doc.layers.some(l => l.name === 'Sun')), 'dropped on New: a new project');
+    const order0 = await names();
+    const [ta, tb] = await page.evaluate(() => [...document.querySelectorAll('.tabs .tab')].filter(t => getComputedStyle(t).display !== 'none').map(t => +t.dataset.index).sort((a, b) => a - b));
+    await page.dragAndDrop(`.tabs .tab[data-index="${ta}"]`, `.tabs .tab[data-index="${tb}"]`);
+    const order1 = await names();
+    assert(order1[tb] === order0[ta] && order1.length === order0.length, `tab moved: ${order0} -> ${order1}`);
+    await page.screenshot({ path: `${SHOTS}/29-tabs.png` });
+  });
+
+  await step('Project tabs overflow: oldest tabs behind an "N more tabs" pill, selected tab always shown', async () => {
+    await page.setViewportSize({ width: 900, height: 900 });
+    await page.waitForTimeout(100);
+    const info = () => page.evaluate(() => {
+      const tabs = [...document.querySelectorAll('.tabs .tab')];
+      const pill = document.querySelector('#projectTabsOverflow');
+      return { n: tabs.length, hidden: tabs.filter(t => getComputedStyle(t).display === 'none').map(t => +t.dataset.index),
+        cur: window.compositor.app.current, label: pill?.textContent ?? null, curShown: getComputedStyle(tabs[window.compositor.app.current]).display !== 'none' };
+    });
+    let r = await info();
+    assert(r.hidden.length > 0 && r.label === `${r.hidden.length} more tab${r.hidden.length === 1 ? '' : 's'}` && r.curShown, 'pill shown for hidden tabs ' + JSON.stringify(r));
+    const target = r.hidden[0];
+    await page.click('#projectTabsOverflow');
+    await page.click(`.menu .menu-item[data-id="tab-${target}"]`);
+    r = await info();
+    assert(r.cur === target && r.curShown && !r.hidden.includes(target), 'menu switches to a hidden tab and shows it ' + JSON.stringify(r));
+    await page.screenshot({ path: `${SHOTS}/30-tab-overflow.png` });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(100);
+  });
+
+  await step('Zoom tool header: percentage field (Return, arrows, Escape)', async () => {
+    await page.keyboard.press('z');
+    const f = page.locator('#zoom-field');
+    await f.fill('250'); await f.press('Enter');
+    let z = await page.evaluate(() => window.compositor.app.project.zoom);
+    assert(Math.abs(z - 2.5) < 1e-6, 'zoom 250% applied: ' + z);
+    await f.focus(); await f.press('ArrowUp'); await f.press('Shift+ArrowDown');
+    z = await page.evaluate(() => window.compositor.app.project.zoom);
+    assert(Math.abs(z - 2.41) < 1e-6, 'arrows step 1% / 10%: ' + z);
+    await f.fill('999'); await f.press('Escape');
+    z = await page.evaluate(() => window.compositor.app.project.zoom);
+    assert(Math.abs(z - 2.41) < 1e-6 && await f.inputValue() === '241', 'Escape reverts');
+    await page.evaluate(() => window.compositor.app.zoomTo(0.5));
+    assert(await f.inputValue() === '50', 'field follows the view');
+    await page.evaluate(() => window.compositor.app.fit());
+    await page.keyboard.press('v');
   });
 
   await step('Canvas Size… (percent, relative, anchor, extension color) and Image Size… (resample off, sampling)', async () => {

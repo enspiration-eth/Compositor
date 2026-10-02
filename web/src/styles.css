@@ -266,3 +266,14 @@ body.busy, body.busy * { cursor: progress !important; }
 .lv-sample, .lv-auto { gap: 6px; flex-wrap: wrap; }
 .btn.small.on { background: var(--accent, #0a84ff); color: #fff; }
 .hdr-readout { font-variant-numeric: tabular-nums; color: var(--text2); min-width: 110px; }
+/* Develop RAW (RawDevelopSheet) */
+.raw-develop { display: flex; flex-direction: column; gap: 12px; }
+.raw-frame { position: relative; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.35); border-radius: 6px; overflow: hidden; }
+.raw-preview { display: block; border-radius: 6px; }
+/* Project tab drops (ProjectTabs) */
+.tab.drop-target, #newCanvasToolbar.drop-target { outline: 2px solid var(--accent, #0a84ff); outline-offset: -2px; background: rgba(10,132,255,0.3); }
+.zoom-field-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.zoom-field-wrap .zoom-field { width: 72px; text-align: right; }
+.zoom-field-wrap .unit { cursor: ew-resize; user-select: none; }
+.tab-overflow { height: 30px; display: inline-flex; align-items: center; gap: 4px; padding: 0 11px; border-radius: 15px; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08); color: var(--text2); white-space: nowrap; flex: none; cursor: default; font: inherit; font-size: 12px; font-weight: 500; }
+.tab-overflow:hover { background: #313131; }

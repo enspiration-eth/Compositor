@@ -109,6 +109,57 @@ export class App {
     this.emit('project');
   }
 
+  /** Project tabs reorder by dragging (ProjectTabs.onReorder). */
+  moveProject(from: number, to: number) {
+    if (from === to || from < 0 || to < 0 || from >= this.projects.length || to >= this.projects.length) return;
+    const cur = this.projects[this.current];
+    const [p] = this.projects.splice(from, 1); this.projects.splice(to, 0, p!);
+    this.current = cur ? this.projects.indexOf(cur) : this.current;
+    this.emit('project');
+  }
+  /** ProjectWorkspace.copyLayers: layers (folders with all they hold) copied into another project, or a new one when
+   *  `dest` is null, as one undo step there. Together they keep where they sit relative to each other, centered on the
+   *  canvas. Returns false when there's nothing to do (the layers already live in that project). */
+  copyLayersToProject(ids: string[], dest: number | null): boolean {
+    const srcIdx = this.projects.findIndex(p => p.doc.layers.some(l => ids.includes(l.id)));
+    if (srcIdx < 0 || dest === srcIdx || (dest !== null && !this.projects[dest])) return false;
+    this.commitFloating();
+    const src = this.projects[srcIdx]!.doc;
+    const included = new Set(ids); for (const id of ids) for (const x of descendants(src, id)) included.add(x.id);
+    const picked = src.layers.filter(l => included.has(l.id));
+    const ids2 = new Map(picked.map(l => [l.id, uuid()]));
+    if (dest === null) {
+      const top = picked.filter(l => !l.parentId || !included.has(l.parentId));
+      this.addProject(newDoc(src.width, src.height, this.uniqueName(top.length === 1 ? top[0]!.name : src.name)));
+    } else this.switchTo(dest);
+    const d = this.doc!;
+    this.edit(ids.length > 1 ? 'Copy Layers' : 'Copy Layer');
+    const copies: Layer[] = picked.map(l => ({ ...l, id: ids2.get(l.id)!, parentId: l.parentId && ids2.has(l.parentId) ? ids2.get(l.parentId)! : null,
+      clipTo: l.clipTo && ids2.has(l.clipTo) ? ids2.get(l.clipTo)! : null,
+      canvas: l.canvas ? cloneCanvas(l.canvas) : null, mask: l.mask ? cloneCanvas(l.mask) : null, transform: { ...l.transform },
+      maskPlacement: l.maskPlacement ? { ...l.maskPlacement } : undefined, maskBase: l.maskBase ? { ...l.maskBase } : undefined,
+      effects: l.effects ? structuredClone(l.effects) : undefined, adjustment: l.adjustment ? structuredClone(l.adjustment) : undefined,
+      text: l.text ? structuredClone(l.text) : undefined, shape: l.shape ? structuredClone(l.shape) : undefined, rev: 1 }));
+    // Centered as a whole on this canvas.
+    const placed = copies.filter(l => l.canvas);
+    if (placed.length) {
+      const x0 = Math.min(...placed.map(l => l.transform.x)), y0 = Math.min(...placed.map(l => l.transform.y));
+      const x1 = Math.max(...placed.map(l => l.transform.x + l.transform.w)), y1 = Math.max(...placed.map(l => l.transform.y + l.transform.h));
+      const dx = Math.round(d.width / 2 - (x0 + x1) / 2), dy = Math.round(d.height / 2 - (y0 + y1) / 2);
+      for (const l of copies) {
+        l.transform.x += dx; l.transform.y += dy;
+        if (l.maskPlacement) { l.maskPlacement.x += dx; l.maskPlacement.y += dy; }
+        if (l.maskBase) { l.maskBase.x += dx; l.maskBase.y += dy; }
+      }
+    }
+    d.layers.push(...copies);
+    const tops = copies.filter(l => !l.parentId);
+    d.activeId = tops[tops.length - 1]?.id ?? null; d.selectedIds = tops.map(l => l.id);
+    this.maskTarget = false;
+    this.changed('layers');
+    return true;
+  }
+
   // ---------- history ----------
   edit(label: string) { if (this.doc && this.history) this.history.push(this.doc, label); }
   undo() {
@@ -792,7 +843,7 @@ export class App {
             this.addProject(doc); this.fit();
           }
         } else toast(`Can’t open ${f.name}: unsupported format.`, 'error');
-      } catch (e) { console.warn(e); toast(`Couldn’t open ${f.name}: ${(e as Error).message}`, 'error'); }
+      } catch (e) { if ((e as Error).name === 'AbortError') continue; console.warn(e); toast(`Couldn’t open ${f.name}: ${(e as Error).message}`, 'error'); }
     }
   }
   /** File › Open Recent. An entry whose file is gone is dropped from the list. */

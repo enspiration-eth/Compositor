@@ -24,7 +24,7 @@ export function buildLayout(root: HTMLElement) {
   els.menubar = h('div', { class: 'menubar' });
   els.tabs = h('div', { class: 'tabs' });
   els.toolbar = h('div', { class: 'toolbar' },
-    h('button', { class: 'tb-btn', title: `New canvas (${MOD}N)`, id: 'newCanvasToolbar', onclick: () => showNewCanvas() }, icon('plus', 16)),
+    els.newTab = h('button', { class: 'tb-btn', title: `New canvas (${MOD}N) · Drop images or layers here for new tabs`, id: 'newCanvasToolbar', onclick: () => showNewCanvas() }, icon('plus', 16)),
     els.tabs, h('div', { class: 'spacer' }),
     h('button', { class: 'tb-btn text', title: `Fit canvas in window (${MOD}0)`, onclick: () => app.fit() }, 'Fit'),
     h('button', { class: 'tb-btn text', title: `Actual pixels (${MOD}1)`, onclick: () => app.zoomTo(1) }, '100%'),
@@ -51,7 +51,7 @@ export function buildLayout(root: HTMLElement) {
     app.openFiles(files, inp.dataset.mode === 'import'); inp.value = '';
   });
   els.folderInput.addEventListener('change', () => { const inp = els.folderInput as HTMLInputElement; if (inp.files?.length) app.openFolder(inp.files); inp.value = ''; });
-  setupResize(); setupDrop(); setupKeys();
+  setupResize(); setupDrop(); setupKeys(); tabDropTarget(els.newTab!, null);
   app.on(what => refresh(what));
   refresh('all');
   // Render loop: the GPU composites only when something changed; marching ants animate.
@@ -66,7 +66,7 @@ export function buildLayout(root: HTMLElement) {
 export function openFileDialog(mode: 'open' | 'import') { const i = els.fileInput as HTMLInputElement; i.dataset.mode = mode; i.click(); }
 
 function refresh(what: string) {
-  if (what === 'view' || what === 'transform-live') { renderStatus(); if (what === 'transform-live') renderHeader(); return; }
+  if (what === 'view' || what === 'transform-live') { renderStatus(); syncZoomField(); if (what === 'transform-live') renderHeader(); return; }
   renderTabs(); renderHeader(); renderStatus(); renderLayers(); renderRail(); renderWelcome();
   document.title = app.doc ? `${app.doc.name}${app.doc.dirty ? ' — Edited' : ''} — Compositor` : 'Compositor';
 }
@@ -395,10 +395,51 @@ function renderHeader() {
       break;
     }
     case 'hand': case 'zoom':
-      hd.append(title(t === 'hand' ? 'Hand' : 'Zoom'), button('Fit', () => app.fit()), button('100%', () => app.zoomTo(1)), button('Zoom In', () => app.zoomStep(1)), button('Zoom Out', () => app.zoomStep(-1)));
+      hd.append(title(t === 'hand' ? 'Hand' : 'Zoom'));
+      if (t === 'zoom') hd.append(zoomField());
+      hd.append(button('Fit', () => app.fit()), button('100%', () => app.zoomTo(1)), button('Zoom In', () => app.zoomStep(1)), button('Zoom Out', () => app.zoomStep(-1)));
       break;
     default: hd.append(title('Select a tool'));
   }
+}
+
+// NavigationToolHeader's zoom percentage: Return or leaving the field applies it, Escape reverts,
+// Up/Down step by one percent (ten with Shift), and dragging the % suffix scrubs.
+const zoomText = (z: number) => (Math.round(z * 10000) / 100).toFixed(2).replace(/\.?0+$/, '');
+function syncZoomField() {
+  const f = document.getElementById('zoom-field') as HTMLInputElement | null;
+  if (f && document.activeElement !== f && app.project) f.value = zoomText(app.project.zoom);
+}
+function zoomField(): HTMLElement {
+  const input = h('input', { type: 'text', id: 'zoom-field', class: 'hdr-num zoom-field', title: 'Zoom percentage (0.1–3200%). Press Return to apply.', 'aria-label': 'Zoom percentage' }) as HTMLInputElement;
+  input.disabled = !app.project;
+  if (app.project) input.value = zoomText(app.project.zoom);
+  const apply = (pct?: number) => {
+    const v = pct ?? parseFloat(input.value.replace('%', '').trim());
+    if (isFinite(v) && v > 0 && app.project) app.zoomTo(Math.min(3200, Math.max(0.1, v)) / 100);
+    if (app.project) input.value = zoomText(app.project.zoom);
+  };
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { apply(); input.blur(); }
+    else if (e.key === 'Escape') { input.value = app.project ? zoomText(app.project.zoom) : ''; input.blur(); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const cur = parseFloat(input.value) || (app.project?.zoom ?? 1) * 100;
+      apply(cur + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 10 : 1));
+    }
+  });
+  input.addEventListener('blur', () => apply());
+  const unit = h('span', { class: 'unit scrub', title: 'Drag to change the zoom' }, '%');
+  unit.addEventListener('pointerdown', e => {
+    if (!app.project) return;
+    const x0 = e.clientX, z0 = app.project.zoom * 100;
+    unit.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => apply(z0 + (ev.clientX - x0));
+    const up = () => { unit.removeEventListener('pointermove', move); unit.removeEventListener('pointerup', up); };
+    unit.addEventListener('pointermove', move); unit.addEventListener('pointerup', up);
+  });
+  return h('span', { class: 'zoom-field-wrap' }, input, unit);
 }
 
 // ---------- status bar ----------
@@ -430,10 +471,87 @@ function renderTabs() {
   els.tabs.replaceChildren(...app.projects.map((p, i) => {
     const close = h('button', { class: 'tab-close', title: 'Close project' }, icon('close', 10));
     close.addEventListener('click', e => { e.stopPropagation(); app.closeProject(i); });
-    const t = h('div', { class: `tab${i === app.current ? ' on' : ''}` }, close, h('span', { class: 'tab-name' }, p.doc.name + (p.doc.dirty ? ' •' : '')));
+    const t = h('div', { class: `tab${i === app.current ? ' on' : ''}`, draggable: true, 'data-index': i, title: p.doc.name }, close, h('span', { class: 'tab-name' }, p.doc.name + (p.doc.dirty ? ' •' : '')));
     t.addEventListener('click', () => app.switchTo(i));
+    // ProjectTabs: drag a tab to reorder; drop a layer on another tab to copy it there, or image files to add them as layers.
+    t.addEventListener('dragstart', e => { e.dataTransfer!.setData('text/x-tab', String(i)); e.dataTransfer!.effectAllowed = 'move'; });
+    tabDropTarget(t, i);
     return t;
   }));
+  layoutTabOverflow();
+}
+/** ProjectTabLayout.projectTabOverflow: when the tabs don't fit, the oldest drop behind a far-left
+ *  "N more tabs" pill (a menu of the hidden ones, in order); the selected tab is never hidden, it takes the
+ *  first visible slot instead. */
+const TAB_GAP = 4;
+let pillMeasure: CanvasRenderingContext2D | null = null;
+function overflowLabel(n: number) { return n === 1 ? '1 more tab' : `${n} more tabs`; }
+function overflowPillWidth(n: number) {
+  pillMeasure ??= document.createElement('canvas').getContext('2d');
+  if (pillMeasure) pillMeasure.font = `500 12px ${getComputedStyle(els.tabs).fontFamily || 'sans-serif'}`;
+  return Math.ceil(pillMeasure?.measureText(overflowLabel(n)).width ?? 70) + 11 + 4 + 10 + 11 + 2;
+}
+export function projectTabOverflow(order: number[], widths: number[], selected: number, available: number, pillWidth: (n: number) => number): { visible: number[]; hidden: number[] } {
+  const span = (ids: number[]) => ids.length ? ids.reduce((a, i) => a + widths[i], 0) + TAB_GAP * (ids.length - 1) : 0;
+  if (available <= 0 || span(order) <= available) return { visible: order, hidden: [] };
+  let shown = order.length;
+  while (shown > 1 && pillWidth(order.length - shown) + TAB_GAP + span(order.slice(order.length - shown)) > available) shown--;
+  const visible = order.slice(order.length - shown), hidden = order.slice(0, order.length - shown);
+  if (hidden.includes(selected)) {
+    hidden.splice(hidden.indexOf(selected), 1); hidden.push(visible[0]); visible[0] = selected;
+    while (visible.length > 1 && pillWidth(hidden.length) + TAB_GAP + span(visible) > available) hidden.push(visible.splice(1, 1)[0]);
+  }
+  hidden.sort((a, b) => a - b);
+  return { visible, hidden };
+}
+function layoutTabOverflow() {
+  const tabs = Array.from(els.tabs.querySelectorAll<HTMLElement>('.tab'));
+  els.tabs.querySelector('.tab-overflow')?.remove();
+  tabs.forEach(t => { t.style.display = ''; t.style.order = ''; });
+  if (tabs.length < 2) return;
+  const widths = tabs.map(t => t.getBoundingClientRect().width);
+  const available = window.innerWidth - 340;
+  const { visible, hidden } = projectTabOverflow(tabs.map((_, i) => i), widths, app.current, available, overflowPillWidth);
+  if (!hidden.length) return;
+  hidden.forEach(i => { tabs[i].style.display = 'none'; });
+  visible.forEach((i, k) => { tabs[i].style.order = String(k + 1); });
+  const pill = h('button', { class: 'tab-overflow', id: 'projectTabsOverflow', title: overflowLabel(hidden.length), style: 'order:0' },
+    h('span', {}, overflowLabel(hidden.length)), icon('chevronDown', 9));
+  pill.addEventListener('click', e => {
+    e.stopPropagation();
+    const r = pill.getBoundingClientRect();
+    showMenu(hidden.map(i => ({ label: (app.projects[i].doc.dirty ? '• ' : '') + app.projects[i].doc.name, id: `tab-${i}`, action: () => app.switchTo(i) })), r.left, r.bottom + 4);
+  });
+  els.tabs.prepend(pill);
+}
+window.addEventListener('resize', () => layoutTabOverflow());
+/** The layers a layer-row drag carries: the selection when the dragged row is part of it. */
+function draggedLayerIds(dt: DataTransfer): string[] {
+  try { const ids = JSON.parse(dt.getData('text/x-layers') || '[]'); if (Array.isArray(ids) && ids.length) return ids; } catch { /* fall through */ }
+  const id = dt.getData('text/x-layer'); return id ? [id] : [];
+}
+/** A tab (index) or the New button (null) accepting tab, layer and file drags. */
+function tabDropTarget(el: HTMLElement, index: number | null) {
+  const accepts = (dt: DataTransfer | null) => !!dt && (dt.types.includes('text/x-layer') || dt.types.includes('Files') || (index !== null && dt.types.includes('text/x-tab')));
+  el.addEventListener('dragover', e => {
+    if (!accepts(e.dataTransfer)) return;
+    // A layer dropped on the tab it already lives in would do nothing, so that isn't a target.
+    if (index === app.current && e.dataTransfer!.types.includes('text/x-layer')) return;
+    e.preventDefault(); e.stopPropagation(); el.classList.add('drop-target');
+    el.title = e.dataTransfer!.types.includes('text/x-tab') ? 'Move here' : index === null ? 'Open in a new project tab' : `Add to ${app.projects[index]?.doc.name ?? ''}`;
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+  el.addEventListener('drop', e => {
+    const dt = e.dataTransfer; if (!accepts(dt)) return;
+    e.preventDefault(); e.stopPropagation(); el.classList.remove('drop-target');
+    if (dt!.types.includes('text/x-tab') && index !== null) { app.moveProject(+dt!.getData('text/x-tab'), index); return; }
+    if (dt!.types.includes('text/x-layer')) { app.copyLayersToProject(draggedLayerIds(dt!), index); return; }
+    const files = Array.from(dt!.files); if (!files.length) return;
+    // Existing tabs take images as layers; the New slot opens one project per file.
+    if (index === null) { void app.openFiles(files); return; }
+    app.switchTo(index);
+    void app.openFiles(files, true);
+  });
 }
 
 // ---------- welcome (NewCanvasSheet) ----------
@@ -619,7 +737,11 @@ function layerRow(l: Layer, depth: number): HTMLElement {
     ], e.clientX, e.clientY);
   });
   // Drag and drop to reorder; drop on the middle of a folder to put the layer inside. Option-drag duplicates.
-  row.addEventListener('dragstart', e => { e.dataTransfer!.setData('text/x-layer', l.id); e.dataTransfer!.effectAllowed = 'copyMove'; });
+  row.addEventListener('dragstart', e => {
+    e.dataTransfer!.setData('text/x-layer', l.id); e.dataTransfer!.effectAllowed = 'copyMove';
+    const sel = app.doc?.selectedIds ?? [];
+    e.dataTransfer!.setData('text/x-layers', JSON.stringify(sel.includes(l.id) ? sel : [l.id]));
+  });
   row.addEventListener('dragover', e => {
     if (!e.dataTransfer!.types.includes('text/x-layer')) return;
     e.preventDefault();
@@ -671,7 +793,12 @@ function setupDrop() {
       // Dropped on an open canvas: import as layers at the drop point.
       const r = els.stage.getBoundingClientRect();
       const at = app.toDoc(e.clientX - r.left, e.clientY - r.top);
-      (async () => { for (const f of images) { app.placeImage(await fileToCanvas(f), f.name.replace(/\.[^.]+$/, ''), at); } })();
+      (async () => {
+        for (const f of images) {
+          try { app.placeImage(await fileToCanvas(f), f.name.replace(/\.[^.]+$/, ''), at); }
+          catch (err) { if ((err as Error).name !== 'AbortError') toast(`Couldn’t import ${f.name}: ${(err as Error).message}`, 'error'); }
+        }
+      })();
     } else app.openFiles(images);
     if (others.length) app.openFiles(others);
   });

@@ -1,4 +1,5 @@
 import { isTiffName, tiffToCanvas } from './tiff';
+import { parseRaw, rawDevelopHook, DevelopCancelled } from './raw';
 // File formats. A Compositor project (.comp) is a folder: manifest.json + images/<UUID>.png (+ <UUID>.mask.png),
 // exactly as IO/ProjectStore.swift writes it. Browsers can't save a package folder, so the web app saves the same
 // folder zipped (Name.comp.zip, which unzips to Name.comp for the Mac app) and opens either a zip or a picked
@@ -228,7 +229,15 @@ export async function readPsdFile(bytes: ArrayBuffer, name: string): Promise<Doc
 
 export async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
   if (/\.svg$/i.test(file.name) || file.type === 'image/svg+xml') return svgToCanvas(file);
-  if (isTiffName(file.name, file.type)) return tiffToCanvas(await file.arrayBuffer());
+  if (isTiffName(file.name, file.type)) {
+    // A RAW with a Bayer mosaic is developed in the Develop sheet (RawDevelopSheet); anything else uses its RGB image or preview.
+    const buf = await file.arrayBuffer();
+    if (!/\.tiff?$/i.test(file.name) && rawDevelopHook) {
+      const raw = await parseRaw(buf);
+      if (raw) { const c = await rawDevelopHook(file.name, raw); if (!c) throw new DevelopCancelled(); return c; }
+    }
+    return tiffToCanvas(buf);
+  }
   try { return await bytesToCanvas(file); }
   catch (e) {
     if (/\.hei[cf]$/i.test(file.name) || /hei[cf]/i.test(file.type)) throw new Error('This browser can\'t decode HEIC. Open it in Safari, or export it as JPEG first.');
