@@ -73,9 +73,11 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 
 ## What works
 
-- **Projects:** multiple tabs; new canvas with presets; open/save `.comp` projects as a zip of the folder format
+- **Projects:** multiple tabs; new canvas with presets (the matching preset shown, live validation, and an image on the clipboard suggesting its size when the page may read it); open/save `.comp` projects as a zip of the folder format
   (`manifest.json` v11 + `images/*.png` + masks, see `docs/project-format.md`); opening an unzipped `.comp` folder; drag
-  and drop; paste; import PNG/JPEG/WebP/GIF/SVG/PSD (PSD layers via `ag-psd`); export PNG/JPEG with a quality preview
+  and drop; paste; import PNG/JPEG/WebP/GIF/SVG/PSD (PSD layers via `ag-psd`); export PNG; Export JPEG as in
+  `JPEGExportSheet` (the encoded JPEG itself as the preview, Fit/zoom steps with 100% nearest-neighbor, drag to pan, double-click
+  Fit ⇄ 100%, quality remembered from the last export, a background color for transparency, the file size)
 - **Layers:** pixel, text, shape and adjustment layers; folders, including pass-through; visibility, rename, reorder by
   drag, Move Out of Folder, duplicate, layer via copy/cut, merge down/selected/group, delete
 - **Compositing:** all 24 blend modes; opacity; layer masks (reveal/hide all, from selection, invert, apply, disable,
@@ -90,7 +92,14 @@ source, builds, runs the smoke test and deploys on every push to `web`.
 - **Selections:** add/subtract/intersect, all, deselect, inverse, expand/contract (round corners via a Euclidean distance
   transform in wasm, as the Mac app's stroked-band path ops), feather (Gaussian of feather/2, edges extended), layer pixels, Color Range… (eyedroppers, Fuzziness, Invert, live preview; the wasm `color_range_mask`), Mask's Black Areas, marching ants
   (traced by the wasm `wand_trace`), Content-Aware Fill (wasm), Select Subject and Object Selection (on-device ML)
-- **Image adjustments, destructive or as adjustment layers:** Levels (histogram from wasm), Curves, Hue/Saturation, Exposure,
+- **Color picker:** the app's own picker (`ColorPickerSheet`) instead of the browser's: saturation/brightness field, hue
+  strip that keeps the hue through grays, new/current preview, RGB and hex fields, in a movable panel; a click on the
+  canvas samples a color into it; nothing is kept until OK, and Cancel/Escape put the original back. Every color swatch
+  (palette, shape, text, effects, filter and grid colors, JPEG background) opens it, dialog colors previewing live
+- **Image adjustments, destructive or as adjustment layers:** Levels as in `LevelsSheet` (histogram from wasm with the
+  Mac's spike-capped scaling, draggable input black/gamma/white and output triangles, numeric fields, Black/Gray/White
+  eyedroppers that sample the original or the image below an adjustment layer, Auto Contrast / Color / Color + neutral
+  midtones, Reset), Curves, Hue/Saturation, Exposure,
   Gradient Map, Black & White, Color Balance, Grain, Invert
 - **Filters:** Gaussian Blur, Motion Blur, Add Noise, Vignette, Bloom/Glow, Dither, Tonal Contrast, Lens Correction,
   Camera Raw with all of the Mac panel's processing sections (Basic, Curve, Color Mixer, Color Grading, Detail, Optics, Effects with Glow, Calibration), each

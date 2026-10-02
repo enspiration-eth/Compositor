@@ -846,12 +846,12 @@ export class App {
     d.dirty = false; toast(`Saved ${name} (folder)`); this.emit('saved');
   }
   async saveAs() { const d = this.doc; if (!d) return; d.fileHandle = undefined; await this.save(); }
-  async exportImage(type: 'png' | 'jpeg', quality = 0.92) {
+  async exportImage(type: 'png' | 'jpeg', quality = 0.92, matte: RGB = { red: 1, green: 1, blue: 1 }) {
     const d = this.doc; if (!d) return;
     this.commitFloating();
     const img = this.renderer.readComposite(d);
     const c = canvasOf(d.width, d.height), x = ctx2d(c);
-    if (type === 'jpeg') { x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); const t = canvasOf(d.width, d.height); ctx2d(t).putImageData(img, 0, 0); x.drawImage(t, 0, 0); }
+    if (type === 'jpeg') { x.fillStyle = `rgb(${Math.round(matte.red * 255)},${Math.round(matte.green * 255)},${Math.round(matte.blue * 255)})`; x.fillRect(0, 0, c.width, c.height); const t = canvasOf(d.width, d.height); ctx2d(t).putImageData(img, 0, 0); x.drawImage(t, 0, 0); }
     else x.putImageData(img, 0, 0);
     const blob = await canvasToBlob(c, `image/${type}`, quality);
     download(blob, `${d.name || 'Untitled'}.${type === 'png' ? 'png' : 'jpg'}`);

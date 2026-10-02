@@ -1,13 +1,16 @@
 // Panels and sheets: UI/FilterSheet.swift, LevelsSheet.swift, CurvesControls.swift, HueSaturationSheet.swift,
 // EffectsSheet.swift, NewCanvasSheet.swift, CanvasSizeSheet.swift, ImageSizeSheet.swift, JPEGExportSheet.swift.
 import { app } from './app';
-import { h, slider, select, checkbox, colorWell, button, floatingPanel, modal, toast, type Panel } from './dom';
+import { h, slider, select, checkbox, colorWell, button, toHex, floatingPanel, modal, toast, type Panel } from './dom';
 import {
   type FilterKind, type FilterSettings, defaultFilterSettings, canvasOf, ctx2d, imageDataOf, COLOR_RANGES, DITHER_STYLES,
   curveValue, levelsTables, autoLevels, type AdjustmentRecord, adjustmentAsFilter, type CurvePoint, type ColorRangeName, defaultCameraRaw, crApplying, type CRGroup, CR_MIXER_NAMES, type CRPoint,
   rangeWeight, bandOf, setBandHandle, shiftBand, type CRCurve, defaultGeometry, bandCentered, bandInclude, bandExclude, sampledHue,
   crNeutralize, srgbDecode, crAutoBalance, crMixerWeights, crCurveRegion,
+  LEVELS_AUTO, levelsSampling, normalizedRange, defaultLevels, type LevelsSampleMode, type LevelRange, type LevelsSettings,
+  type RGB,
 } from '../engine/adjustments';
+import { download } from '../engine/files';
 import { levelsHistogram, colorRangeMask, cameraRawScope, cameraRawClipOverlay, SCOPE_SIDE } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
 import { SHORTCUTS, chordFor, chordLabel, chordOf, saveShortcuts, shortcutOverrides, shortcutProblem, type Chord } from './shortcuts';
@@ -276,7 +279,7 @@ function controls(kind: FilterKind, s: FilterSettings, changed: () => void, rebu
       break;
     }
     case 'Curves': box.append(curvesEditor(s, changed)); break;
-    case 'Levels': box.append(levelsEditor(s, changed)); break;
+    case 'Levels': box.append(levelsEditor(s, changed, forAdjustmentLayer)); break;
     default: break;
   }
   return box;
@@ -706,10 +709,10 @@ function hueSpectrum(hs: FilterSettings['hueSat'], changed: () => void) {
 
 function curvesEditor(s: FilterSettings, changed: () => void): HTMLElement {
   const size = 256;
-  const cv = h('canvas', { width: size * 2, height: size * 2, class: 'curve-canvas', style: `width:${size}px;height:${size}px` }) as HTMLCanvasElement;
+  const cv = h('canvas', { width: size * 2, height: size * 2, class: 'curve-canvas', id: 'curve-canvas', style: `width:${size}px;height:${size}px` }) as HTMLCanvasElement;
   const x = cv.getContext('2d')!;
   let ch = CHANNELS.indexOf(s.curves.channel);
-  let dragging = -1;
+  let dragging = -1, selected = -1;
   const colors = ['#ddd', '#ff5a5a', '#4cd964', '#4c8dff'];
   const draw = () => {
     x.setTransform(2, 0, 0, 2, 0, 0); x.clearRect(0, 0, size, size);
@@ -721,14 +724,27 @@ function curvesEditor(s: FilterSettings, changed: () => void): HTMLElement {
     x.strokeStyle = colors[ch]; x.lineWidth = 1.5; x.beginPath();
     for (let i = 0; i <= 255; i++) { const y = curveValue(pts, i); i ? x.lineTo(i * size / 255, size - y * size / 255) : x.moveTo(0, size - y * size / 255); }
     x.stroke();
-    for (const p of pts) { x.fillStyle = '#fff'; x.fillRect(p.x * size / 255 - 3, size - p.y * size / 255 - 3, 6, 6); }
+    pts.forEach((p, i) => { x.fillStyle = i === selected ? '#0a84ff' : '#fff'; x.beginPath(); x.arc(p.x * size / 255, size - p.y * size / 255, 4, 0, Math.PI * 2); x.fill(); });
+    // CurvesControls: the selected point's input and output, and Remove point for an interior one.
+    const sp = pts[selected];
+    readout.textContent = sp ? `Input ${Math.round(sp.x)} · Output ${Math.round(sp.y)}` : '';
+    remove.disabled = !(selected > 0 && selected < pts.length - 1);
   };
+  const readout = h('span', { class: 'curve-readout', id: 'curve-readout' });
+  const removePoint = () => { const pts = s.curves.channels[ch]; if (selected > 0 && selected < pts.length - 1) { pts.splice(selected, 1); selected = -1; draw(); changed(); } };
+  const remove = button('Remove point', removePoint, { class: 'btn small', id: 'curve-remove' });
+  cv.tabIndex = 0;
+  cv.addEventListener('keydown', e => { if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); e.stopPropagation(); removePoint(); } });
   const toVal = (e: PointerEvent): CurvePoint => { const r = cv.getBoundingClientRect(); return { x: Math.round(Math.min(255, Math.max(0, (e.clientX - r.left) / r.width * 255))), y: Math.round(Math.min(255, Math.max(0, (1 - (e.clientY - r.top) / r.height) * 255))) }; };
   cv.addEventListener('pointerdown', e => {
     const v = toVal(e), pts = s.curves.channels[ch];
-    dragging = pts.findIndex(p => Math.hypot(p.x - v.x, p.y - v.y) < 8);
-    if (dragging < 0 && pts.length < 32) { pts.push(v); pts.sort((a, b) => a.x - b.x); dragging = pts.indexOf(v); }
-    cv.setPointerCapture(e.pointerId); draw(); changed();
+    // The nearest point within reach is picked up; elsewhere a click adds one (not at the ends or on top of another).
+    let best = -1, bd = 14;
+    pts.forEach((p, i) => { const dd = Math.hypot(p.x - v.x, p.y - v.y); if (dd < bd) { bd = dd; best = i; } });
+    dragging = best;
+    if (dragging < 0 && pts.length < 32 && v.x > 1 && v.x < 254 && pts.every(p => Math.abs(p.x - v.x) > 1)) { pts.push(v); pts.sort((a, b) => a.x - b.x); dragging = pts.indexOf(v); }
+    selected = dragging;
+    cv.setPointerCapture(e.pointerId); cv.focus(); draw(); changed();
   });
   cv.addEventListener('pointermove', e => {
     if (dragging < 0) return;
@@ -737,44 +753,127 @@ function curvesEditor(s: FilterSettings, changed: () => void): HTMLElement {
     if (dragging === 0) v.x = 0; else if (dragging === pts.length - 1) v.x = 255; else v.x = Math.min(hi, Math.max(lo, v.x));
     // Dragging an interior point far off the graph removes it, as in Photoshop.
     const r = cv.getBoundingClientRect();
-    if (dragging > 0 && dragging < pts.length - 1 && (e.clientY < r.top - 30 || e.clientY > r.bottom + 30)) { pts.splice(dragging, 1); dragging = -1; }
-    else pts[dragging] = v;
+    if (dragging > 0 && dragging < pts.length - 1 && (e.clientY < r.top - 30 || e.clientY > r.bottom + 30)) { pts.splice(dragging, 1); dragging = -1; selected = -1; }
+    else { pts[dragging] = v; selected = dragging; }
     draw(); changed();
   });
   cv.addEventListener('pointerup', () => { dragging = -1; });
   draw();
-  const chSel = select([...CHANNELS], s.curves.channel, v => { s.curves.channel = v as 'RGB'; ch = CHANNELS.indexOf(v as 'RGB'); draw(); });
-  const reset = button('Reset', () => { s.curves.channels[ch] = [{ x: 0, y: 0 }, { x: 255, y: 255 }]; draw(); changed(); });
-  return h('div', {}, h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Channel'), chSel, reset), cv, h('p', { class: 'hint' }, 'Click to add a point · drag points · drag off the graph to remove'));
+  const chSel = select([...CHANNELS], s.curves.channel, v => { s.curves.channel = v as 'RGB'; ch = CHANNELS.indexOf(v as 'RGB'); selected = -1; draw(); }, { id: 'curve-channel' });
+  const reset = button('Reset curve', () => { s.curves.channels[ch] = [{ x: 0, y: 0 }, { x: 255, y: 255 }]; selected = -1; draw(); changed(); }, { id: 'curve-reset' });
+  return h('div', {}, h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Channel'), chSel, reset), cv,
+    h('p', { class: 'hint' }, 'Click to add a point. Drag to adjust. Delete, or drag off the graph, removes the selected point.'),
+    h('div', { class: 'row curve-sel' }, readout, h('span', { style: 'flex:1' }), remove));
 }
 
 let currentHistogram: number[][] | null = null;
-function levelsEditor(s: FilterSettings, changed: () => void): HTMLElement {
-  const cv = h('canvas', { width: 512, height: 200, class: 'histo', style: 'width:256px;height:100px' }) as HTMLCanvasElement;
+let lvArmed: LevelsSampleMode | null = null;
+/** The untouched color under a document point: the filtered layer's original pixels, or for an adjustment layer the
+ *  image below it. Unpremultiplied 0…1, or null off the image or where it's clear. */
+function originalRGB(dpt: [number, number]): [number, number, number] | null {
+  let px: Uint8ClampedArray;
+  if (crCtx) {
+    const uv = layerUV(dpt); if (!uv) return null;
+    const o = crCtx.original, x = Math.floor(uv[0] * o.width), y = Math.floor(uv[1] * o.height);
+    if (x < 0 || y < 0 || x >= o.width || y >= o.height) return null;
+    px = ctx2d(o).getImageData(x, y, 1, 1).data;
+  } else if (hsSampleBelow) {
+    const x = Math.floor(dpt[0]), y = Math.floor(dpt[1]);
+    if (x < 0 || y < 0 || x >= hsSampleBelow.width || y >= hsSampleBelow.height) return null;
+    const i = (y * hsSampleBelow.width + x) * 4; px = hsSampleBelow.data.subarray(i, i + 4);
+  } else return null;
+  return px[3] ? [px[0]! / 255, px[1]! / 255, px[2]! / 255] : null;
+}
+/** LevelsSheet: histogram with the input black/gamma/white triangles, the output ramp with its two, numeric fields,
+ *  Black/Gray/White eyedroppers that sample the original, the three Auto modes and Reset. */
+function levelsEditor(s: FilterSettings, changed: () => void, forAdjustment = false): HTMLElement {
+  const W = 300;
+  const cv = h('canvas', { width: W * 2, height: 300, class: 'histo', id: 'levels-histogram', style: `width:${W}px;height:150px;cursor:default`,
+    title: 'Linear histogram with automatic vertical scaling. Tall spikes may extend beyond the graph; all tones from 0 to 255 remain included.' }) as HTMLCanvasElement;
   let ch = CHANNELS.indexOf(s.levels.channel);
+  const cur = () => s.levels.ranges[ch]!;
   const drawHist = () => {
-    const x = cv.getContext('2d')!; x.clearRect(0, 0, 512, 200); x.fillStyle = '#1b1b1b'; x.fillRect(0, 0, 512, 200);
-    const bins = currentHistogram?.[ch]; if (!bins) return;
-    const sorted = [...bins.slice(1, 255)].sort((a, b) => a - b), peak = Math.min(Math.max(...bins), (sorted[Math.floor(sorted.length * 0.95)] || 1) * 4) || 1;
-    x.fillStyle = ['#ccc', '#ff6b6b', '#5cd97a', '#6b9dff'][ch];
-    for (let i = 0; i < 256; i++) { const hgt = Math.min(1, bins[i] / peak) * 200; x.fillRect(i * 2, 200 - hgt, 2, hgt); }
+    const x = cv.getContext('2d')!; x.clearRect(0, 0, cv.width, cv.height); x.fillStyle = '#1b1b1b'; x.fillRect(0, 0, cv.width, cv.height);
+    const bins = currentHistogram?.[ch]; if (!bins) { x.fillStyle = '#999'; x.font = '22px system-ui'; x.fillText('Loading histogram…', 14, 34); return; }
+    // LevelsHistogramDisplay.scale: linear, but isolated spikes are capped at four times the typical peak.
+    const peakAll = Math.max(0, ...bins.filter(v => v > 0)), interior = bins.slice(1, 255).filter(v => v > 0).sort((a, b) => a - b);
+    const peak = interior.length ? Math.min(peakAll, interior[Math.floor((interior.length - 1) * 0.95)]! * 4) : peakAll;
+    if (!(peak > 0)) return;
+    x.fillStyle = ['#9a9a9a', '#ff5f57', '#34c759', '#4c8dff'][ch]!;
+    const bw = cv.width / 256;
+    for (let i = 0; i < 256; i++) { const hgt = Math.min(1, bins[i]! / peak) * cv.height; x.fillRect(i * bw, cv.height - hgt, bw + 0.2, hgt); }
   };
-  const inner = h('div');
-  const draw = () => {
-    const r = s.levels.ranges[ch];
-    inner.replaceChildren(
-      slider({ label: 'Input Black', min: 0, max: 254, value: r.black, onInput: v => { r.black = v; changed(); } }),
-      slider({ label: 'Gamma', min: 0.1, max: 9.99, step: 0.01, value: r.gamma, onInput: v => { r.gamma = v; changed(); } }),
-      slider({ label: 'Input White', min: 1, max: 255, value: r.white, onInput: v => { r.white = v; changed(); } }),
-      slider({ label: 'Output Black', min: 0, max: 255, value: r.outputBlack, onInput: v => { r.outputBlack = v; changed(); } }),
-      slider({ label: 'Output White', min: 0, max: 255, value: r.outputWhite, onInput: v => { r.outputWhite = v; changed(); } }));
-    drawHist();
+  // Triangle handles (LevelsSheet.handles): drag along 0…255.
+  const handleRow = (output: boolean) => {
+    const row = h('div', { class: 'lv-handles', id: output ? 'levels-output-handles' : 'levels-input-handles', style: `width:${W}px` });
+    const names = output ? ['Output black', 'Output white'] : ['Input black', 'Gamma', 'Input white'];
+    const tris = names.map((n, i) => {
+      const t = h('div', { class: `lv-tri ${i === 0 ? 'k' : i === names.length - 1 ? 'w' : 'g'}`, title: n, 'aria-label': n });
+      t.addEventListener('pointerdown', e => {
+        e.preventDefault(); t.setPointerCapture(e.pointerId);
+        const mv = (ev: PointerEvent) => {
+          const r0 = row.getBoundingClientRect(), v = Math.min(255, Math.max(0, (ev.clientX - r0.left) / r0.width * 255)), r = cur();
+          if (output) { if (i === 0) r.outputBlack = Math.round(v); else r.outputWhite = Math.round(v); }
+          else if (i === 0) r.black = Math.min(r.white - 1, Math.round(v));
+          else if (i === 2) r.white = Math.max(r.black + 1, Math.round(v));
+          else { const f = Math.min(0.999, Math.max(0.001, (v - r.black) / (r.white - r.black))); r.gamma = Math.round(Math.log(f) / Math.log(0.5) * 100) / 100; }
+          Object.assign(r, normalizedRange(r)); sync(); changed();
+        };
+        const up = () => { t.removeEventListener('pointermove', mv); t.removeEventListener('pointerup', up); };
+        t.addEventListener('pointermove', mv); t.addEventListener('pointerup', up);
+      });
+      row.append(t); return t;
+    });
+    const place = () => {
+      const r = cur(), pos = output ? [r.outputBlack, r.outputWhite] : [r.black, r.black + (r.white - r.black) * Math.pow(0.5, r.gamma), r.white];
+      tris.forEach((t, i) => { t.style.left = `${pos[i]! / 255 * 100}%`; });
+    };
+    return { row, place };
   };
-  draw();
-  const chSel = select([...CHANNELS], s.levels.channel, v => { s.levels.channel = v as 'RGB'; ch = CHANNELS.indexOf(v as 'RGB'); draw(); });
-  const auto = button('Auto', () => { if (currentHistogram) { const a = autoLevels(currentHistogram); s.levels.ranges = a.ranges; draw(); changed(); } });
-  void levelsTables;
-  return h('div', {}, h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Channel'), chSel, auto), cv, inner);
+  const inH = handleRow(false), outH = handleRow(true);
+  const field = (name: string, key: keyof LevelRange, decimals: number) => {
+    const i = h('input', { type: 'number', class: 'dim', step: decimals ? 0.01 : 1, min: key === 'gamma' ? 0.1 : 0, max: key === 'gamma' ? 9.99 : 255, id: `levels-${name.toLowerCase().replace(/ /g, '-')}` }) as HTMLInputElement;
+    i.addEventListener('change', () => { const r = cur(); r[key] = +i.value; Object.assign(r, normalizedRange(r)); sync(); changed(); });
+    i.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') i.blur(); });
+    return { el: h('label', { class: 'lv-field' }, h('span', {}, name), i), set: () => { if (document.activeElement !== i) i.value = cur()[key].toFixed(decimals); } };
+  };
+  const fields = [field('Input black', 'black', 0), field('Gamma', 'gamma', 2), field('Input white', 'white', 0), field('Output black', 'outputBlack', 0), field('Output white', 'outputWhite', 0)];
+  function sync() { inH.place(); outH.place(); fields.forEach(f => f.set()); }
+  const chSel = select([...CHANNELS], s.levels.channel, v => { s.levels.channel = v as 'RGB'; ch = CHANNELS.indexOf(v as 'RGB'); drawHist(); sync(); }, { id: 'levels-channel' });
+  const setAll = (n: LevelsSettings) => { s.levels.ranges = n.ranges.map(r => ({ ...r })); sync(); changed(); };
+  // Sample: the eyedroppers set the black, gray or white point from a click on the original (all three channels together).
+  const sampleRow = h('div', { class: 'row lv-sample' }, h('span', { class: 'lbl small' }, 'Sample'));
+  const sampleHint = h('p', { class: 'hint', id: 'levels-sample-hint' });
+  const sampleBtns = (['Black', 'Gray', 'White'] as LevelsSampleMode[]).map(m => {
+    const b = button(`⌖ ${m}`, () => {
+      lvArmed = lvArmed === m ? null : m;
+      if (lvArmed) app.canvasHook = { cursor: 'crosshair', down: dpt => {
+        const rgb = originalRGB(dpt); if (!rgb || !lvArmed) return;
+        setAll(levelsSampling(s.levels, rgb, lvArmed));
+      } };
+      else if (app.canvasHook?.cursor === 'crosshair') app.canvasHook = null;
+      showArmed();
+    }, { class: 'btn small', id: `levels-sample-${m.toLowerCase()}`, title: `Click the original layer to set ${m.toLowerCase()}` });
+    sampleRow.append(b); return b;
+  });
+  const showArmed = () => {
+    sampleBtns.forEach((b, i) => b.classList.toggle('on', lvArmed === (['Black', 'Gray', 'White'] as const)[i]));
+    sampleHint.textContent = lvArmed ? `Click the ${forAdjustment ? 'image' : 'original layer'} to set ${lvArmed.toLowerCase()}. Click the eyedropper again to stop.` : '';
+  };
+  showArmed();
+  const autoRow = h('div', { class: 'row lv-auto' }, h('span', { class: 'lbl small' }, 'Auto'),
+    ...LEVELS_AUTO.map(m => button(m, () => { if (!currentHistogram) return; lvArmed = null; if (app.canvasHook?.cursor === 'crosshair') app.canvasHook = null; showArmed(); setAll(autoLevels(currentHistogram, m)); },
+      { class: 'btn small', id: `levels-auto-${m.split(' ')[0]!.toLowerCase()}${m.includes('neutral') ? '-neutral' : ''}` })));
+  const reset = button('Reset', () => { lvArmed = null; if (app.canvasHook?.cursor === 'crosshair') app.canvasHook = null; showArmed(); setAll(defaultLevels()); }, { class: 'btn small', id: 'levels-reset' });
+  const caption = h('p', { class: 'hint' }, forAdjustment ? 'Underlying pixels · alpha-weighted histogram' : app.doc?.selection ? 'Original pixels · selection and alpha-weighted histogram' : 'Original pixels · alpha-weighted histogram');
+  drawHist(); sync();
+  return h('div', { class: 'levels' },
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Channel'), chSel, h('span', { style: 'flex:1' }), reset),
+    cv, inH.row,
+    h('div', { class: 'row lv-fields' }, fields[0]!.el, fields[1]!.el, fields[2]!.el),
+    h('div', { class: 'lv-ramp', style: `width:${W}px` }), outH.row,
+    h('div', { class: 'row lv-fields' }, fields[3]!.el, fields[4]!.el),
+    sampleRow, sampleHint, autoRow, caption);
 }
 
 function filterToAdjustment(kind: FilterKind, s: FilterSettings, a: AdjustmentRecord) {
@@ -863,7 +962,7 @@ export function openFilter(kind: FilterKind) {
     crReadoutEl.textContent = px[3] ? `R ${px[0]}   G ${px[1]}   B ${px[2]}` : 'R —   G —   B —';
   };
   if (kind === 'Camera Raw Filter') stageEl?.addEventListener('pointermove', onHover);
-  const endHooks = () => { stageEl?.removeEventListener('pointermove', onHover); crScopeCanvas = null; crReadoutEl = null; closed = true; generation++; hsArmed = null; crArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; s.crSharpenMask = undefined; crCtx = null; app.needsRender = true; };
+  const endHooks = () => { stageEl?.removeEventListener('pointermove', onHover); crScopeCanvas = null; crReadoutEl = null; closed = true; generation++; hsArmed = null; crArmed = null; lvArmed = null; app.canvasHook = null; s.crClipping = undefined; s.crVisualize = undefined; s.crSharpenMask = undefined; crCtx = null; app.needsRender = true; };
   const panel = floatingPanel(title, () => { endHooks(); setCanvas(original); openPanel = null; }, { width: kind === 'Camera Raw Filter' ? 320 : 340, right: kind === 'Camera Raw Filter', id: 'filter-panel' });
   const body = h('div');
   const rebuild = () => body.replaceChildren(controls(kind, s, changed, rebuild));
@@ -895,13 +994,13 @@ export function editAdjustment(l: Layer) {
     app.renderer.invalidate();
     currentHistogram = levelsHistogram(img);
   }
-  if (kind === 'Hue/Saturation') {
+  if (kind === 'Hue/Saturation' || kind === 'Levels') {
     // The eyedroppers read the image below the adjustment.
     const d = app.doc!, idx = d.layers.indexOf(l);
     hsSampleBelow = app.renderer.readComposite({ ...d, layers: d.layers.map((x, i) => i < idx ? x : { ...x, visible: false }) });
     app.renderer.invalidate();
   }
-  const release = () => { hsSampleBelow = null; hsArmed = null; app.canvasHook = null; app.needsRender = true; };
+  const release = () => { hsSampleBelow = null; hsArmed = null; lvArmed = null; app.canvasHook = null; app.needsRender = true; };
   const changed = () => { filterToAdjustment(kind, settings, l.adjustment!); l.adjustment = { ...l.adjustment! }; app.needsRender = true; };
   const panel = floatingPanel(rec.kind, () => { release(); l.adjustment = before; app.history?.undoStack.pop(); app.changed('layers'); openPanel = null; }, { id: 'filter-panel' });
   const body = h('div');
@@ -964,21 +1063,49 @@ export const PRESETS: ({ title: string; width: number; height: number } | null)[
 export function newCanvasForm(onCreate: (w: number, h: number) => void, extra?: HTMLElement): HTMLElement {
   const w = h('input', { type: 'number', value: 1920, min: 1, max: 30000, id: 'new-width', class: 'dim' }) as HTMLInputElement;
   const hh = h('input', { type: 'number', value: 1080, min: 1, max: 30000, id: 'new-height', class: 'dim' }) as HTMLInputElement;
-  for (const i of [w, hh]) i.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') create(); });
+  const dim = (i: HTMLInputElement) => { const v = i.value.trim(); return /^\d+$/.test(v) && +v >= 1 && +v <= 30000 ? +v : null; };
+  const valid = () => dim(w) !== null && dim(hh) !== null;
+  for (const i of [w, hh]) {
+    i.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') create(); });
+    i.addEventListener('input', () => sync());
+  }
+  // The preset the fields match is shown (Custom otherwise); choosing one fills them in.
   const preset = select([{ label: 'Custom', value: 'Custom' }, ...PRESETS.map(p => p ? { label: `${p.title}  ·  ${p.width} × ${p.height}`, value: p.title } : null)], '1080p', v => {
-    const p = PRESETS.find(x => x?.title === v); if (p) { w.value = String(p.width); hh.value = String(p.height); }
-  });
+    const p = PRESETS.find(x => x?.title === v); if (p) { w.value = String(p.width); hh.value = String(p.height); } sync();
+  }, { id: 'new-preset' });
+  const hint = h('p', { class: 'hint', id: 'new-hint' });
   const create = () => {
-    const W = Math.round(+w.value), H = Math.round(+hh.value);
-    if (!(W >= 1 && H >= 1 && W <= 30000 && H <= 30000)) { toast('Enter whole numbers from 1 to 30,000 pixels.', 'error'); return; }
-    onCreate(W, H);
+    if (!valid()) return;
+    onCreate(dim(w)!, dim(hh)!);
   };
   const createBtn = button('Create canvas', create, { class: 'btn primary', id: 'create-canvas' });
+  function sync() {
+    const ok = valid();
+    hint.textContent = ok ? 'Transparent canvas · sRGB' : 'Enter whole numbers from 1 to 30,000 pixels.';
+    hint.classList.toggle('warn', !ok); createBtn.disabled = !ok;
+    preset.value = PRESETS.find(p => p && String(p.width) === w.value.trim() && String(p.height) === hh.value.trim())?.title ?? 'Custom';
+  }
+  sync();
+  // An image on the clipboard suggests its size (NewCanvasSheet.clipboardDimensions), when the page may already read it.
+  void (async () => {
+    try {
+      const perm = await navigator.permissions?.query({ name: 'clipboard-read' as PermissionName });
+      if (perm?.state !== 'granted' || !navigator.clipboard?.read) return;
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find(t => t.startsWith('image/')); if (!type) continue;
+        const bmp = await createImageBitmap(await item.getType(type));
+        if (bmp.width >= 1 && bmp.height >= 1 && bmp.width <= 30000 && bmp.height <= 30000 && w.value === '1920' && hh.value === '1080') {
+          w.value = String(bmp.width); hh.value = String(bmp.height); sync();
+        }
+        bmp.close(); return;
+      }
+    } catch { /* no clipboard access: keep the default */ }
+  })();
   return h('div', { class: 'new-canvas' }, h('h2', {}, 'New canvas'),
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Size'), preset),
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w, h('span', { class: 'unit' }, 'px')),
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh, h('span', { class: 'unit' }, 'px')),
-    h('p', { class: 'hint' }, 'Transparent canvas · sRGB'),
+    hint,
     h('div', { class: 'modal-buttons' }, extra ?? '', createBtn));
 }
 export function showNewCanvas() {
@@ -1137,22 +1264,85 @@ export function showSelectionAmount(op: 'expand' | 'contract' | 'feather') {
   modal(`${op[0].toUpperCase()}${op.slice(1)} Selection`, h('div', { class: 'row' }, h('span', { class: 'lbl' }, op === 'feather' ? 'Radius' : 'By'), i, h('span', { class: 'unit' }, 'px')),
     [{ label: 'Cancel', onClick: () => {} }, { label: 'OK', primary: true, onClick: () => app.modifySelection(op, Math.max(1, +i.value)) }]);
 }
+/** JPEGExportSheet: the encoded JPEG itself as the preview (Fit, zoom steps, 100% shows every pixel and artifact),
+ *  quality remembered from the last export, a background color for transparency, and the file's size. */
 export function showExportJpeg() {
   const d = app.doc; if (!d) return;
-  let q = 92;
-  const prev = h('canvas', { class: 'jpeg-preview' }) as HTMLCanvasElement;
-  const size = h('span', { class: 'hint' });
+  app.commitFloating();
+  const QKEY = 'jpegExportQuality';
+  const saved = Number(localStorage.getItem(QKEY));
+  let q = Number.isFinite(saved) && localStorage.getItem(QKEY) !== null ? Math.min(100, Math.max(0, saved)) : 85;
+  let matte: RGB = { red: 1, green: 1, blue: 1 };
+  let zoom: number | null = null; // null fits; 1 is 100% (one JPEG pixel per screen pixel)
+  const STEPS = [0.25, 0.5, 1, 2, 4, 8], FW = 560, FH = 330, dpr = window.devicePixelRatio || 1;
   const img = app.renderer.readComposite(d);
-  const src = canvasOf(d.width, d.height); { const x = ctx2d(src); x.fillStyle = '#fff'; x.fillRect(0, 0, d.width, d.height); const t = canvasOf(d.width, d.height); ctx2d(t).putImageData(img, 0, 0); x.drawImage(t, 0, 0); }
-  const s = Math.min(1, 360 / d.width, 240 / d.height);
-  prev.width = Math.round(d.width * s); prev.height = Math.round(d.height * s);
-  const update = () => src.toBlob(b => {
-    if (!b) return; size.textContent = `${(b.size / 1024).toFixed(0)} KB`;
-    createImageBitmap(b).then(bmp => { ctx2d(prev).drawImage(bmp, 0, 0, prev.width, prev.height); });
-  }, 'image/jpeg', q / 100);
-  update();
-  modal('Export JPEG', h('div', {}, prev, slider({ label: 'Quality', min: 1, max: 100, value: q, unit: '%', onInput: v => q = v, onCommit: update }), size),
-    [{ label: 'Cancel', onClick: () => {} }, { label: 'Export', primary: true, onClick: () => { app.exportImage('jpeg', q / 100); } }]);
+  const layer = canvasOf(d.width, d.height); ctx2d(layer).putImageData(img, 0, 0);
+  const src = canvasOf(d.width, d.height), sx = ctx2d(src);
+  const shown = h('canvas', { class: 'jpeg-image' }) as HTMLCanvasElement;
+  shown.width = d.width; shown.height = d.height;
+  const frame = h('div', { class: 'jpeg-frame', id: 'jpeg-frame', style: `width:${FW}px;height:${FH}px`, title: 'Drag or scroll to move around; double-click switches between Fit and 100%' }, shown);
+  const busy = h('div', { class: 'jpeg-busy' }, 'Updating…');
+  frame.append(busy);
+  const status = h('span', { class: 'jpeg-size', id: 'jpeg-size' }, 'Updating…');
+  let blob: Blob | null = null, token = 0, timer = 0;
+  const fitZoom = () => Math.min(FW / (d.width / dpr), FH / (d.height / dpr));
+  const shownZoom = () => zoom ?? fitZoom();
+  const pct = h('span', { class: 'hint', id: 'jpeg-zoom' });
+  const fitBtn = button('Fit', () => setZoom(null), { id: 'jpeg-fit' });
+  const zin = button('+', () => stepZoom(1), { id: 'jpeg-zoom-in', title: 'Zoom in' }), zout = button('−', () => stepZoom(-1), { id: 'jpeg-zoom-out', title: 'Zoom out' });
+  const next = (dir: number) => { const z = shownZoom(); return dir > 0 ? STEPS.find(s => s > z * 1.001) : [...STEPS].reverse().find(s => s < z * 0.999); };
+  const stepZoom = (dir: number) => { const n = next(dir); if (n) setZoom(n); };
+  function setZoom(z: number | null) {
+    // Zooming keeps the middle of the view on the same part of the image.
+    const before = shownZoom(), fx = (frame.scrollLeft + frame.clientWidth / 2) / Math.max(1, shown.clientWidth), fy = (frame.scrollTop + frame.clientHeight / 2) / Math.max(1, shown.clientHeight);
+    zoom = z; layout();
+    if (z !== null) { frame.scrollLeft = fx * shown.clientWidth - frame.clientWidth / 2; frame.scrollTop = fy * shown.clientHeight - frame.clientHeight / 2; }
+    void before;
+  }
+  function layout() {
+    const z = shownZoom(), w = d!.width / dpr * z, hh = d!.height / dpr * z;
+    shown.style.width = `${w}px`; shown.style.height = `${hh}px`;
+    shown.style.imageRendering = zoom !== null && z >= 1 ? 'pixelated' : 'auto';
+    frame.classList.toggle('zoomed', zoom !== null);
+    shown.style.margin = `${Math.max(0, (FH - hh) / 2)}px ${Math.max(0, (FW - w) / 2)}px`;
+    fitBtn.disabled = zoom === null; zin.disabled = !next(1); zout.disabled = !next(-1);
+    pct.textContent = `${Math.round(z * 100)}%`;
+  }
+  frame.addEventListener('dblclick', () => setZoom(zoom === null ? 1 : null));
+  frame.addEventListener('pointerdown', e => {
+    if (zoom === null) return;
+    const x0 = e.clientX, y0 = e.clientY, l0 = frame.scrollLeft, t0 = frame.scrollTop; frame.setPointerCapture(e.pointerId); frame.classList.add('grabbing');
+    const mv = (ev: PointerEvent) => { frame.scrollLeft = l0 - (ev.clientX - x0); frame.scrollTop = t0 - (ev.clientY - y0); };
+    const up = () => { frame.removeEventListener('pointermove', mv); frame.removeEventListener('pointerup', up); frame.classList.remove('grabbing'); };
+    frame.addEventListener('pointermove', mv); frame.addEventListener('pointerup', up);
+  });
+  const okRef: { b?: HTMLButtonElement } = {};
+  const encode = () => {
+    const my = ++token; blob = null; busy.style.display = ''; status.textContent = 'Updating…'; if (okRef.b) okRef.b.disabled = true;
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      sx.fillStyle = toHex(matte); sx.fillRect(0, 0, d.width, d.height); sx.drawImage(layer, 0, 0);
+      src.toBlob(b => {
+        if (my !== token || !b) return;
+        blob = b; status.textContent = b.size < 1024 * 1024 ? `${Math.max(1, Math.round(b.size / 1000))} KB` : `${(b.size / 1e6).toFixed(1)} MB`;
+        createImageBitmap(b).then(bmp => { if (my !== token) return; ctx2d(shown).drawImage(bmp, 0, 0); busy.style.display = 'none'; if (okRef.b) okRef.b.disabled = false; });
+      }, 'image/jpeg', q / 100);
+    }, 200);
+  };
+  const matteWell = colorWell(matte, c => { matte = c; encode(); });
+  const body = h('div', { class: 'jpeg-export' },
+    h('div', { class: 'row jpeg-tools' }, pct, fitBtn, zin, zout),
+    frame,
+    slider({ label: 'Quality', min: 0, max: 100, value: q, unit: '%', id: 'jpeg-quality', onInput: v => { q = v; encode(); } }),
+    h('div', { class: 'row' }, h('span', { class: 'lbl wide' }, 'Background for transparency'), matteWell),
+    h('div', { class: 'row jpeg-info' }, h('span', { class: 'hint' }, `${d.width.toLocaleString()} × ${d.height.toLocaleString()} px · sRGB`), status));
+  modal('Export JPEG', body, [{ label: 'Cancel', onClick: () => {} }, { label: 'Export…', primary: true, onClick: () => {
+    if (!blob) return false;
+    localStorage.setItem(QKEY, String(q));
+    download(blob, `${d.name || 'Untitled'}.jpg`);
+  } }], 'jpeg-modal');
+  okRef.b = document.querySelector('#jpeg-modal .modal-buttons .btn.primary') as HTMLButtonElement;
+  layout(); encode();
 }
 /** KeyboardShortcutsSheet: click a shortcut, press its new chord; changes apply on Save. */
 export function showShortcuts() {

@@ -1,5 +1,6 @@
 // The window: ContentView.swift's layout (toolbar with project tabs, tool header, tool rail, canvas, Layers panel,
 // status bar) plus the menu bar from CompositorApp.swift's commands, and the keyboard shortcuts.
+import { colorSwatchButton } from './colorpicker';
 import { applyFilterAsync, poolSize } from '../engine/filterPool';
 import { applyFilter, defaultFilterSettings } from '../engine/adjustments';
 import { app, TOOLS, type Tool } from './app';
@@ -261,11 +262,9 @@ function renderRail() {
     r.append(b);
   }
   // Foreground/background color wells (ColorPaletteControls.swift).
-  const fg = h('input', { type: 'color', value: toHex(app.fg), class: 'swatch fg', title: 'Foreground color' }) as HTMLInputElement;
-  const bg = h('input', { type: 'color', value: toHex(app.bg), class: 'swatch bg', title: 'Background color' }) as HTMLInputElement;
-  fg.addEventListener('input', () => { app.fg = fromHex(fg.value); });
-  bg.addEventListener('input', () => { app.bg = fromHex(bg.value); });
-  fg.addEventListener('change', () => app.emit('colors')); bg.addEventListener('change', () => app.emit('colors'));
+  // Clicking one opens the app's picker; nothing reaches the palette until OK.
+  const fg = colorSwatchButton(app.fg, c => { app.fg = c; app.emit('colors'); }, { title: 'Foreground Color', cls: 'swatch fg', id: 'swatch-fg', live: false });
+  const bg = colorSwatchButton(app.bg, c => { app.bg = c; app.emit('colors'); }, { title: 'Background Color', cls: 'swatch bg', id: 'swatch-bg', live: false });
   const swap = h('button', { class: 'swap', title: 'Swap colors (X)' }, icon('swap', 11));
   swap.addEventListener('click', () => { [app.fg, app.bg] = [app.bg, app.fg]; app.emit('colors'); });
   const reset = h('button', { class: 'reset-colors', title: 'Default colors (D)' });
@@ -362,8 +361,7 @@ function renderHeader() {
         onInput: v => { app.shape.cornerRadius = v; editShape({ cornerRadius: v }, 'Corner Radius'); }, id: 'shape-radius' }));
       if (app.shape.kind === 'Line' || live?.shape?.kind === 'Line') hd.append(slider({ label: 'Line Width', min: 1, max: 200, value: live?.shape?.lineWidth ?? app.shape.lineWidth, unit: 'px', width: 210,
         onInput: v => { app.shape.lineWidth = v; editShape({ lineWidth: v }, 'Line Width'); } }));
-      if (live?.shape) { const w = h('input', { type: 'color', value: toHex(live.shape), class: 'well', id: 'shape-color', title: 'Shape color' }) as HTMLInputElement;
-        w.addEventListener('input', () => editShape({ ...fromHex(w.value) }, 'Shape Color')); hd.append(w); }
+      if (live?.shape) hd.append(colorSwatchButton(live.shape, c => editShape({ ...c }, 'Shape Color'), { title: 'Shape Color', id: 'shape-color', live: false }));
       break;
     case 'type': {
       hd.append(title('Type'));
@@ -385,13 +383,14 @@ function renderHeader() {
         slider({ label: 'Size', min: 4, max: 1000, value: Math.round(style.fontSize), unit: 'px', width: 200, onInput: () => {}, onCommit: v => set({ fontSize: v }) }),
         seg([['Left', 'Left'], ['Center', 'Center'], ['Right', 'Right']], style.alignment, v => set({ alignment: v })),
         slider({ label: 'Tracking', min: -50, max: 200, value: style.tracking, width: 190, onInput: () => {}, onCommit: v => set({ tracking: v }) }));
-      { const w = h('input', { type: 'color', value: toHex(style), class: 'well', id: 'type-color', title: 'Text color (the selected letters while editing)' }) as HTMLInputElement;
-        w.addEventListener('mousedown', () => { /* keep the editor's selection */ }); w.addEventListener('change', () => set({ ...fromHex(w.value) })); hd.append(w); }
+      // Text color goes to the selected letters while editing (the button keeps the editor's selection).
+      hd.append(colorSwatchButton(style, c => set({ ...c }), { title: 'Text Color', id: 'type-color', live: false }));
       break;
     }
     case 'eyedropper': hd.append(title('Eyedropper'), checkbox('Sample Ring', app.showsSampleRing, v => { app.showsSampleRing = v; }, 'sample-ring'), h('span', { class: 'hint' }, 'Click or drag to pick the foreground color · Option-click for background')); break;
     case 'crop': {
       hd.append(title('Crop'), h('span', { class: 'lbl' }, 'Ratio'), select(['Free', 'Original', '1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'], app.crop.ratio, v => { app.crop.ratio = v; }),
+        h('span', { class: 'hdr-readout', id: 'crop-size' }, ctl.crop ? `${Math.round(ctl.crop.w)} × ${Math.round(ctl.crop.h)} px` : ''),
         button('Apply', () => ctl.applyCrop(), { class: 'btn primary', id: 'crop-apply' }), button('Cancel', () => { ctl.cancelCrop(); }));
       break;
     }

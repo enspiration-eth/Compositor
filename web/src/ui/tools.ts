@@ -1,3 +1,4 @@
+import { pickerOpen, sampleForPicker } from './colorpicker';
 import { translateTextKey } from './shortcuts';
 import { Renderer } from '../engine/render';
 import { WarpSession } from '../engine/kernels';
@@ -205,6 +206,10 @@ export class CanvasController {
       x.restore();
     }
     if (app.canvasHook?.draw) { x.save(); app.canvasHook.draw(x, S); x.restore(); }
+    { // CropControls: the frame's size in the header, kept current while it's dragged.
+      const el = document.getElementById('crop-size');
+      if (el) el.textContent = this.crop ? `${Math.round(this.crop.w)} × ${Math.round(this.crop.h)} px` : '';
+    }
     if (this.crop) {
       const c = this.crop, [cx, cy] = S(c.x, c.y), w = c.w * p.zoom, h = c.h * p.zoom;
       x.save(); x.fillStyle = 'rgba(0,0,0,0.55)'; x.beginPath(); x.rect(0, 0, this.overlay.width, this.overlay.height); x.rect(cx, cy, w, h); x.fill('evenodd');
@@ -234,7 +239,7 @@ export class CanvasController {
       x.save(); x.strokeStyle = '#fff'; x.lineWidth = 1.5; x.beginPath(); x.moveTo(sx - 7, sy); x.lineTo(sx + 7, sy); x.moveTo(sx, sy - 7); x.lineTo(sx, sy + 7); x.stroke(); x.restore();
     }
     // brush cursor
-    if (this.pointer && ['brush', 'spotHealing', 'cloneStamp', 'blur'].includes(app.tool) && !this.spaceDown) {
+    if (this.pointer && !app.canvasHook && ['brush', 'spotHealing', 'cloneStamp', 'blur'].includes(app.tool) && !this.spaceDown) {
       const r = app.brush.size / 2 * p.zoom;
       x.save(); x.beginPath(); x.arc(this.pointer[0], this.pointer[1], Math.max(1, r), 0, Math.PI * 2);
       x.strokeStyle = 'rgba(0,0,0,0.7)'; x.lineWidth = 2.5; x.stroke(); x.strokeStyle = 'rgba(255,255,255,0.95)'; x.lineWidth = 1; x.stroke();
@@ -278,6 +283,8 @@ export class CanvasController {
     this.pointer = s;
     if (e.button === 1 || this.spaceDown || app.tool === 'hand') { this.drag = { kind: 'pan', start: s, startDoc: dpt, data: { ox: p.ox, oy: p.oy } }; return; }
     if (e.button !== 0) return;
+    // With the color picker open, a click (or drag) on the canvas samples for it instead of using the tool.
+    if (pickerOpen()) { this.drag = { kind: 'sample', start: s, startDoc: dpt, data: { picker: true } }; this.sample(dpt, false, true); return; }
     if (app.canvasHook) { this.drag = { kind: 'hook', start: s, startDoc: dpt }; app.canvasHook.down?.(dpt, e); app.needsRender = true; return; }
     if (app.tool === 'move' && !e.altKey) {
       // A transform handle under the pointer wins over a guide running through it.
@@ -350,7 +357,7 @@ export class CanvasController {
     if (!dr) return;
     switch (dr.kind) {
       case 'hook': app.canvasHook?.move?.(dpt, e); return;
-      case 'sample': this.sample(dpt, !!dr.data!.bg); if (this.ring) this.ring.s = s; app.needsRender = true; return;
+      case 'sample': this.sample(dpt, !!dr.data!.bg, !!dr.data!.picker); if (this.ring) this.ring.s = s; app.needsRender = true; return;
       case 'pan': p.ox = (dr.data!.ox as number) + s[0] - dr.start[0]; p.oy = (dr.data!.oy as number) + s[1] - dr.start[1]; p.fitted = false; app.emit('view'); return;
       case 'zoom': {
         const dx = s[0] - dr.start[0];
@@ -1088,12 +1095,13 @@ export class CanvasController {
   }
 
   // ---------- eyedropper ----------
-  sample(dpt: Pt, toBackground: boolean) {
+  sample(dpt: Pt, toBackground: boolean, forPicker = false) {
     const d = app.doc!;
     if (dpt[0] < 0 || dpt[1] < 0 || dpt[0] >= d.width || dpt[1] >= d.height) return;
     const [r, g, b, a] = app.renderer.readPixel(d, dpt[0], dpt[1]);
     if (!a) return;
     const c: RGB = { red: r / 255, green: g / 255, blue: b / 255 };
+    if (forPicker) { sampleForPicker(c); return; }
     if (toBackground) app.bg = c; else app.fg = c;
     app.emit('colors');
   }

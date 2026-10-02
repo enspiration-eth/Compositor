@@ -48,7 +48,12 @@ try {
   await step('welcome screen screenshot', async () => { await page.screenshot({ path: `${SHOTS}/01-welcome.png` }); });
 
   await step('new canvas via dialog', async () => {
+    await page.fill('#new-width', '1080'); await page.fill('#new-height', '1350');
+    assert(await page.inputValue('#new-preset') === 'Instagram Portrait', 'matching preset shown');
+    await page.fill('#new-width', '0');
+    assert(await page.isDisabled('#create-canvas') && (await page.textContent('#new-hint')).includes('whole numbers'), 'invalid size disables Create');
     await page.fill('#new-width', '1200'); await page.fill('#new-height', '800');
+    assert(await page.inputValue('#new-preset') === 'Custom', 'Custom when no preset matches');
     await page.click('#create-canvas');
     const s = await st(); assert(s && s.w === 1200 && s.h === 800 && s.layers === 1, JSON.stringify(s));
     await page.evaluate(() => window.compositor.app.closeProject());
@@ -279,7 +284,7 @@ try {
     assert(!(await page.$('#filter-panel')), 'old chord does nothing');
     await page.keyboard.press('Control+Shift+K');
     await page.waitForSelector('#filter-panel');
-    assert((await page.textContent('#filter-panel')).includes('Input Black'), 'Levels opened by the new chord');
+    assert(!!(await page.$('#filter-panel #levels-histogram')), 'Levels opened by the new chord');
     await page.locator('#filter-panel button:text-is("Cancel")').click();
     await page.click('.menubar-item[data-menu="Image"]');
     const lbl = await page.locator('.menu .menu-item', { hasText: 'Levels…' }).first().locator('.menu-shortcut').textContent();
@@ -297,6 +302,58 @@ try {
     await menu('Filter', 'Gaussian Blur');
     await page.waitForSelector('#filter-panel'); await filterOk();
     assert((await st()).undo > 0, 'blur recorded');
+  });
+
+  await step('Levels sheet: triangles, fields, eyedroppers, Auto modes', async () => {
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Sky').id); });
+    await menu('Image', 'Levels');
+    await page.waitForSelector('#filter-panel #levels-histogram');
+    const lv = () => page.evaluate(() => JSON.parse(JSON.stringify(window.__levelsS ?? null)));
+    // Drag the input black triangle right: the field follows.
+    const tri = await page.locator('#levels-input-handles .lv-tri.k').boundingBox(), row = await page.locator('#levels-input-handles').boundingBox();
+    await page.mouse.move(tri.x + tri.width / 2, tri.y + 6); await page.mouse.down();
+    await page.mouse.move(row.x + row.width * 40 / 255, tri.y + 6, { steps: 4 }); await page.mouse.up();
+    const b = +(await page.inputValue('#levels-input-black'));
+    assert(b >= 36 && b <= 44, 'input black follows the triangle: ' + b);
+    await page.fill('#levels-gamma', '1.5'); await page.press('#levels-gamma', 'Enter');
+    const gx = await page.evaluate(() => parseFloat(document.querySelector('#levels-input-handles .lv-tri.g').style.left));
+    assert(gx > 100 * 40 / 255 && gx < 50, 'gamma triangle moves toward black for gamma > 1: ' + gx);
+    // Auto Contrast: one shared interval on RGB.
+    await page.click('#levels-auto-contrast');
+    assert(+(await page.inputValue('#levels-input-black')) <= 255 && (await page.inputValue('#levels-gamma')) === '1.00', 'Auto Contrast resets gamma');
+    // White eyedropper on the sky sets all three channels' white points from the original color.
+    await page.click('#levels-sample-white');
+    assert((await page.textContent('#levels-sample-hint')).includes('set white'), 'eyedropper hint');
+    assert(await page.evaluate(() => !!window.compositor.app.canvasHook), 'eyedropper armed on the canvas');
+    const [sx, sy] = await toScreen(100, 500); await page.mouse.click(sx, sy);
+    await page.selectOption('#levels-channel', 'Blue');
+    const wB = +(await page.inputValue('#levels-input-white'));
+    await page.selectOption('#levels-channel', 'Red');
+    const wR = +(await page.inputValue('#levels-input-white'));
+    assert(wB < 255 && wR < wB, `white points from the sky color (R ${wR}, B ${wB})`);
+    await page.selectOption('#levels-channel', 'RGB');
+    await page.screenshot({ path: `${SHOTS}/26-levels.png` });
+    await page.click('#levels-sample-white');
+    assert(!(await page.textContent('#levels-sample-hint')), 'eyedropper off');
+    await page.click('#levels-auto-color-neutral');
+    await page.locator('#filter-panel button:text-is("Cancel")').click();
+    void lv;
+  });
+
+  await step('Curves editor: add, select, readout, remove point, reset', async () => {
+    await menu('Image', 'Curves');
+    await page.waitForSelector('#filter-panel #curve-canvas');
+    const b = await page.locator('#curve-canvas').boundingBox();
+    await page.mouse.click(b.x + b.width * 0.5, b.y + b.height * 0.3);
+    const r = await page.textContent('#curve-readout');
+    assert(/^Input 12[6-9] · Output 17[6-9]$/.test(r), 'readout of the new point: ' + r);
+    assert(!(await page.isDisabled('#curve-remove')), 'interior point removable');
+    await page.screenshot({ path: `${SHOTS}/27-curves.png` });
+    await page.keyboard.press('Delete');
+    assert(await page.textContent('#curve-readout') === '', 'Delete removed it');
+    await page.mouse.click(b.x + 2, b.y + b.height - 2);
+    assert(await page.isDisabled('#curve-remove'), 'an end point can not be removed');
+    await page.locator('#filter-panel button:text-is("Cancel")').click();
   });
 
   await step('adjustment layer (Levels via wasm)', async () => {
@@ -517,6 +574,76 @@ try {
     await page.evaluate(fg => { window.compositor.app.fg = fg; window.compositor.app.emit('colors'); }, fg0);
   });
 
+  await step('Color picker panel: field, hue strip, RGB/hex, canvas sampling, Cancel/OK', async () => {
+    const fg0 = await page.evaluate(() => ({ ...window.compositor.app.fg }));
+    await page.click('#swatch-fg'); await page.waitForSelector('#color-picker');
+    const box = await (await page.$('#cp-hue')).boundingBox();
+    await page.mouse.click(box.x + 17, box.y + box.height * (1 - 120 / 360)); // green hue
+    const fb = await (await page.$('#cp-field')).boundingBox();
+    await page.mouse.click(fb.x + fb.width - 2, fb.y + 2);
+    const g = await page.evaluate(() => [+document.getElementById('cp-r').value, +document.getElementById('cp-g').value, +document.getElementById('cp-b').value]);
+    assert(g[1] > 240 && g[0] < 20 && g[2] < 20, 'hue + field give green ' + g);
+    assert(await page.evaluate(fg => JSON.stringify(window.compositor.app.fg) === JSON.stringify(fg), fg0), 'palette untouched until OK');
+    await page.fill('#cp-r', '200'); await page.dispatchEvent('#cp-r', 'input');
+    { const hx = await page.inputValue('#cp-hex'); assert(hx.startsWith('C8'), 'RGB field updates hex ' + hx); }
+    await page.screenshot({ path: `${SHOTS}/24-color-picker.png` });
+    await page.keyboard.press('Escape');
+    assert(await page.evaluate(fg => !document.getElementById('color-picker') && JSON.stringify(window.compositor.app.fg) === JSON.stringify(fg), fg0), 'Escape cancels');
+    // Sampling: a click on the canvas takes its color into the picker; OK keeps it.
+    await page.click('#swatch-fg'); await page.waitForSelector('#color-picker');
+    const [sx, sy] = await toScreen(200, 950); await page.mouse.click(sx, sy);
+    const want = await page.evaluate(() => { const { app } = window.compositor; const [r, g, b] = app.renderer.readPixel(app.doc, 200, 950); return [r, g, b]; });
+    await page.click('#cp-ok');
+    const got = await page.evaluate(() => { const f = window.compositor.app.fg; return [f.red, f.green, f.blue].map(v => Math.round(v * 255)); });
+    assert(JSON.stringify(got) === JSON.stringify(want), `sampled ${got} vs ${want}`);
+    await page.evaluate(fg => { window.compositor.app.fg = fg; window.compositor.app.emit('colors'); }, fg0);
+  });
+
+  await step('Export JPEG sheet: encoded preview, zoom, quality, background color, remembered quality', async () => {
+    await menu('File', 'Export JPEG');
+    await page.waitForSelector('#jpeg-modal');
+    await page.waitForFunction(() => /KB|MB/.test(document.getElementById('jpeg-size').textContent));
+    const q0 = await page.inputValue('#jpeg-quality');
+    const size0 = await page.textContent('#jpeg-size');
+    await page.fill('#jpeg-quality', '20'); await page.press('#jpeg-quality', 'Tab');
+    await page.waitForFunction(s0 => { const t = document.getElementById('jpeg-size').textContent; return /KB|MB/.test(t) && t !== s0; }, size0);
+    assert(parseFloat(await page.textContent('#jpeg-size')) < parseFloat(size0) || (await page.textContent('#jpeg-size')).includes('KB') && size0.includes('MB'), 'lower quality, smaller file');
+    await page.click('#jpeg-zoom-in'); await page.click('#jpeg-zoom-in');
+    assert(await page.evaluate(() => document.getElementById('jpeg-frame').classList.contains('zoomed')), 'zoomed in');
+    await page.dblclick('#jpeg-frame');
+    assert(await page.isDisabled('#jpeg-fit'), 'double-click while zoomed fits');
+    await page.dblclick('#jpeg-frame');
+    assert(await page.textContent('#jpeg-zoom') === '100%', 'double-click from Fit goes to 100%');
+    // The background swatch opens the app's picker above the sheet.
+    await page.click('#jpeg-modal .well'); await page.waitForSelector('#color-picker');
+    await page.fill('#cp-hex', '000000'); await page.press('#cp-hex', 'Enter'); await page.click('#cp-ok');
+    assert(await page.evaluate(() => !!document.getElementById('jpeg-modal') && !document.getElementById('color-picker')), 'sheet still open after the picker, picker closed');
+    await page.waitForFunction(() => /KB|MB/.test(document.getElementById('jpeg-size').textContent));
+    await page.screenshot({ path: `${SHOTS}/25-export-jpeg.png` });
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#jpeg-modal .btn.primary')]);
+    assert(dl.suggestedFilename().endsWith('.jpg'), 'downloads a .jpg');
+    assert(await page.evaluate(() => localStorage.getItem('jpegExportQuality') === '20'), 'quality remembered');
+    await page.evaluate(() => localStorage.removeItem('jpegExportQuality'));
+    void q0;
+  });
+
+  await step('Crop tool: frame size readout, cancel', async () => {
+    await page.click('.rail-btn[data-tool="crop"]');
+    await page.waitForFunction(() => /^\d+ × \d+ px$/.test(document.getElementById('crop-size')?.textContent ?? ''), null, { timeout: 3000 });
+    const c0 = await page.evaluate(() => ({ ...window.compositor.ctl.crop }));
+    // Drag the top-left handle in: the readout follows while dragging.
+    const [ax, ay] = await toScreen(c0.x, c0.y), [bx, by] = await toScreen(c0.x + 200, c0.y + 200);
+    await page.mouse.move(ax, ay); await page.mouse.down(); await page.mouse.move(bx, by, { steps: 5 });
+    const mid = await page.textContent('#crop-size');
+    await page.mouse.up();
+    const want = `${Math.round(c0.w - 200)} × ${Math.round(c0.h - 200)} px`;
+    const [w, hh] = mid.match(/\d+/g).map(Number);
+    assert(Math.abs(w - (c0.w - 200)) <= 3 && Math.abs(hh - (c0.h - 200)) <= 3, `size while dragging ${mid}, want about ${want}`);
+    await page.locator('.tool-header button:text-is("Cancel")').click();
+    await page.waitForFunction(() => !window.compositor.ctl.crop || window.compositor.ctl.crop.w >= window.compositor.app.doc.width, null, { timeout: 3000 });
+    await page.click('.rail-btn[data-tool="move"]');
+  });
+
   await step('Free Distort (wasm perspective warp)', async () => {
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
     await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Compositor').id); });
@@ -585,7 +712,8 @@ try {
     await page.waitForSelector('textarea.text-editor');
     await page.waitForFunction(() => document.activeElement?.classList.contains('text-editor'));
     assert(await page.evaluate(() => { const ta = document.querySelector('textarea.text-editor'); ta.setSelectionRange(0, 4); return ta.value === 'Live Type' && !!ta._ctx.layer; }), 'editing the existing text layer');
-    await page.evaluate(() => { const w = document.getElementById('type-color'); w.value = '#ff2a2a'; w.dispatchEvent(new Event('change')); });
+    await page.click('#type-color'); await page.waitForSelector('#color-picker');
+    await page.fill('#cp-hex', 'ff2a2a'); await page.press('#cp-hex', 'Enter'); await page.click('#cp-ok');
     await page.waitForTimeout(100);
     await page.evaluate(() => { const ta = document.querySelector('textarea.text-editor'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
     await page.keyboard.type('!');

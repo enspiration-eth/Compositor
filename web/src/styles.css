@@ -221,3 +221,48 @@ body.busy, body.busy * { cursor: progress !important; }
 .anchor-note { max-width: 190px; margin-left: 12px; }
 .anchor-name { font-weight: 600; font-size: 12px; }
 .canvas-size > .check, .image-size > .check { display: flex; margin: 4px 0; }
+/* Color picker (ColorPickerSheet) */
+.well, .swatch { background: var(--well, #000); }
+.well { box-shadow: inset 0 0 0 2px #2c2c2e; }
+.swatch { box-shadow: inset 0 0 0 1px #000; }
+.cp { display: flex; gap: 14px; align-items: flex-start; }
+.cp-field { position: relative; border: 1px solid rgba(0,0,0,0.6); cursor: crosshair; flex: none; touch-action: none; }
+.cp-marker { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 0.75px #000; pointer-events: none; }
+.cp-hue { position: relative; width: 34px; flex: none; cursor: ns-resize; touch-action: none; }
+.cp-hue-strip { position: absolute; left: 7px; width: 20px; top: 0; bottom: 0; border: 1px solid rgba(0,0,0,0.6);
+  background: linear-gradient(to bottom, #f00, #f0f, #00f, #0ff, #0f0, #ff0, #f00); }
+.cp-hue-arrows { position: absolute; left: 0; right: 0; height: 10px; margin-top: -5px; pointer-events: none; }
+.cp-hue-arrows::before, .cp-hue-arrows::after { content: ''; position: absolute; top: 0; border: 5px solid transparent; }
+.cp-hue-arrows::before { left: 0; border-left: 7px solid var(--text, #ddd); border-right: 0; }
+.cp-hue-arrows::after { right: 0; border-right: 7px solid var(--text, #ddd); border-left: 0; }
+.cp-side { display: flex; flex-direction: column; width: 170px; height: 256px; }
+.cp-top { display: flex; gap: 14px; }
+.cp-preview { width: 64px; height: 64px; border-radius: 5px; overflow: hidden; border: 1px solid rgba(0,0,0,0.6); flex: none; }
+.cp-new, .cp-current { height: 50%; } .cp-current { cursor: pointer; }
+.cp-buttons { display: flex; flex-direction: column; gap: 8px; flex: 1; } .cp-buttons .btn { width: 100%; }
+.cp-fields { margin-top: auto; display: grid; gap: 6px; }
+.cp-row { display: flex; align-items: center; gap: 8px; } .cp-row span { width: 14px; color: var(--text2); }
+.cp-row input.dim { width: 60px; } .cp-hex { width: 84px; font-family: ui-monospace, Menlo, monospace; }
+.cp-hint { margin-top: 8px; font-size: 11px; }
+/* Export JPEG (JPEGExportSheet) */
+.jpeg-export { display: flex; flex-direction: column; gap: 12px; }
+.jpeg-tools { justify-content: flex-end; gap: 6px; margin-bottom: -6px; }
+.jpeg-frame { position: relative; background: #1f1f1f; overflow: hidden; border-radius: 4px; }
+.jpeg-frame.zoomed { overflow: auto; cursor: grab; } .jpeg-frame.grabbing { cursor: grabbing; }
+.jpeg-image { display: block; }
+.jpeg-busy { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(40,40,42,0.9); padding: 8px 14px; border-radius: 8px; color: var(--text2); }
+.jpeg-info { justify-content: space-between; } .jpeg-size { font-variant-numeric: tabular-nums; }
+.lbl.wide { width: auto; }
+/* Levels (LevelsSheet) */
+.levels .histo { margin: 8px 0 0; }
+.lv-handles { position: relative; height: 18px; margin-bottom: 4px; }
+.lv-tri { position: absolute; top: 2px; width: 0; height: 0; margin-left: -7px; border: 7px solid transparent; border-top: 0; border-bottom-width: 12px; cursor: ew-resize; filter: drop-shadow(0 0 0.6px #888); touch-action: none; }
+.lv-tri::before { content: ''; position: absolute; inset: -4px -10px -6px; }
+.lv-tri.k { border-bottom-color: #000; } .lv-tri.g { border-bottom-color: #8e8e93; } .lv-tri.w { border-bottom-color: #fff; }
+.lv-ramp { height: 14px; background: linear-gradient(to right, #000, #fff); border-radius: 2px; margin-top: 6px; }
+.lv-fields { justify-content: space-between; width: 300px; }
+.lv-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text2); } .lv-field input { width: 70px; text-align: right; }
+.lbl.small { width: auto; min-width: 46px; font-size: 11px; }
+.lv-sample, .lv-auto { gap: 6px; flex-wrap: wrap; }
+.btn.small.on { background: var(--accent, #0a84ff); color: #fff; }
+.hdr-readout { font-variant-numeric: tabular-nums; color: var(--text2); min-width: 110px; }

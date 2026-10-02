@@ -1,6 +1,7 @@
 // Small DOM helpers and the controls the Mac app builds with SwiftUI: sliders whose label scrubs the value
 // (UI/NumericScrub.swift), pop-up menus, color wells, and floating panels (UI/FloatingPanel.swift).
 type Attrs = Record<string, unknown> & { class?: string; style?: string };
+import { colorSwatchButton } from './colorpicker';
 import { menuShortcutLabel } from './shortcuts';
 export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = {}, ...children: (Node | string | null | undefined | false)[]): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
@@ -107,9 +108,9 @@ export const toHex = (c: { red: number; green: number; blue: number }) =>
   '#' + [c.red, c.green, c.blue].map(v => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('');
 export const fromHex = (hex: string) => ({ red: parseInt(hex.slice(1, 3), 16) / 255, green: parseInt(hex.slice(3, 5), 16) / 255, blue: parseInt(hex.slice(5, 7), 16) / 255 });
 export function colorWell(value: { red: number; green: number; blue: number }, onChange: (c: { red: number; green: number; blue: number }) => void, label?: string): HTMLElement {
-  const i = h('input', { type: 'color', value: toHex(value), class: 'well' }) as HTMLInputElement;
-  i.addEventListener('input', () => onChange(fromHex(i.value)));
-  return label ? h('label', { class: 'well-row' }, h('span', {}, label), i) : i;
+  // The app's own picker (ColorPickerSheet), not the browser's: it previews live, samples the canvas, and Cancel restores.
+  const i = colorSwatchButton(value, onChange, { title: label ? `${label} Color` : 'Color' });
+  return label ? h('div', { class: 'well-row' }, h('span', {}, label), i) : i;
 }
 export function button(label: string | Node, onClick: () => void, attrs: Attrs = {}): HTMLButtonElement {
   const b = h('button', { class: 'btn', ...attrs }, label) as HTMLButtonElement;
@@ -157,7 +158,7 @@ export function modal(title: string, content: HTMLElement, buttons: { label: str
   });
   // Escape cancels from anywhere in the sheet (selects and fields stop their own keys), except a shortcut being recorded.
   const onEscape = (e: KeyboardEvent) => {
-    if (e.key !== 'Escape' || !back.isConnected || back !== [...document.querySelectorAll('.modal-back')].pop() || (e.target as HTMLElement).closest('.shortcut-recorder.recording')) return;
+    if (e.key !== 'Escape' || !back.isConnected || back !== [...document.querySelectorAll('.modal-back')].pop() || (e.target as HTMLElement).closest('.shortcut-recorder.recording, #color-picker')) return;
     e.preventDefault(); e.stopPropagation(); buttons.find(b => b.label === 'Cancel')?.onClick(); close();
   };
   document.addEventListener('keydown', onEscape, true);

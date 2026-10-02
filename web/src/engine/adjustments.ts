@@ -41,18 +41,63 @@ export function levelsTables(l: LevelsSettings): number[] {
   return out;
 }
 /** Levels › Auto (LevelsAutomatic.swift in spirit): clip 0.1% at each end of the RGB histogram. */
-export function autoLevels(hist: number[][]): LevelsSettings {
+export type LevelsAutoMode = 'Contrast' | 'Color' | 'Color + neutral midtones';
+export const LEVELS_AUTO: LevelsAutoMode[] = ['Contrast', 'Color', 'Color + neutral midtones'];
+export type LevelsSampleMode = 'Black' | 'Gray' | 'White';
+/** LevelRange.normalized */
+export function normalizedRange(r: LevelRange): LevelRange {
+  const c = (n: number, lo: number, hi: number, f: number) => Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : f;
+  const black = c(r.black, 0, 254, 0);
+  return { black, white: c(r.white, black + 1, 255, 255), gamma: c(r.gamma, 0.1, 9.99, 1), outputBlack: c(r.outputBlack, 0, 255, 0), outputWhite: c(r.outputWhite, 0, 255, 255) };
+}
+/** LevelRange.apply, on 0…1. */
+export function applyRange(r: LevelRange, v: number): number {
+  const s = normalizedRange(r), input = Math.min(1, Math.max(0, (v * 255 - s.black) / (s.white - s.black)));
+  return (s.outputBlack + Math.pow(input, 1 / s.gamma) * (s.outputWhite - s.outputBlack)) / 255;
+}
+/** LevelsAuto.settings (LevelsAutomatic.swift): Contrast stretches all channels by one shared interval (keeping their
+ *  relationships); Color stretches each channel; neutral midtones also sets each gamma so its mean lands at middle gray. */
+export function autoLevels(hist: number[][], mode: LevelsAutoMode = 'Color'): LevelsSettings {
   const l = defaultLevels();
-  for (const c of [1, 2, 3]) {
-    const bins = hist[c], total = bins.reduce((a, b) => a + b, 0);
-    if (!total) continue;
+  const endpoints = (bins: number[]): [number, number] | null => {
+    const total = bins.reduce((a, b) => a + b, 0); if (!(total > 0)) return null;
     let acc = 0, lo = 0, hi = 255;
     for (let i = 0; i < 256; i++) { acc += bins[i]; if (acc > total * 0.001) { lo = i; break; } }
     acc = 0;
     for (let i = 255; i >= 0; i--) { acc += bins[i]; if (acc > total * 0.001) { hi = i; break; } }
-    if (hi - lo >= 2) l.ranges[c] = { ...identityRange(), black: lo, white: hi };
+    return lo < hi ? [lo, hi] : null;
+  };
+  if (mode === 'Contrast') {
+    const lim = [1, 2, 3].map(c => endpoints(hist[c])).filter((x): x is [number, number] => !!x);
+    if (lim.length) { const lo = Math.min(...lim.map(x => x[0])), hi = Math.max(...lim.map(x => x[1])); if (lo < hi) l.ranges[0] = { ...identityRange(), black: lo, white: hi }; }
+    return l;
+  }
+  for (const c of [1, 2, 3]) {
+    const e = endpoints(hist[c]); if (!e) continue;
+    const r: LevelRange = { ...identityRange(), black: e[0], white: e[1] };
+    if (mode === 'Color + neutral midtones') {
+      const total = hist[c].reduce((a, b) => a + b, 0);
+      let sum = 0; for (let i = 0; i < 256; i++) sum += applyRange(r, i / 255) * hist[c][i];
+      const mean = sum / total;
+      if (mean > 0 && mean < 1) r.gamma = Math.min(9.99, Math.max(0.1, Math.log(mean) / Math.log(0.5)));
+    }
+    l.ranges[c] = r;
   }
   return l;
+}
+/** LevelsSettings.sampling: an unpremultiplied original color sets all three channels' black, gray or white point. */
+export function levelsSampling(s: LevelsSettings, rgb: [number, number, number], mode: LevelsSampleMode): LevelsSettings {
+  const out: LevelsSettings = { ...s, ranges: s.ranges.map(r => ({ ...r })) };
+  out.ranges[0] = identityRange();
+  for (const c of [1, 2, 3]) {
+    const r = out.ranges[c]!, v = rgb[c - 1]! * 255;
+    if (mode === 'Black') r.black = Math.min(r.white - 1, Math.max(0, v));
+    else if (mode === 'White') r.white = Math.max(r.black + 1, Math.min(255, v));
+    else { const f = (v - r.black) / (r.white - r.black); if (!(f > 0 && f < 1)) continue; r.gamma = Math.log(f) / Math.log(0.5); }
+    r.outputBlack = 0; r.outputWhite = 255;
+    out.ranges[c] = normalizedRange(r);
+  }
+  return out;
 }
 
 // ---------- Curves (Curves.swift) ----------
