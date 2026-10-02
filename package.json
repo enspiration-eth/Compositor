@@ -1,7 +1,7 @@
 {
   "name": "compositor-web-deploy",
   "private": true,
-  "description": "One-command deploy of Compositor for the web (web/). `npm install && npm start` builds and serves it on $PORT.",
+  "description": "One-command deploy of Photoshop.eth for the web (web/). `npm install && npm start` builds and serves it on $PORT.",
   "license": "MIT",
   "engines": {
     "node": ">=20"

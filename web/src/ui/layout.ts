@@ -5,7 +5,7 @@ import { applyFilterAsync, poolSize } from '../engine/filterPool';
 import { applyFilter, defaultFilterSettings } from '../engine/adjustments';
 import { app, TOOLS, type Tool } from './app';
 import { CanvasController } from './tools';
-import { h, icon, slider, select, checkbox, button, showMenu, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
+import { h, icon, slider, select, checkbox, button, showMenu, showMenuAbove, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
 import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel, openColorRange, showTrim } from './dialogs';
 import { fileToCanvas } from '../engine/files';
 import { translateCanvasKey } from './shortcuts';
@@ -68,14 +68,14 @@ export function openFileDialog(mode: 'open' | 'import') { const i = els.fileInpu
 function refresh(what: string) {
   if (what === 'view' || what === 'transform-live') { renderStatus(); syncZoomField(); if (what === 'transform-live') renderHeader(); return; }
   renderTabs(); renderHeader(); renderStatus(); renderLayers(); renderRail(); renderWelcome();
-  document.title = app.doc ? `${app.doc.name}${app.doc.dirty ? ' — Edited' : ''} — Compositor` : 'Compositor';
+  document.title = app.doc ? `${app.doc.name}${app.doc.dirty ? ' — Edited' : ''} — Photoshop.eth` : 'Photoshop.eth';
 }
 
 // ---------- menu bar ----------
 function buildMenubar() {
   const menus: [string, () => MenuItem[]][] = [
-    ['Compositor', () => [
-      { label: 'About Compositor', action: () => toast('Compositor for the web — a port of robbietilton/Compositor (MIT). Pixel kernels: original C, compiled to WebAssembly.') },
+    ['Photoshop.eth', () => [
+      { label: 'About Photoshop.eth', action: () => toast('Photoshop.eth for the web — a port of robbietilton/Compositor (MIT). Pixel kernels: original C, compiled to WebAssembly.') },
       { separator: true }, { label: 'Keyboard Shortcuts…', action: showShortcuts },
     ]],
     ['File', () => [
@@ -235,10 +235,10 @@ function buildMenubar() {
       if (!document.querySelector('.menubar .open') || item.classList.contains('open')) return;
       closeMenus(); const r = item.getBoundingClientRect(); showMenu(items(), r.left, r.bottom); item.classList.add('open');
     });
-    if (title === 'Compositor') item.classList.add('app-name');
+    if (title === 'Photoshop.eth') item.classList.add('app-name');
     els.menubar.append(item);
   }
-  els.menubar.append(h('div', { class: 'spacer' }), h('div', { class: 'menubar-note' }, 'Compositor for the web'));
+  els.menubar.append(h('div', { class: 'spacer' }), h('div', { class: 'menubar-note' }, 'Photoshop.eth for the web'));
 }
 
 // ---------- tool rail ----------
@@ -554,6 +554,84 @@ function tabDropTarget(el: HTMLElement, index: number | null) {
   });
 }
 
+// ---------- blend mode popup ----------
+// Like Photoshop's: hovering a mode or moving through the list with the arrow keys shows it on the canvas straight
+// away; Enter or a click keeps it (one undo step), Escape or a click outside puts the original back. Focused but
+// closed, the arrow keys step through the modes and apply each.
+function blendPopup(a: Layer): HTMLButtonElement {
+  const button = h('button', { class: 'popup blend-popup', id: 'blend-mode', disabled: a.isGroup, 'aria-haspopup': 'listbox' }, a.blend) as HTMLButtonElement;
+  const commit = (mode: BlendMode, coalesce = false) => {
+    if (mode !== a.blend) app.setLayerProp(a, 'blend', mode, 'Blend Mode', coalesce);
+    document.getElementById('blend-mode')?.focus(); // The panel was rebuilt; keep the keyboard on the new button.
+  };
+  button.addEventListener('click', e => { if (button.dataset.closing) delete button.dataset.closing; else openBlendList(a, button, commit, e); });
+  button.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); commit(app.blendIndex(a.blend, e.key === 'ArrowDown' ? 1 : -1), true); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); openBlendList(a, button, commit); }
+  });
+  return button;
+}
+function openBlendList(a: Layer, button: HTMLElement, commit: (mode: BlendMode) => void, at?: MouseEvent) {
+  closeMenus();
+  const original = a.blend;
+  const preview = (mode: BlendMode) => { a.blend = mode; app.needsRender = true; };
+  const list = h('div', { class: 'menu blend-list', role: 'listbox', id: 'blend-list' });
+  const rows = new Map<BlendMode, HTMLElement>();
+  let current = original, pointer = { x: at?.screenX ?? NaN, y: at?.screenY ?? NaN };
+  const highlight = (mode: BlendMode, scroll: boolean) => {
+    rows.get(current)?.classList.remove('active');
+    current = mode;
+    const row = rows.get(mode)!;
+    row.classList.add('active');
+    if (scroll) row.scrollIntoView({ block: 'nearest' });
+    preview(mode);
+  };
+  BLEND_GROUPS.forEach((group, i) => {
+    if (i) list.append(h('div', { class: 'menu-sep' }));
+    for (const mode of group) {
+      const row = h('div', { class: 'menu-item', role: 'option', 'data-id': mode },
+        h('span', { class: 'menu-check' }, mode === original ? '✓' : ''), h('span', { class: 'menu-label' }, mode));
+      // Only real pointer motion: the browser also reports the row that appears under a still cursor, which would
+      // undo the arrow keys.
+      row.addEventListener('mousemove', e => {
+        if (e.screenX === pointer.x && e.screenY === pointer.y) return;
+        pointer = { x: e.screenX, y: e.screenY };
+        if (mode !== current) highlight(mode, false);
+      });
+      row.addEventListener('click', e => { e.stopPropagation(); finish(true); });
+      rows.set(mode, row); list.append(row);
+    }
+  });
+  const onKey = (e: KeyboardEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') highlight(app.blendIndex(current, e.key === 'ArrowDown' ? 1 : -1), true);
+    else if (e.key === 'Home' || e.key === 'End') highlight(BLEND_MODES[e.key === 'Home' ? 0 : BLEND_MODES.length - 1], true);
+    else if (e.key === 'Enter' || e.key === ' ') finish(true);
+    else if (e.key === 'Escape' || e.key === 'Tab') finish(false);
+  };
+  const onOutside = (e: PointerEvent) => {
+    if (list.contains(e.target as Node)) return;
+    if (button.contains(e.target as Node)) button.dataset.closing = '1'; // A click on the button closes the list, not reopens it.
+    e.stopPropagation(); finish(false);
+  };
+  function finish(keep: boolean) {
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('pointerdown', onOutside, true);
+    list.remove();
+    a.blend = original; app.needsRender = true; // So the kept mode goes through history like any other edit.
+    if (keep) commit(current); else button.focus();
+  }
+  document.body.append(list);
+  // Open with the current mode over the button, as a macOS pop-up button does, kept on screen.
+  const r = button.getBoundingClientRect(), row = rows.get(original)!;
+  list.style.left = `${r.left}px`; list.style.minWidth = `${r.width}px`; list.style.top = '0px';
+  const lh = list.getBoundingClientRect().height;
+  list.style.top = `${Math.min(Math.max(4, r.top - row.offsetTop + (r.height - row.offsetHeight) / 2), Math.max(4, window.innerHeight - lh - 4))}px`;
+  highlight(original, true);
+  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('pointerdown', onOutside, true);
+}
+
 // ---------- welcome (NewCanvasSheet) ----------
 function renderWelcome() {
   const w = els.welcome;
@@ -594,9 +672,9 @@ export async function loadSample() {
   hx.fillStyle = '#1a2230'; hx.beginPath(); hx.moveTo(0, 860);
   for (let i = 0; i <= 1600; i += 20) hx.lineTo(i, 860 - Math.cos(i / 140) * 50);
   hx.lineTo(1600, 1000); hx.lineTo(0, 1000); hx.fill();
-  const text = { content: 'Compositor', fontName: 'Helvetica Neue', fontSize: 120, red: 1, green: 1, blue: 1, alignment: 'Left' as const, tracking: 0, leading: 0 };
+  const text = { content: 'Photoshop.eth', fontName: 'Helvetica Neue', fontSize: 120, red: 1, green: 1, blue: 1, alignment: 'Left' as const, tracking: 0, leading: 0 };
   const tc = renderText(text);
-  const tl = newPixelLayer(d, 'Compositor', tc, { x: 120, y: 120, w: tc.width, h: tc.height }); tl.text = text;
+  const tl = newPixelLayer(d, 'Photoshop.eth', tc, { x: 120, y: 120, w: tc.width, h: tc.height }); tl.text = text;
   tl.effects = { shadow: { angle: 120, distance: 8, blur: 16, red: 0, green: 0, blue: 0, opacity: 0.45 } };
   d.layers.push(sun, hills, tl);
   d.activeId = tl.id; d.selectedIds = [tl.id]; d.dirty = false;
@@ -615,9 +693,7 @@ function renderLayers() {
   // Appearance: blend mode + opacity for the active layer.
   const appearance = h('div', { class: 'appearance' });
   if (a) {
-    const opts: (BlendMode | null)[] = [];
-    BLEND_GROUPS.forEach((g, i) => { if (i) opts.push(null); opts.push(...g); });
-    const blend = select(opts, a.blend, v => app.setLayerProp(a, 'blend', v as BlendMode, 'Blend Mode'), { id: 'blend-mode', disabled: a.isGroup });
+    const blend = blendPopup(a);
     appearance.append(blend, slider({ label: 'Opacity', min: 0, max: 100, value: Math.round(a.opacity * 100), unit: '%', id: 'layer-opacity',
       onInput: v => { if (app.history?.undoLabel !== 'Opacity' + a.id) app.edit('Opacity' + a.id); a.opacity = v / 100; app.needsRender = true; },
       onCommit: () => app.emit('layers') }));
@@ -641,17 +717,17 @@ function renderLayers() {
   }
   panel.append(list);
   const fx = h('button', { class: 'foot-btn', title: 'Layer effects', disabled: !a || a.isGroup || !!a.adjustment }, icon('sparkles', 16));
-  fx.addEventListener('click', e => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); showMenu((Object.keys(EFFECT_NAMES) as EffectKey[]).map(k => ({ label: `${EFFECT_NAMES[k]}…`, action: () => { app.addEffect(k); if (app.active) openEffects(app.active, k); } })), r.left, r.top - 200); });
+  fx.addEventListener('click', e => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); showMenuAbove((Object.keys(EFFECT_NAMES) as EffectKey[]).map(k => ({ label: `${EFFECT_NAMES[k]}…`, action: () => { app.addEffect(k); if (app.active) openEffects(app.active, k); } })), r); });
   const adj = h('button', { class: 'foot-btn', title: 'New adjustment layer', disabled: !d, id: 'add-adjustment' }, icon('adjust', 16));
-  adj.addEventListener('click', e => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); showMenu(ADJUSTMENT_KINDS.map(k => ({ label: k, action: () => { const l = app.addAdjustmentLayer(k); if (l && k !== 'Invert') editAdjustment(l); } })), r.left, r.top - 330); });
+  adj.addEventListener('click', e => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); showMenuAbove(ADJUSTMENT_KINDS.map(k => ({ label: k, action: () => { const l = app.addAdjustmentLayer(k); if (l && k !== 'Invert') editAdjustment(l); } })), r); });
   const mask = h('button', { class: 'foot-btn', title: 'Layer mask', disabled: !a || a.isGroup, id: 'mask-btn' }, icon('mask', 16));
   mask.addEventListener('click', e => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     if (!a) return;
     if (!a.mask) { app.addMask(true); return; }
-    showMenu([{ label: a.maskEnabled ? 'Disable Mask' : 'Enable Mask', action: () => app.setLayerProp(a, 'maskEnabled', !a.maskEnabled, 'Toggle Mask') },
+    showMenuAbove([{ label: a.maskEnabled ? 'Disable Mask' : 'Enable Mask', action: () => app.setLayerProp(a, 'maskEnabled', !a.maskEnabled, 'Toggle Mask') },
       { label: 'Invert Mask', action: () => app.invertMask() }, { label: 'Apply Mask', action: () => app.applyMask(), disabled: !a.canvas },
-      { label: 'Delete Mask', action: () => { app.maskTarget = true; app.deleteLayers(); } }], r.left, r.top - 130);
+      { label: 'Delete Mask', action: () => { app.maskTarget = true; app.deleteLayers(); } }], r);
   });
   panel.append(h('div', { class: 'layers-foot' },
     h('button', { class: 'foot-btn', title: `New blank layer (⇧${MOD}N)`, disabled: !d, id: 'addBlankLayer', onclick: () => app.addBlankLayer() }, icon('newLayer', 16)),
@@ -761,7 +837,7 @@ function layerRow(l: Layer, depth: number): HTMLElement {
     app.edit('Move Layer');
     app.reorder(moving, l.id, where);
   });
-  void ancestors; void getLayer; void BLEND_MODES;
+  void ancestors; void getLayer;
   return row;
 }
 

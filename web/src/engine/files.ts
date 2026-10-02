@@ -1,6 +1,6 @@
 import { isTiffName, tiffToCanvas } from './tiff';
 import { parseRaw, rawDevelopHook, DevelopCancelled } from './raw';
-// File formats. A Compositor project (.comp) is a folder: manifest.json + images/<UUID>.png (+ <UUID>.mask.png),
+// File formats. A Photoshop.eth project (.comp) is a folder: manifest.json + images/<UUID>.png (+ <UUID>.mask.png),
 // exactly as IO/ProjectStore.swift writes it. Browsers can't save a package folder, so the web app saves the same
 // folder zipped (Name.comp.zip, which unzips to Name.comp for the Mac app) and opens either a zip or a picked
 // .comp folder. Images open through the browser's own decoders; PSDs through ag-psd (the Mac app has its own
@@ -104,7 +104,7 @@ export async function readCompFiles(files: Map<string, Uint8Array>, name: string
   const manifestBytes = files.get('manifest.json');
   if (!manifestBytes) throw new Error('This project has no manifest.json.');
   const m = JSON.parse(strFromU8(manifestBytes)) as Manifest;
-  if (m.format !== 'com.compositor.project') throw new Error('Not a Compositor project.');
+  if (m.format !== 'com.compositor.project') throw new Error('Not a Photoshop.eth project.');
   if (!(m.version >= 1 && m.version <= 11)) throw new Error(`Unsupported project version ${m.version}.`);
   if (!(m.width >= 1 && m.height >= 1 && m.width <= 30000 && m.height <= 30000)) throw new Error('Invalid canvas size.');
   const doc = newDoc(m.width, m.height, name.replace(/\.comp(\.zip)?$/i, ''));
@@ -440,7 +440,7 @@ export async function readPsdFile(bytes: ArrayBuffer, name: string): Promise<{ d
       doc.layers.push(l);
     }
   };
-  // ag-psd keeps the file's order, bottom to top (it unshifts while reading the records from the top), as Compositor stores layers.
+  // ag-psd keeps the file's order, bottom to top (it unshifts while reading the records from the top), as Photoshop.eth stores layers.
   walk(psd.children, null);
   if (!doc.layers.length && psd.canvas) doc.layers.push(newPixelLayer(doc, 'Background', psd.canvas as HTMLCanvasElement));
   doc.activeId = doc.layers.filter(l => !l.isGroup).pop()?.id ?? null;
@@ -474,7 +474,7 @@ export async function heifToCanvas(bytes: Uint8Array): Promise<HTMLCanvasElement
   let lib;
   try { lib = await heifLib; } catch { heifLib = null; throw new Error('The HEIC decoder couldn’t be loaded.'); }
   const images = new lib.HeifDecoder().decode(bytes);
-  const im = images[0]; if (!im) throw new Error('This HEIC file has no image Compositor can read.');
+  const im = images[0]; if (!im) throw new Error('This HEIC file has no image Photoshop.eth can read.');
   const w = im.get_width(), h = im.get_height();
   const c = canvasOf(w, h), x = ctx2d(c), id = x.createImageData(w, h);
   await new Promise<void>((res, rej) => im.display({ data: id.data, width: w, height: h }, r => r ? res() : rej(new Error('The HEIC image couldn’t be decoded.'))));

@@ -1404,7 +1404,7 @@ export function showPsdConversions(title: string, confirmTitle: string, conversi
   return new Promise(resolve => {
     const list = h('div', { class: 'psd-conversions', id: 'psd-conversions' }, ...conversions.map(c =>
       h('div', { class: 'psd-conversion' }, h('div', { class: 'psd-layer' }, c.layerName), h('div', { class: 'psd-message' }, c.message))));
-    const body = h('div', {}, h('p', { class: 'hint' }, 'Compositor will convert these Photoshop features. Nothing is applied until you continue.'), list);
+    const body = h('div', {}, h('p', { class: 'hint' }, 'Photoshop.eth will convert these Photoshop features. Nothing is applied until you continue.'), list);
     modal(title, body, [
       { label: 'Cancel', onClick: () => resolve(false) },
       { label: confirmTitle, primary: true, onClick: () => resolve(true) },

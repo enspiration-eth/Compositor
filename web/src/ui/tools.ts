@@ -824,7 +824,7 @@ export class CanvasController {
   strokeTo(dpt: Pt, first = false) {
     const st = this.stroke!;
     if (st.warp) { this.warpTo(dpt); return; }
-    // Smoothing: the brush trails the pointer, as Compositor's smoothing slider does.
+    // Smoothing: the brush trails the pointer, as Photoshop.eth's smoothing slider does.
     const k = 1 - Math.min(0.95, app.brush.smoothing * 0.9);
     st.smooth = !st.smooth || first ? dpt : [st.smooth[0] + (dpt[0] - st.smooth[0]) * k, st.smooth[1] + (dpt[1] - st.smooth[1]) * k];
     const p = st.smooth;

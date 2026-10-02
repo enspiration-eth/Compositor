@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compiles Compositor's original C pixel kernels (../../Compositor/Rendering/*.c, used verbatim, never copied)
+# Compiles Photoshop.eth's original C pixel kernels (../../Compositor/Rendering/*.c, used verbatim, never copied)
 # to WebAssembly with Emscripten. Output: web/src/wasm/pixels.mjs + pixels.wasm.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

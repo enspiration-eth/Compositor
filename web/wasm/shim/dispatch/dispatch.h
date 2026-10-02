@@ -1,4 +1,4 @@
-// Web shim for libdispatch, used only so Compositor's original C kernels compile to WebAssembly unchanged.
+// Web shim for libdispatch, used only so Photoshop.eth's original C kernels compile to WebAssembly unchanged.
 // WebAssembly here runs single-threaded, so dispatch_apply runs its iterations in order on the calling thread.
 #ifndef COMPOSITOR_WEB_DISPATCH_SHIM_H
 #define COMPOSITOR_WEB_DISPATCH_SHIM_H

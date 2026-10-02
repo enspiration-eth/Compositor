@@ -1,4 +1,4 @@
-// The adjustment and filter settings, ported from Compositor's Swift (Document/Levels.swift, Curves.swift,
+// The adjustment and filter settings, ported from Photoshop.eth's Swift (Document/Levels.swift, Curves.swift,
 // HueSaturation.swift, ImageAdjustments.swift, Filters.swift, Dither.swift, CameraRaw.swift). The lookup tables
 // and cubes are built here exactly as the Swift builds them; the per-pixel work runs in the original C kernels
 // (WebAssembly). Blurs, which the Mac app hands to Core Image, use the browser's canvas filters instead.

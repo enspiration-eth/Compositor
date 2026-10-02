@@ -1,4 +1,4 @@
-// Zero-dependency production server for Compositor for the web: serves web/dist on $PORT (default 3000) at 0.0.0.0,
+// Zero-dependency production server for Photoshop.eth for the web: serves web/dist on $PORT (default 3000) at 0.0.0.0,
 // with correct MIME types (application/wasm for the pixel engine), long-cache hashed assets, and SPA fallback.
 // Builds web/dist first if it's missing, so `npm install && npm start` from a fresh clone just works.
 import { createServer } from 'node:http';

@@ -1,4 +1,4 @@
-// KeyboardShortcuts.swift: every shortcut can be reassigned (Compositor › Keyboard Shortcuts…). Overrides are kept
+// KeyboardShortcuts.swift: every shortcut can be reassigned (Photoshop.eth › Keyboard Shortcuts…). Overrides are kept
 // in localStorage under the Mac app's key; key events are translated back to the default chord at the canvas
 // boundary (canvasEvent / textEvent), so the handlers keep testing the defaults.
 

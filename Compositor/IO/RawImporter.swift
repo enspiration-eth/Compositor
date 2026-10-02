@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 /// What a camera recorded, before anyone decided how it should look. The file holds one value per
 /// photosite at 12–14 bits; every choice a JPEG has already baked in — exposure, white balance,
-/// contrast — is still open. Compositor's layers are 8-bit, so that latitude has to be spent at
+/// contrast — is still open. Photoshop.eth's layers are 8-bit, so that latitude has to be spent at
 /// import: these are the controls for spending it deliberately rather than accepting a default.
 nonisolated struct RawDevelopSettings: Equatable, Sendable {
     /// Stops of exposure, either side of what the camera recorded.

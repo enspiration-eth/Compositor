@@ -123,7 +123,7 @@ struct FloatingPanelTests {
     /// Camera Raw docks to the document window's right edge, at its full height, and follows it.
     ///
     /// The window it docks to is whichever one the app has, not one this test makes: the test host
-    /// is Compositor itself, so its own editor window is main throughout. An earlier version of
+    /// is Photoshop.eth itself, so its own editor window is main throughout. An earlier version of
     /// this test built its own window, which the panel quite correctly ignored — and the two
     /// windows together took the test host down.
     @Test func cameraRawDocksToTheDocumentWindow() throws {

@@ -1,6 +1,6 @@
 name: Deploy web build to GitHub Pages
 
-# Builds Compositor for the web (web/): compiles the original C pixel kernels in Compositor/Rendering to WebAssembly
+# Builds Photoshop.eth for the web (web/): compiles the original C pixel kernels in Compositor/Rendering to WebAssembly
 # with Emscripten, type-checks and bundles the TypeScript shell with Vite, smoke-tests it in headless Chromium, and
 # publishes web/dist to GitHub Pages.
 on:

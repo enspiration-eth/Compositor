@@ -1,6 +1,6 @@
 // WebGL2 compositor: the browser's stand-in for the Mac app's Metal/Core Image canvas (Rendering/GPUCanvas.swift,
 // TiledLayerRenderer.swift, SeparableBlend.swift). Layers are drawn through their transforms, masked, clipped and
-// blended one at a time into a document-size framebuffer with all 24 of Compositor's blend modes, computed in sRGB
+// blended one at a time into a document-size framebuffer with all 24 of Photoshop.eth's blend modes, computed in sRGB
 // as Photoshop does. Adjustment layers read back what is below them and run the original C kernels over it.
 import { type Doc, type Layer, type Mat, ancestors, apply, getLayer, invert, isEffectivelyVisible, layerMatrix, mul, renderEffects, effectsMargin, BLEND_MODES, maskInLayerGrid, maskPlacementOf } from './document';
 import { adjustmentAsFilter, applyFilter } from './adjustments';
@@ -311,7 +311,7 @@ export class Renderer {
       belowSig += sig + ';';
     }
     void T;
-    // Mipmapped copy for zoomed-out display (Compositor's "sharp high-quality downsampling").
+    // Mipmapped copy for zoomed-out display (Photoshop.eth's "sharp high-quality downsampling").
     if (!this.composite || this.composite.w !== W || this.composite.h !== H) {
       if (this.composite) { gl.deleteTexture(this.composite.tex); gl.deleteFramebuffer(this.composite.fbo); }
       this.composite = this.target(W, H);

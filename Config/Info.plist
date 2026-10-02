@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>Photoshop.eth</string>
+	<key>CFBundleName</key>
+	<string>Photoshop.eth</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -25,7 +29,7 @@
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Compositor Project</string>
+			<string>Photoshop.eth Project</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
@@ -54,7 +58,7 @@
 				<string>public.data</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>Compositor Layer</string>
+			<string>Photoshop.eth Layer</string>
 			<key>UTTypeIdentifier</key>
 			<string>com.compositor.layer-row</string>
 		</dict>
@@ -64,7 +68,7 @@
 				<string>com.apple.package</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>Compositor Project</string>
+			<string>Photoshop.eth Project</string>
 			<key>UTTypeIdentifier</key>
 			<string>com.compositor.project</string>
 			<key>UTTypeTagSpecification</key>

@@ -181,7 +181,7 @@ struct PSDRoundTripTests {
     }
 
     /// Was unknownBlendProducesConversionReport with "vLit". Vivid Light is supported now, so an
-    /// unsupported key has to be one Photoshop has and Compositor doesn't: Dissolve scatters pixels
+    /// unsupported key has to be one Photoshop has and Photoshop.eth doesn't: Dissolve scatters pixels
     /// by opacity rather than blending, and comes in as Normal.
     @Test func unsupportedBlendProducesConversionReport() throws {
         let fill = try colorImage(width: 2, height: 2, red: 1, green: 0, blue: 0)

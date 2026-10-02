@@ -1,4 +1,4 @@
-// Minimal Blocks runtime for WebAssembly. Compositor's DitherPixels.c uses Apple's blocks with dispatch_apply; the
+// Minimal Blocks runtime for WebAssembly. Photoshop.eth's DitherPixels.c uses Apple's blocks with dispatch_apply; the
 // blocks there never outlive the call that makes them (they are never copied), so only the class symbols the
 // compiler references and no-op copy helpers are needed.
 #include <stddef.h>

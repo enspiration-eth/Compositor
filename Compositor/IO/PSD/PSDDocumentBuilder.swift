@@ -145,7 +145,7 @@ nonisolated enum PSDDocumentBuilder {
 }
 
 extension PSDDocumentBuilder {
-    /// A PSD layer mask on the layer's own pixel grid, as Compositor's masks are: the stored patch drawn where it sits
+    /// A PSD layer mask on the layer's own pixel grid, as Photoshop.eth's masks are: the stored patch drawn where it sits
     /// on the document, and Photoshop's default value everywhere else. The patch alone, stretched over the layer, would
     /// put the mask in the wrong place. Adjustment layers and folders cover the canvas.
     nonisolated static func maskOnLayerGrid(_ patch: CGImage, record: PSDRecord, layer: ImageLayer, canvas: CGSize) -> CGImage? {

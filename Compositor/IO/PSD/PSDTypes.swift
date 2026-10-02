@@ -7,7 +7,7 @@ nonisolated enum PSDError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .truncated: "The Photoshop file could not be read. It may be damaged or incomplete."
-        case .unsupportedVersion: "This Photoshop file uses a format version Compositor can’t read."
+        case .unsupportedVersion: "This Photoshop file uses a format version Photoshop.eth can’t read."
         case .unsupportedColorMode: "Only 8-bit RGB Photoshop files can be imported."
         case .unsupportedDepth: "Only 8-bit RGB Photoshop files can be imported."
         case .unsupportedCompression: "This Photoshop file uses a layer compression method that isn’t supported."
@@ -92,7 +92,7 @@ extension LayerBlendMode {
         case "smud": .exclusion
         case "fsub": .subtract
         case "fdiv": .divide
-        // Dissolve, Darker Color and Lighter Color are deliberately absent: Compositor has no
+        // Dissolve, Darker Color and Lighter Color are deliberately absent: Photoshop.eth has no
         // equivalent, so they fall through to Normal and say so in the conversion report.
         default: nil
         }

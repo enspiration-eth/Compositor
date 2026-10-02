@@ -1,4 +1,4 @@
-// Bridge to Compositor's original C pixel kernels (Compositor/Rendering/*.c), compiled unchanged to WebAssembly by
+// Bridge to Photoshop.eth's original C pixel kernels (Compositor/Rendering/*.c), compiled unchanged to WebAssembly by
 // web/wasm/build.sh. The kernels work on premultiplied RGBA, as the Mac app's CGContexts do; browser ImageData is
 // straight alpha, so every call premultiplies on the way in and divides back out on the way out.
 import createPixels from '../wasm/pixels.mjs';

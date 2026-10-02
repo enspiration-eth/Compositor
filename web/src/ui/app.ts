@@ -864,7 +864,7 @@ export class App {
     try { const doc = await readCompFolder(list); this.addProject(doc); this.fit(); }
     catch (e) { toast(`Couldn’t open project: ${(e as Error).message}`, 'error'); }
   }
-  /** Imports an image as a new layer, centered, scaled down to fit the canvas if larger (Compositor's import). */
+  /** Imports an image as a new layer, centered, scaled down to fit the canvas if larger (Photoshop.eth's import). */
   placeImage(c: HTMLCanvasElement, name: string, at?: [number, number]) {
     const d = this.doc!;
     this.edit('Import Image');
@@ -884,7 +884,7 @@ export class App {
     const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
     if (w.showSaveFilePicker && !(window as unknown as { __noPicker?: boolean }).__noPicker) {
       try {
-        const handle = (d.fileHandle as FileSystemFileHandle | undefined) ?? await w.showSaveFilePicker({ suggestedName: name, types: [{ description: 'Compositor project (zipped)', accept: { 'application/zip': ['.zip'] } }] });
+        const handle = (d.fileHandle as FileSystemFileHandle | undefined) ?? await w.showSaveFilePicker({ suggestedName: name, types: [{ description: 'Photoshop.eth project (zipped)', accept: { 'application/zip': ['.zip'] } }] });
         const wr = await handle.createWritable(); await wr.write(bytes as unknown as BufferSource); await wr.close();
         d.fileHandle = handle; void noteRecent(handle.name, { handle });
       } catch (e) { if ((e as Error).name === 'AbortError') return; download(bytes, name, 'application/zip'); void noteRecent(name, { blob: new Blob([bytes as BlobPart], { type: 'application/zip' }) }); }

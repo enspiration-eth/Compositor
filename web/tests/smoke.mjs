@@ -84,7 +84,14 @@ try {
   });
 
   await step('blend mode change', async () => {
-    await page.selectOption('#blend-mode', 'Multiply');
+    // The popup previews as the highlight moves, and only Enter or a click keeps the mode.
+    await page.click('#blend-mode');
+    await page.keyboard.press('ArrowDown');
+    assert((await st()).blend !== 'Normal', 'arrow key previews the next mode');
+    await page.keyboard.press('Escape');
+    assert((await st()).blend === 'Normal', 'Escape restores the mode');
+    await page.click('#blend-mode');
+    await page.click('#blend-list [data-id="Multiply"]');
     assert((await st()).blend === 'Multiply', 'multiply');
   });
 
@@ -486,7 +493,7 @@ try {
     await page.keyboard.press(`${mod}+'`); // grid off so the guide is the nearest target
     // Move the text layer so its left edge lands within snapping distance of the guide.
     await page.click('.rail-btn[data-tool="move"]');
-    const info = await page.evaluate(() => { const { app } = window.compositor; const l = app.doc.layers.find(x => x.name === 'Compositor'); app.setActive(l.id); return { x: l.transform.x, y: l.transform.y, w: l.transform.w, h: l.transform.h }; });
+    const info = await page.evaluate(() => { const { app } = window.compositor; const l = app.doc.layers.find(x => x.name === 'Photoshop.eth'); app.setActive(l.id); return { x: l.transform.x, y: l.transform.y, w: l.transform.w, h: l.transform.h }; });
     const gpos = guides[0].position;
     const [sx, sy] = await toScreen(info.x + info.w / 2, info.y + info.h / 2);
     const [tx] = await toScreen(info.x + info.w / 2 + (gpos - info.x) + 3, 0);
@@ -527,7 +534,7 @@ try {
 
   await step('Move tool header: Auto Select, Show Controls (⌘H), ratio lock, Scale %', async () => {
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Compositor').id); });
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Photoshop.eth').id); });
     await page.click('.rail-btn[data-tool="move"]');
     // Show Controls off: no handles (a drag anywhere moves); ⌘H brings them back.
     await page.click('#transform-show-controls');
@@ -653,7 +660,7 @@ try {
 
   await step('Free Distort (wasm perspective warp)', async () => {
     const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Compositor').id); });
+    await page.evaluate(() => { const { app } = window.compositor; app.setActive(app.doc.layers.find(l => l.name === 'Photoshop.eth').id); });
     await page.click('.rail-btn[data-tool="move"]');
     const c = await page.evaluate(() => { const { app } = window.compositor; const t = app.active.transform; return [t.x + t.w, t.y, t.w, t.h]; });
     const [x0, y0] = await toScreen(c[0], c[1]), [x1, y1] = await toScreen(c[0] + 160, c[1] - 90);

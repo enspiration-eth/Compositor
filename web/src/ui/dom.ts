@@ -205,4 +205,10 @@ export function showMenu(items: MenuItem[], x: number, y: number, nested = false
   }
   return m;
 }
+/** Opens a menu just above a button, its bottom edge 4 px over the button's top, as the layers footer's menus do. */
+export function showMenuAbove(items: MenuItem[], anchor: DOMRect): HTMLElement {
+  const m = showMenu(items, anchor.left, 0);
+  m.style.top = `${Math.max(4, anchor.top - m.getBoundingClientRect().height - 4)}px`;
+  return m;
+}
 document.addEventListener('pointerdown', e => { if (openMenu && !(e.target as HTMLElement).closest('.menu, .menubar-item')) closeMenus(); });

@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 @testable import Compositor
 
-/// Builds tiny Photoshop files for reader tests. Not part of the app; Compositor does not write PSD.
+/// Builds tiny Photoshop files for reader tests. Not part of the app; Photoshop.eth does not write PSD.
 nonisolated enum PSDFixture {
     static func data(_ document: PSDDocument, composite: CGImage, largeDocument: Bool = false,
                      extras: [UUID: [String: Data]] = [:]) throws -> Data {

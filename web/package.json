@@ -2,7 +2,7 @@
   "name": "compositor-web",
   "private": true,
   "version": "0.1.0",
-  "description": "Compositor in the browser: the Photoshop alternative for Mac, ported to the web (TypeScript + WebGL2 + the original C pixel kernels compiled to WebAssembly).",
+  "description": "Photoshop.eth in the browser: the Photoshop alternative for Mac, ported to the web (TypeScript + WebGL2 + the original C pixel kernels compiled to WebAssembly).",
   "type": "module",
   "license": "MIT",
   "scripts": {

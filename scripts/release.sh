@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds a signed, notarized Compositor DMG that opens without warnings on any Mac.
+# Builds a signed, notarized Photoshop.eth DMG that opens without warnings on any Mac.
 #
 # Needs, all kept out of this repository:
 #   - a "Developer ID Application" certificate in the login keychain

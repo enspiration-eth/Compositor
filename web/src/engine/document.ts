@@ -1,4 +1,4 @@
-// The document model, after Compositor's CanvasDocument / ImageLayer (Document/*.swift) and its .comp manifest:
+// The document model, after Photoshop.eth's CanvasDocument / ImageLayer (Document/*.swift) and its .comp manifest:
 // layers bottom to top, pass-through folders via parentID, per-layer transform (origin, size, clockwise rotation
 // about the center, flips), opacity, blend mode, raster mask, clipping (maskSourceID), adjustments, text, shapes
 // and effects. Pixels live in canvases; history shares unchanged canvases between steps (copy on write).

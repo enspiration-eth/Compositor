@@ -1,6 +1,6 @@
-# Compositor for the web
+# Photoshop.eth for the web
 
-A browser port of [Compositor](../README.md), the native macOS image editor. It lives in `web/` on the `web` branch.
+A browser port of [Photoshop.eth](../README.md), the native macOS image editor. It lives in `web/` on the `web` branch.
 The Mac app's sources are not modified. The web build compiles the Mac app's own C pixel engine to WebAssembly and
 re-implements the platform layers (AppKit/SwiftUI, Metal, Core Image) with web APIs.
 
@@ -21,7 +21,7 @@ re-implements the platform layers (AppKit/SwiftUI, Metal, Core Image) with web A
 | libdispatch / Blocks (used by `DitherPixels.c`) | system | Small shims in `wasm/shim/`: a serial `dispatch_apply` and the Blocks runtime symbols, so the C sources compile as-is |
 | Settings, table builders (Levels, Curves Hermite spline, Hue/Sat cube, Exposure, Dither…) | Swift | Line-by-line TypeScript ports (`src/engine/adjustments.ts`) feeding the wasm kernels |
 | Document model (layers, folders, masks, clipping, transforms, effects, text/shape metadata) | Swift + CoreGraphics | TypeScript (`src/engine/document.ts`), same field names as `manifest.json` |
-| Compositor (24 blend modes, masks, clipping, pass-through folders, adjustment layers) | Metal + Core Image | WebGL2 + GLSL, using the same blend formulas (`src/engine/render.ts`) |
+| Photoshop.eth (24 blend modes, masks, clipping, pass-through folders, adjustment layers) | Metal + Core Image | WebGL2 + GLSL, using the same blend formulas (`src/engine/render.ts`) |
 | `.comp` projects, PSD, image import/export | ImageIO, Swift PSD reader | `fflate` zip, `ag-psd`, browser image decoders (`src/engine/files.ts`) |
 | UI | SwiftUI/AppKit | DOM + canvas, with the Mac layout: toolbar with tabs, tool header, tool rail, Layers panel, status bar, menu bar and shortcuts |
 

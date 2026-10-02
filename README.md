@@ -1,15 +1,15 @@
-# Compositor
+# Photoshop.eth
 
-Adobe Photoshop costs too much and tools like GIMP don’t feel familiar enough for me to stay in flow. That’s why I built Compositor.
+Adobe Photoshop costs too much and tools like GIMP don’t feel familiar enough for me to stay in flow. That’s why I built Photoshop.eth.
 
-The goal was to create a full-featured image editor that is completely free and open source. I used to use Photoshop for compositing and post-processing, so Compositor is built around that workflow - with the tools needed to create a pixel-perfect final image.
+The goal was to create a full-featured image editor that is completely free and open source. I used to use Photoshop for compositing and post-processing, so Photoshop.eth is built around that workflow - with the tools needed to create a pixel-perfect final image.
 
 Because it’s open source, you can download the Xcode project and add, remove, or modify any feature to fit your workflow.
 
 ## Installation
 
 ### Download
-Get Compositor from [robbietilton.com/compositor](https://robbietilton.com/compositor), or download the latest release directly from [GitHub Releases](https://github.com/robbietilton/Compositor/releases/latest).
+Get Photoshop.eth from [robbietilton.com/compositor](https://robbietilton.com/compositor), or download the latest release directly from [GitHub Releases](https://github.com/robbietilton/Compositor/releases/latest).
 
 ### Homebrew
 
@@ -75,7 +75,7 @@ brew install --cask robbietilton-compositor
 - Automatic updates, signed and notarized
 
 ### Works with AI agents
-- AI agents and scripts can build and edit projects directly: a `.comp` is a folder of PNG layers and a manifest, and an open project updates live as it's written. See [Writing Compositor projects](docs/writing-comp-files.md)
+- AI agents and scripts can build and edit projects directly: a `.comp` is a folder of PNG layers and a manifest, and an open project updates live as it's written. See [Writing Photoshop.eth projects](docs/writing-comp-files.md)
 
 ## Requirements
 
@@ -101,7 +101,7 @@ It needs, all kept outside this repository:
 MIT — see [LICENSE](LICENSE).
 
 
-## Compositor for the web (`web` branch)
+## Photoshop.eth for the web (`web` branch)
 
 A browser port lives in [`web/`](web/README.md): the Mac app's C pixel kernels compiled to WebAssembly, a WebGL2 compositor
 and a TypeScript UI. Deploy it anywhere with `npm install && npm start` from the repository root (serves on `$PORT`), or
