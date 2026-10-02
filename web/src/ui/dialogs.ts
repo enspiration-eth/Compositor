@@ -10,7 +10,7 @@ import {
   LEVELS_AUTO, levelsSampling, normalizedRange, defaultLevels, type LevelsSampleMode, type LevelRange, type LevelsSettings,
   type RGB,
 } from '../engine/adjustments';
-import { download } from '../engine/files';
+import { download, type PsdConversion } from '../engine/files';
 import { asShotSettings, developRaw, isAsShot, resetRaw, setRawDevelopHook, type RawImage } from '../engine/raw';
 import { levelsHistogram, colorRangeMask, cameraRawScope, cameraRawClipOverlay, SCOPE_SIDE } from '../engine/kernels';
 import { applyFilterAsync } from '../engine/filterPool';
@@ -1398,6 +1398,20 @@ function toastBusy(text: string) {
   return () => t.remove();
 }
 setRawDevelopHook(showRawDevelop);
+
+/** PSDConversionSheet: the Photoshop features an import converts, listed per layer before anything is applied. */
+export function showPsdConversions(title: string, confirmTitle: string, conversions: PsdConversion[]): Promise<boolean> {
+  return new Promise(resolve => {
+    const list = h('div', { class: 'psd-conversions', id: 'psd-conversions' }, ...conversions.map(c =>
+      h('div', { class: 'psd-conversion' }, h('div', { class: 'psd-layer' }, c.layerName), h('div', { class: 'psd-message' }, c.message))));
+    const body = h('div', {}, h('p', { class: 'hint' }, 'Compositor will convert these Photoshop features. Nothing is applied until you continue.'), list);
+    modal(title, body, [
+      { label: 'Cancel', onClick: () => resolve(false) },
+      { label: confirmTitle, primary: true, onClick: () => resolve(true) },
+    ], 'psd-modal');
+  });
+}
+app.confirmConversions = showPsdConversions;
 /** KeyboardShortcutsSheet: click a shortcut, press its new chord; changes apply on Save. */
 export function showShortcuts() {
   const draft: Record<string, Chord> = { ...shortcutOverrides() };

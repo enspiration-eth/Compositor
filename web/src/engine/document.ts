@@ -323,12 +323,19 @@ export class History {
 }
 
 // ---------- text and shapes (TypeTool.swift / ShapeTool.swift, drawn with canvas 2D instead of Core Text) ----------
+/** A family name for a PostScript font name (ArialMT → Arial, Helvetica-Bold → Helvetica), for fonts named as Photoshop files store them. */
+export function cssFamilyGuess(name: string) {
+  return name.replace(/-(Regular|Roman|Book|Bold|Italic|BoldItalic|Light|Medium|Semibold|SemiBold|Black|Heavy|Oblique|BoldOblique|It)$/i, '')
+    .replace(/(PS)?MT$/, '').replace(/([a-z])([A-Z])/g, '$1 $2').trim() || name;
+}
 export function cssFont(t: TextStyle) {
   const name = t.fontName || 'Helvetica';
-  const family = /mono|menlo|courier/i.test(name) ? `"${name}", ui-monospace, monospace` : /serif|times|georgia/i.test(name) && !/sans/i.test(name)
-    ? `"${name}", Georgia, serif` : `"${name}", "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  const guess = cssFamilyGuess(name), named = guess !== name ? `"${name}", "${guess}"` : `"${name}"`;
+  const family = /mono|menlo|courier/i.test(name) ? `${named}, ui-monospace, monospace` : /serif|times|georgia/i.test(name) && !/sans/i.test(name)
+    ? `${named}, Georgia, serif` : `${named}, "Helvetica Neue", Helvetica, Arial, sans-serif`;
   const weight = /bold|black|heavy/i.test(name) ? 'bold ' : '';
-  return `${weight}${t.fontSize}px ${family}`;
+  const style = /italic|oblique|-It$/i.test(name) ? 'italic ' : '';
+  return `${style}${weight}${t.fontSize}px ${family}`;
 }
 export function wrapText(t: TextStyle, ctx: CanvasRenderingContext2D, maxWidth?: number): string[] {
   const lines: string[] = [];

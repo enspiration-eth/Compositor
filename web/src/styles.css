@@ -277,3 +277,9 @@ body.busy, body.busy * { cursor: progress !important; }
 .zoom-field-wrap .unit { cursor: ew-resize; user-select: none; }
 .tab-overflow { height: 30px; display: inline-flex; align-items: center; gap: 4px; padding: 0 11px; border-radius: 15px; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.08); color: var(--text2); white-space: nowrap; flex: none; cursor: default; font: inherit; font-size: 12px; font-weight: 500; }
 .tab-overflow:hover { background: #313131; }
+#psd-modal { min-width: 520px; }
+.psd-conversions { max-height: 340px; min-height: 180px; overflow-y: auto; border: 1px solid var(--border, #3a3a3a); border-radius: 8px; padding: 4px 12px; background: rgba(0,0,0,0.15); }
+.psd-conversion { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.psd-conversion:last-child { border-bottom: none; }
+.psd-layer { font-weight: 600; }
+.psd-message { color: var(--text2); margin-top: 2px; }

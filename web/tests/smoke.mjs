@@ -1,30 +1,37 @@
 // Headless smoke test: serves the production build with `vite preview`, drives the real UI in Chromium, and fails on
 // any console error or broken core action. Usage: npm run build && npm run test:e2e  (SHOTS=dir to save screenshots)
-import { chromium } from 'playwright';
+import { chromium, firefox, webkit } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, existsSync } from 'node:fs';
 
-const URL_ = process.env.URL || 'http://localhost:4173/';
+const PORT = process.env.PREVIEW_PORT || '4173';
+const URL_ = process.env.URL || `http://localhost:${PORT}/`;
 const SHOTS = process.env.SHOTS || '/workspace/compositor-shots';
 mkdirSync(SHOTS, { recursive: true });
 
 let server;
 if (!process.env.URL) {
-  server = spawn('npx', ['vite', 'preview', '--port', '4173', '--strictPort'], { stdio: 'pipe', detached: true });
+  server = spawn('npx', ['vite', 'preview', '--port', PORT, '--strictPort'], { stdio: 'pipe', detached: true });
   await new Promise((res, rej) => {
-    server.stdout.on('data', d => { if (String(d).includes('4173')) res(); });
+    server.stdout.on('data', d => { if (String(d).includes(PORT)) res(); });
     server.on('exit', c => rej(new Error('preview exited ' + c)));
     setTimeout(() => rej(new Error('preview timeout')), 20000);
   });
 }
 
 const errors = [];
-const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+// BROWSER=firefox or webkit (after `npx playwright install firefox webkit`) runs the same checks in Gecko or WebKit.
+const engine = { chromium, firefox, webkit }[process.env.BROWSER || 'chromium'];
+const browser = await engine.launch(engine === chromium ? { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
 // STOP=text ends the run (successfully) after the first step whose name contains it, for quicker iteration.
+// ONLY="<substring>[|<substring>…]" runs just the first step (loading the app) and the matching ones, for quick iteration.
+const ONLY = process.env.ONLY ? process.env.ONLY.split('|') : null;
+let stepCount = 0;
 const step = async (name, fn) => {
+  if (ONLY && stepCount++ > 0 && !ONLY.some(o => name.includes(o))) return;
   process.stdout.write(`• ${name} … `); const t0 = Date.now(); await fn(); console.log(process.env.TIMING ? `ok (${Date.now() - t0} ms)` : 'ok');
   if (process.env.STOP && name.includes(process.env.STOP)) { console.log('Stopped early (STOP).'); await browser.close(); if (server) try { process.kill(-server.pid); } catch {} process.exit(0); }
 };
@@ -1000,6 +1007,53 @@ try {
     }
     const [dl] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => window.compositor.app.exportTiff())]);
     assert(/\.tif$/.test(dl.suggestedFilename()), dl.suggestedFilename());
+  });
+
+  await step('HEIC import (libheif wasm, loaded on first use)', async () => {
+    const b64 = readFileSync(new URL('./fixtures/halves.heic', import.meta.url)).toString('base64');
+    const r = await page.evaluate(async b64 => {
+      const { app } = window.compositor; const n = app.projects.length;
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      await app.openFiles([new File([bytes], 'halves.heic', { type: 'image/heic' })]);
+      if (app.projects.length !== n + 1) return { err: 'no project' };
+      const d = app.doc, l = d.layers[0], x = l.canvas.getContext('2d');
+      return { w: d.width, h: d.height, a: Array.from(x.getImageData(5, 5, 1, 1).data), b: Array.from(x.getImageData(50, 30, 1, 1).data) };
+    }, b64);
+    assert(!r.err && r.w === 64 && r.h === 48, 'heic size ' + JSON.stringify(r));
+    assert(Math.abs(r.a[0] - 230) < 12 && r.a[2] < 60 && Math.abs(r.b[2] - 230) < 12 && r.b[0] < 60, 'heic pixels ' + JSON.stringify(r));
+  });
+
+  await step('PSD import: conversion sheet, live text, Levels/Curves/Hue-Sat adjustment layers, effects, masks, clipping', async () => {
+    const b64 = readFileSync(new URL('./fixtures/layers.psd', import.meta.url)).toString('base64');
+    const n0 = await page.evaluate(() => window.compositor.app.projects.length);
+    await page.evaluate(b64 => { const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); window.__psdOpen = window.compositor.app.openFiles([new File([bytes], 'layers.psd')]); }, b64);
+    await page.waitForSelector('#psd-modal');
+    const msgs = await page.$$eval('#psd-conversions .psd-conversion', els => els.map(e => e.textContent));
+    assert(msgs.some(m => m.startsWith('Exposure 1') && m.includes('isn’t supported and was skipped')), 'unsupported adjustment listed ' + JSON.stringify(msgs));
+    assert(msgs.some(m => m.startsWith('Folder') && m.includes('pass-through')), 'folder blend listed');
+    await page.screenshot({ path: `${SHOTS}/31-psd-conversions.png` });
+    await page.click('#psd-modal button.primary');
+    await page.evaluate(() => window.__psdOpen);
+    const r = await page.evaluate(() => {
+      const { app } = window.compositor, d = app.doc, by = n => d.layers.find(l => l.name === n);
+      const t = by('Title'), lv = by('Levels 1'), cv = by('Curves 1'), hs = by('Hue/Saturation 1'), sq = by('Square');
+      return { n: app.projects.length, names: d.layers.map(l => l.name), text: t?.text && { c: t.text.content, fs: t.text.fontSize, r: t.text.red, g: t.text.green, x: t.transform.x, y: t.transform.y, h: t.transform.h },
+        lv: lv?.adjustment?.levels.ranges[0], cv: cv?.adjustment?.curves.channels[0], hs: hs?.adjustment?.hsvSettings,
+        fx: sq?.effects, clip: by('Clipped')?.clipTo === sq?.id, mask: { has: !!by('Masked')?.mask, en: by('Masked')?.maskEnabled, linked: by('Masked')?.maskLinked },
+        inside: by('Inside')?.parentId === by('Folder')?.id, shape: by('Badge')?.shape && { ...by('Badge').shape, x: by('Badge').transform.x, w: by('Badge').transform.w } };
+    });
+    assert(r.n === n0 + 1 && r.names.length === 11 && !r.names.includes('Exposure 1'), 'layers ' + JSON.stringify(r.names));
+    assert(r.text && r.text.c === 'Hello PSD' && r.text.fs === 20 && r.text.r === 1 && r.text.g === 0, 'live text ' + JSON.stringify(r.text));
+    assert(Math.abs(r.text.x + 12 - 12) <= 1, 'text anchored at its Photoshop origin ' + JSON.stringify(r.text));
+    assert(r.lv && r.lv.black === 20 && r.lv.white === 230 && Math.abs(r.lv.gamma - 1.2) < 1e-6, 'levels ' + JSON.stringify(r.lv));
+    assert(r.cv && r.cv.some(p => p.x === 128 && p.y === 150), 'curves ' + JSON.stringify(r.cv));
+    assert(r.hs && r.hs.adjustments.Master.hue === 10 && r.hs.adjustments.Master.saturation === -20 && r.hs.adjustments.Reds?.saturation === 30, 'hue/sat ' + JSON.stringify(r.hs));
+    assert(r.fx?.shadow?.distance === 5 && r.fx?.stroke?.size === 2 && r.fx.stroke.blue === 1, 'effects ' + JSON.stringify(r.fx));
+    assert(r.shape?.kind === 'Rectangle' && r.shape.cornerRadius === 6 && r.shape.x === 140 && r.shape.w === 50 && Math.abs(r.shape.green - 160 / 255) < 1e-6, 'live shape ' + JSON.stringify(r.shape));
+    assert(r.clip && r.mask.has && r.mask.en === false && r.mask.linked === false && r.inside, 'clip/mask/folder ' + JSON.stringify(r));
+    await page.evaluate(() => { const { app } = window.compositor; app.fit(); app.zoomTo(3.5); app.setActive?.(app.doc.layers.find(l => l.name === 'Title').id); });
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: `${SHOTS}/32-psd-import.png` });
   });
 
   await step('Camera RAW: Develop sheet (DNG mosaic demosaiced in wasm, as-shot white balance, Temperature, Import)', async () => {

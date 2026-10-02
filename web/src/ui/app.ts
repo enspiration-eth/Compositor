@@ -11,7 +11,7 @@ import { canvasOf, ctx2d, imageDataOf, newAdjustment, type AdjustmentKind, type 
 import { applyFilterAsync } from '../engine/filterPool';
 import * as Sel from '../engine/selection';
 import { contentFill, alphaBounds } from '../engine/kernels';
-import { writeComp, writeCompToDirectory, readCompZip, readCompFolder, readPsdFile, fileToCanvas, isImageFile, isPsd, isCompZip, download, canvasToBlob } from '../engine/files';
+import { writeComp, writeCompToDirectory, readCompZip, readCompFolder, readPsdFile, type PsdConversion, fileToCanvas, isImageFile, isPsd, isCompZip, download, canvasToBlob } from '../engine/files';
 import { toast } from './dom';
 import { subjectMatte, modelLoaded } from '../engine/segment';
 
@@ -825,6 +825,8 @@ export class App {
 
   // ---------- files ----------
   /** `handle`: the file's handle when it came from one (Open Recent), so Save writes back to it. */
+  /** Set by the dialogs module: the PSD conversion sheet. */
+  confirmConversions: ((title: string, confirmTitle: string, conversions: PsdConversion[]) => Promise<boolean>) | null = null;
   async openFiles(files: File[], asLayers = false, handle?: FileSystemFileHandle) {
     for (const f of files) {
       try {
@@ -832,7 +834,12 @@ export class App {
           const doc = await readCompZip(new Uint8Array(await f.arrayBuffer()), f.name); if (handle) doc.fileHandle = handle;
           this.addProject(doc); this.fit(); void noteRecent(f.name, handle ? { handle } : { blob: f });
         }
-        else if (isPsd(f)) { const doc = await readPsdFile(await f.arrayBuffer(), f.name); this.addProject(doc); this.fit(); void noteRecent(f.name, { blob: f }); }
+        else if (isPsd(f)) {
+          // PSDConversionSheet: what had to change is listed first, and nothing opens unless you continue.
+          const { doc, conversions } = await readPsdFile(await f.arrayBuffer(), f.name);
+          if (conversions.length && this.confirmConversions && !await this.confirmConversions(`Open “${f.name}”?`, 'Import', conversions)) continue;
+          this.addProject(doc); this.fit(); void noteRecent(f.name, { blob: f });
+        }
         else if (isImageFile(f)) {
           const c = await fileToCanvas(f);
           const name = f.name.replace(/\.[^.]+$/, '');
