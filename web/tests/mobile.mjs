@@ -60,6 +60,11 @@ for (const dev of runs) {
   const inViewport = sel => page.evaluate(s => { const el = document.querySelector(s); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1; }, sel);
   // The finger rests a moment before lifting: a release at speed starts a fling, and Chromium spends the next tap on
   // stopping it instead of clicking.
+  const menuItem = async (menu, label) => {
+    if (dev.expect.compact) { await page.tap('#mobile-menu'); await page.tap(`.menu [data-id="menu-${menu}"]`); await page.waitForSelector('.menu [data-id="menu-back"]'); }
+    else await page.tap(`.menubar-item[data-menu="${menu}"]`);
+    await page.locator('.menu .menu-item', { hasText: label }).first().tap();
+  };
   const stroke = async (pts) => { await touch('touchStart', [pts[0]]); for (const p of pts.slice(1)) { await touch('touchMove', [p]); } await wait(120); await touch('touchMove', [pts[pts.length - 1]]); await wait(120); await touch('touchEnd', []); };
   try {
     await step('load, viewport, body classes, nothing overflows', async () => {
@@ -87,7 +92,7 @@ for (const dev of runs) {
       await page.waitForTimeout(150);
       await shot('editor');
     });
-    if (dev.quick) {
+    if (dev.quick || useWebkit) {
       await step('landscape: canvas gets the room, layers drawer fits', async () => {
         const r = await page.evaluate(() => { const s = document.getElementById('stage').getBoundingClientRect(); return { w: s.width, h: s.height, iw: innerWidth, ih: innerHeight }; });
         assert(r.h >= r.ih * 0.55, 'stage height ' + JSON.stringify(r));
@@ -161,6 +166,17 @@ for (const dev of runs) {
         assert(fg.red > 0.5, 'picked the sky color ' + JSON.stringify(fg));
         await page.evaluate(() => { window.compositor.app.fg = { red: 0.1, green: 0.8, blue: 0.3 }; });
       });
+      await step('slow drawing stays a stroke (no long-press menu)', async () => {
+        await page.tap('.rail-btn[data-tool="brush"]');
+        const before = await st();
+        const [x, y] = await toScreen(400, 700);
+        // 2 px every 40 ms for about a second: slower than the long-press timeout ever lets the finger rest.
+        await touch('touchStart', [[x, y]]);
+        for (let i = 1; i <= 25; i++) { await touch('touchMove', [[x + i * 2, y + (i % 2)]]); await wait(40); }
+        await wait(120); await touch('touchEnd', []); await wait(150);
+        assert(!(await page.locator('.menu [data-id="ctx-pick"]').count()), 'no context menu during a slow stroke');
+        assert((await st()).undo === before.undo + 1, 'the slow stroke painted');
+      });
       await step('modifier bar: latched Shift reaches the tools', async () => {
         await page.tap('.mod-btn[data-mod="shift"]');
         await page.evaluate(() => { window.__shift = null; document.getElementById('stage').addEventListener('pointerdown', e => { window.__shift = e.shiftKey; }, { once: true }); });
@@ -216,8 +232,15 @@ for (const dev of runs) {
         await wait(200);
         assert(await inViewport('.floating-panel'), 'filter panel on screen');
         assert(await inViewport('#filter-ok') || await page.evaluate(() => { const b = document.querySelector('.floating-panel .panel-body'); return b.scrollHeight > b.clientHeight; }), 'OK reachable (on screen or by scrolling the sheet)');
+        if (dev.expect.phone) {
+          // The fitted canvas moves above the sheet instead of hiding under it.
+          await page.waitForFunction(() => window.compositor.app.viewInsetBottom > 0, null, { timeout: 3000 });
+          const v = await page.evaluate(() => { const { app } = window.compositor; const p = app.project, s = document.getElementById('stage').getBoundingClientRect(), sh = document.querySelector('.floating-panel').getBoundingClientRect(); return { docBottom: s.top + p.oy + app.doc.height * p.zoom, sheetTop: sh.top }; });
+          assert(v.docBottom <= v.sheetTop + 2, 'canvas fitted above the sheet ' + JSON.stringify(v));
+        }
         await shot('filter-sheet');
         await page.evaluate(() => document.querySelector('.floating-panel .panel-close').click());
+        if (dev.expect.phone) await page.waitForFunction(() => window.compositor.app.viewInsetBottom === 0, null, { timeout: 3000 });
       });
       await step('Layers drawer, blend mode tap-to-preview, long-press layer menu', async () => {
         if (dev.expect.compact) {
@@ -250,7 +273,17 @@ for (const dev of runs) {
         const fs = await page.evaluate(() => parseFloat(getComputedStyle(document.getElementById('new-width')).fontSize));
         assert(fs >= 16, 'no iOS focus zoom: field font ' + fs);
         await shot('new-canvas');
+        await page.fill('.modal #new-width', '8000'); await page.fill('.modal #new-height', '6000');
+        assert(await page.isDisabled('.modal #create-canvas') && /Too big for this device/.test(await page.textContent('.modal #new-hint')), 'New Canvas: device size cap');
         await page.locator('.modal .modal-buttons button', { hasText: 'Cancel' }).tap();
+        await menuItem('Image', 'Image Size…');
+        await page.waitForSelector('#image-size-modal #image-width');
+        assert(await inViewport('#image-size-modal'), 'Image Size on screen');
+        await page.selectOption('#image-units', 'Pixels').catch(() => {});
+        await page.fill('#image-width', '20000');
+        assert(await page.isDisabled('#image-size-modal .modal-buttons .primary') && /this device/.test(await page.textContent('#image-result')), 'Image Size: device size cap');
+        await shot('image-size-cap');
+        await page.locator('#image-size-modal .modal-buttons button', { hasText: 'Cancel' }).tap();
       });
       await step('PWA: manifest, icons, service worker caches the shell and the wasm', async () => {
         const m = await page.evaluate(async () => { const l = document.querySelector('link[rel=manifest]'); const r = await fetch(l.href); return { ok: r.ok, type: r.headers.get('content-type'), json: await r.json() }; });
@@ -263,6 +296,12 @@ for (const dev of runs) {
           return { scope: reg.scope, keys, wasm: urls.some(u => /pixels-.*\.wasm$/.test(u)), shell: urls.some(u => /\/$/.test(u)), n: urls.length };
         });
         assert(sw && sw.wasm && sw.shell, 'service worker caches ' + JSON.stringify(sw));
+        // Installed, the app boots offline.
+        await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 10000 }).catch(() => page.reload({ waitUntil: 'networkidle' }));
+        await context.setOffline(true);
+        await page.reload({ waitUntil: 'load' });
+        await page.waitForSelector('#stage canvas', { timeout: 15000 });
+        await context.setOffline(false);
       });
     }
     assert(!errors.length, 'console errors:\n' + errors.join('\n'));
@@ -274,6 +313,31 @@ for (const dev of runs) {
     await context.close();
   }
   if (failed) break;
+}
+// Without WebGL 2 (old phones, blocklisted GPUs) the app says so instead of failing silently; the desktop layout is untouched.
+if (!failed && !only) {
+  try {
+    process.stdout.write('• no WebGL 2: a clear message … ');
+    const desc = { ...devices['Pixel 7'] }; delete desc.defaultBrowserType;
+    const ctx = await browser.newContext(desc);
+    await ctx.addInitScript(() => { const g = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (t, ...a) { return t === 'webgl2' ? null : g.call(this, t, ...a); }; });
+    const page = await ctx.newPage();
+    await page.goto(URL_, { waitUntil: 'networkidle' });
+    const msg = await page.locator('.boot.error').textContent({ timeout: 15000 }).catch(() => '');
+    await page.screenshot({ path: `${SHOTS}/mobile-no-webgl2.png` });
+    await ctx.close();
+    assert(/WebGL 2/.test(msg), 'no WebGL 2 message: ' + msg);
+    console.log('ok');
+    process.stdout.write('• desktop 1440×900 keeps the desktop layout … ');
+    const dctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const dp = await dctx.newPage();
+    await dp.goto(URL_, { waitUntil: 'networkidle' });
+    await dp.waitForSelector('#stage canvas');
+    const d = await dp.evaluate(() => ({ cls: document.body.className, mod: !!document.getElementById('mod-bar')?.offsetParent, menu: !!document.getElementById('mobile-menu')?.offsetParent, layers: !!document.querySelector('.layers-panel')?.offsetParent }));
+    await dctx.close();
+    assert(!/\b(touch|compact|phone)\b/.test(d.cls) && !d.mod && !d.menu && d.layers, 'desktop layout ' + JSON.stringify(d));
+    console.log('ok');
+  } catch (e) { failed = true; console.log('FAILED\n  ' + e.message); }
 }
 await browser.close(); if (server) try { process.kill(-server.pid); } catch {}
 if (failed) process.exit(1);

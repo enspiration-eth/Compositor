@@ -5,6 +5,7 @@
 import type { AdjustmentRecord, RGB } from './adjustments';
 import { canvasOf, ctx2d } from './adjustments';
 import { layerEffects } from './kernels';
+import { limits } from './limits';
 
 export type BlendMode = 'Normal' | 'Darken' | 'Multiply' | 'Color Burn' | 'Linear Burn' | 'Lighten' | 'Screen' | 'Color Dodge'
   | 'Linear Dodge (Add)' | 'Overlay' | 'Soft Light' | 'Hard Light' | 'Vivid Light' | 'Linear Light' | 'Pin Light' | 'Hard Mix'
@@ -284,7 +285,7 @@ interface Snapshot { label: string; layers: Layer[]; activeId: string | null; se
 export class History {
   undoStack: Snapshot[] = []; redoStack: Snapshot[] = [];
   private shared = new WeakSet<HTMLCanvasElement>();
-  limit = 60;
+  limit = limits.mobile ? 25 : 60; // each step can keep whole layer canvases alive; phones have far less memory
   private snap(doc: Doc, label: string): Snapshot {
     const layers = doc.layers.map(l => ({ ...l, transform: { ...l.transform }, maskPlacement: l.maskPlacement && { ...l.maskPlacement }, maskBase: l.maskBase && { ...l.maskBase }, effects: l.effects ? structuredClone(l.effects) : undefined,
       adjustment: l.adjustment ? structuredClone(l.adjustment) : undefined, text: l.text ? structuredClone(l.text) : undefined,

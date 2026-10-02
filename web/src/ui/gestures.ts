@@ -12,8 +12,8 @@ import type { CanvasController } from './tools';
 import { toast } from './dom';
 
 type Pt = [number, number];
-interface TouchPt { id: number; x: number; y: number; x0: number; y0: number }
-const TAP_SLOP = 10, HOLD_MS = 500, FLUSH_MS = 120, DOUBLE_TAP_MS = 320, TAP_MS = 350, PALM_AREA = 40 * 40, PEN_GRACE_MS = 400;
+interface TouchPt { id: number; x: number; y: number; x0: number; y0: number; path: number }
+const TAP_SLOP = 10, HOLD_SLOP = 6, HOLD_PATH = 20, HOLD_MS = 500, FLUSH_MS = 120, DOUBLE_TAP_MS = 320, TAP_MS = 350, PALM_AREA = 40 * 40, PEN_GRACE_MS = 400;
 
 /** The kind of the last pointer that touched the canvas: 'mouse', 'touch' or 'pen'. */
 export let lastPointerType = 'mouse';
@@ -73,7 +73,7 @@ export function installCanvasGestures(ctl: CanvasController, stage: HTMLElement,
   const longPress = (id: number) => {
     hold = 0;
     const t = touches.get(id);
-    if (!t || touches.size !== 1 || gesture || Math.hypot(t.x - t.x0, t.y - t.y0) > TAP_SLOP) return;
+    if (!t || touches.size !== 1 || gesture || Math.hypot(t.x - t.x0, t.y - t.y0) > HOLD_SLOP || t.path > HOLD_PATH) return;
     dropPending();
     if (toolId !== null) { ctl.abortInteraction(); toolId = null; }
     ignored.add(id);
@@ -99,7 +99,7 @@ export function installCanvasGestures(ctl: CanvasController, stage: HTMLElement,
     }
     e.preventDefault();
     if (isPalm(e)) { ignored.add(e.pointerId); return; }
-    touches.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
+    touches.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, path: 0 });
     if (touches.size === 1 && !gesture) {
       if (pen.seen) { baseline(); return; } // With a pen around, a finger pans.
       pending = { e, timer: window.setTimeout(flush, FLUSH_MS) };
@@ -109,11 +109,13 @@ export function installCanvasGestures(ctl: CanvasController, stage: HTMLElement,
   stage.addEventListener('pointermove', e => {
     if (e.pointerType !== 'touch') { ctl.move(e); return; }
     const t = touches.get(e.pointerId); if (!t) return;
+    t.path += Math.hypot(e.clientX - t.x, e.clientY - t.y);
     t.x = e.clientX; t.y = e.clientY;
     if (gesture) { applyGesture(); return; }
     if (ignored.has(e.pointerId)) return;
     const moved = Math.hypot(t.x - t.x0, t.y - t.y0);
-    if (moved > TAP_SLOP) clearHold();
+    // Slow drawing must not turn into a long press: any real travel (not just distance from the start) cancels it.
+    if (moved > HOLD_SLOP || t.path > HOLD_PATH) clearHold();
     if (pending && pending.e.pointerId === e.pointerId && moved > 6) flush();
     if (toolId === e.pointerId) ctl.move(e);
   });

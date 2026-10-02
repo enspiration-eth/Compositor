@@ -424,3 +424,5 @@ body.touch .menubar-item { padding: 12px 12px; font-size: 14px; }
 body.touch:not(.compact) .layers-panel { min-width: 290px; }
 body.touch .layers-foot { padding: 0 4px; }
 body.touch .tool-header .slider-val { margin-right: 8px; }
+/* The tool options scroll sideways on small screens; the fade says there's more. */
+body.compact .tool-header { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 28px; }

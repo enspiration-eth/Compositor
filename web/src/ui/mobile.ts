@@ -2,6 +2,7 @@
 // toggles, long press as the context-menu (and tooltip) gesture outside the canvas, and the Layers drawer.
 import { h } from './dom';
 import { toast } from './dom';
+import { app } from './app';
 
 const COMPACT = '(max-width: 820px), (max-height: 500px)';
 const PHONE = '(max-width: 600px) and (orientation: portrait)';
@@ -100,7 +101,36 @@ function installLongPress() {
 export function setLayersOpen(open: boolean) { document.body.classList.toggle('layers-open', open); }
 export function toggleLayers() { setLayersOpen(!document.body.classList.contains('layers-open')); }
 
+// ---------- keep the fitted canvas above bottom sheets ----------
+function watchSheets() {
+  let raf = 0;
+  const update = () => {
+    raf = 0;
+    const stage = document.getElementById('stage'); if (!stage) return;
+    const sr = stage.getBoundingClientRect();
+    let inset = 0;
+    if (document.body.classList.contains('compact')) {
+      const sheets = [...document.querySelectorAll<HTMLElement>('.floating-panel')];
+      if (document.body.classList.contains('layers-open') && document.body.classList.contains('phone')) sheets.push(document.querySelector('.layers-panel') as HTMLElement);
+      for (const el of sheets) {
+        const r = el.getBoundingClientRect();
+        // Only sheets along the bottom that span the width (landscape side panels don't count).
+        if (r.width >= sr.width * 0.8 && r.top > sr.top && r.top < sr.bottom) inset = Math.max(inset, sr.bottom - r.top);
+      }
+    }
+    inset = Math.round(inset);
+    if (inset === app.viewInsetBottom) return;
+    app.viewInsetBottom = inset;
+    if (app.project?.fitted) app.fit();
+  };
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(() => requestAnimationFrame(update)); };
+  new MutationObserver(schedule).observe(document.body, { childList: true, attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('resize', schedule);
+  document.addEventListener('transitionend', schedule);
+}
+
 export function setupMobile() {
+  watchSheets();
   syncBodyClasses();
   for (const q of [COMPACT, PHONE, '(any-pointer: coarse)']) matchMedia(q).addEventListener('change', syncBodyClasses);
   window.addEventListener('resize', syncBodyClasses);

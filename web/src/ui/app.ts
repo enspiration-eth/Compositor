@@ -797,9 +797,12 @@ export class App {
 
   // ---------- view ----------
   stageSize = { w: 800, h: 600 };
+  /** How much of the stage's bottom a sheet covers (phones: filter panels, the Layers sheet); Fit centers above it. */
+  viewInsetBottom = 0;
   fit() {
     const p = this.project; if (!p) return;
-    const pad = 40, { w, h } = this.stageSize;
+    // Phones keep the canvas big; a bottom sheet covering part of the stage (viewInsetBottom) is left out.
+    const w = this.stageSize.w, h = Math.max(80, this.stageSize.h - this.viewInsetBottom), pad = Math.min(w, h) < 600 ? 12 : 40;
     p.zoom = Math.min(1, Math.min((w - pad * 2) / p.doc.width, (h - pad * 2) / p.doc.height));
     if (!isFinite(p.zoom) || p.zoom <= 0) p.zoom = 1;
     p.ox = (w - p.doc.width * p.zoom) / 2; p.oy = (h - p.doc.height * p.zoom) / 2;
