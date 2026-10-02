@@ -556,6 +556,7 @@ export function projectTabOverflow(order: number[], widths: number[], selected: 
   return { visible, hidden };
 }
 function layoutTabOverflow() {
+  if (!els.tabs) return; // a resize can arrive before the layout is built (slow CI, mobile rotation)
   const tabs = Array.from(els.tabs.querySelectorAll<HTMLElement>('.tab'));
   els.tabs.querySelector('.tab-overflow')?.remove();
   tabs.forEach(t => { t.style.display = ''; t.style.order = ''; });
