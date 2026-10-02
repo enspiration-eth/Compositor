@@ -592,6 +592,9 @@ try {
   await step('Color picker panel: field, hue strip, RGB/hex, canvas sampling, Cancel/OK', async () => {
     const fg0 = await page.evaluate(() => ({ ...window.compositor.app.fg }));
     await page.click('#swatch-fg'); await page.waitForSelector('#color-picker');
+    // Wait until the panel stops moving (it positions itself as it opens); a click measured sooner can miss on slow CI.
+    await page.waitForFunction(() => { const r = document.getElementById('color-picker').getBoundingClientRect(), k = `${r.left},${r.top},${r.width},${r.height}`;
+      const same = window.__cpBox === k; window.__cpBox = k; return same; }, null, { polling: 100 });
     const box = await (await page.$('#cp-hue')).boundingBox();
     await page.mouse.click(box.x + 17, box.y + box.height * (1 - 120 / 360)); // green hue
     const fb = await (await page.$('#cp-field')).boundingBox();

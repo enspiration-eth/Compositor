@@ -104,6 +104,7 @@ export function openColorPicker(opts: PickerOptions) {
       h('div', { class: 'cp-top' }, h('div', { class: 'cp-preview' }, newSwatch, curSwatch), h('div', { class: 'cp-buttons' }, ok, cancel)),
       h('div', { class: 'cp-fields' }, ...chans.map(c => c.row), h('label', { class: 'cp-row' }, h('span', {}, '#'), hex)),
       hint)));
+  panel.place(); // in place before anything can be clicked
 
   function update(except?: HTMLElement) {
     const c = color();

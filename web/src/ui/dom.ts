@@ -123,7 +123,7 @@ export function button(label: string | Node, onClick: () => void, attrs: Attrs =
 }
 
 // ---------- floating panels (non-modal, draggable, like the Mac app's FloatingPanelController) ----------
-export interface Panel { el: HTMLElement; body: HTMLElement; close: () => void }
+export interface Panel { el: HTMLElement; body: HTMLElement; close: () => void; /** Centers (or right-aligns) it for its current size; a no-op once the user has dragged it. */ place: () => void }
 let panelZ = 100;
 export function floatingPanel(title: string, onClose: () => void, opts: { width?: number; right?: boolean; id?: string } = {}): Panel {
   const body = h('div', { class: 'panel-body' });
@@ -131,14 +131,20 @@ export function floatingPanel(title: string, onClose: () => void, opts: { width?
   const head = h('div', { class: 'panel-title' }, closeBtn, h('span', {}, title));
   const el = h('div', { class: 'floating-panel', id: opts.id, style: `width:${opts.width ?? 340}px; z-index:${++panelZ}` }, head, body);
   document.body.append(el);
+  let dragged = false;
+  // Placed right away for its current size, and once more on the next frame after its content is in, unless the user
+  // has moved it by then. (Only the deferred placement used to run, so on a slow machine the panel could still jump
+  // into place after a click aimed at it had been measured.)
   const place = () => {
+    if (dragged || !el.isConnected) return;
     const r = el.getBoundingClientRect();
     if (opts.right) { el.style.left = `${window.innerWidth - r.width - 270}px`; el.style.top = '130px'; }
     else { el.style.left = `${Math.max(70, (window.innerWidth - r.width) / 2 - 120)}px`; el.style.top = `${Math.max(90, (window.innerHeight - r.height) / 2 - 60)}px`; }
   };
-  requestAnimationFrame(place);
+  place(); requestAnimationFrame(place);
   head.addEventListener('pointerdown', e => {
     if ((e.target as HTMLElement).closest('button')) return;
+    dragged = true;
     const r = el.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
     head.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => { el.style.left = `${ev.clientX - dx}px`; el.style.top = `${Math.max(0, ev.clientY - dy)}px`; };
@@ -149,7 +155,7 @@ export function floatingPanel(title: string, onClose: () => void, opts: { width?
   let closed = false;
   const close = () => { if (closed) return; closed = true; el.remove(); };
   closeBtn.addEventListener('click', () => { onClose(); close(); });
-  return { el, body, close };
+  return { el, body, close, place };
 }
 export function modal(title: string, content: HTMLElement, buttons: { label: string; primary?: boolean; onClick: () => boolean | void }[], id?: string): () => void {
   const back = h('div', { class: 'modal-back' });
