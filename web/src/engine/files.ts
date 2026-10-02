@@ -1,5 +1,6 @@
 import { isTiffName, tiffToCanvas } from './tiff';
 import { parseRaw, rawDevelopHook, DevelopCancelled } from './raw';
+import { deviceFitScale, importNote } from './limits';
 // File formats. A Photoshop.eth project (.comp) is a folder: manifest.json + images/<UUID>.png (+ <UUID>.mask.png),
 // exactly as IO/ProjectStore.swift writes it. Browsers can't save a package folder, so the web app saves the same
 // folder zipped (Name.comp.zip, which unzips to Name.comp for the Mac app) and opens either a zip or a picked
@@ -449,6 +450,19 @@ export async function readPsdFile(bytes: ArrayBuffer, name: string): Promise<{ d
 }
 
 export async function fileToCanvas(file: File): Promise<HTMLCanvasElement> {
+  return fitToDevice(await decodeFile(file));
+}
+/** Scales an image down to what this device can hold (phones: about 16.7 megapixels), noting it for the UI. */
+function fitToDevice(c: HTMLCanvasElement): HTMLCanvasElement {
+  const f = deviceFitScale(c.width, c.height);
+  if (f >= 1) return c;
+  const w = Math.max(1, Math.floor(c.width * f)), h = Math.max(1, Math.floor(c.height * f));
+  const o = canvasOf(w, h), x = ctx2d(o); x.imageSmoothingQuality = 'high'; x.drawImage(c, 0, 0, w, h);
+  importNote.text = `Scaled ${c.width} × ${c.height} to ${w} × ${h} to fit this device’s memory.`;
+  c.width = c.height = 1; // free the full-size pixels now
+  return o;
+}
+async function decodeFile(file: File): Promise<HTMLCanvasElement> {
   if (/\.svg$/i.test(file.name) || file.type === 'image/svg+xml') return svgToCanvas(file);
   if (isTiffName(file.name, file.type)) {
     // A RAW with a Bayer mosaic is developed in the Develop sheet (RawDevelopSheet); anything else uses its RGB image or preview.

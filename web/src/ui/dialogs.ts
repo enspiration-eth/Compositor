@@ -1,5 +1,6 @@
 // Panels and sheets: UI/FilterSheet.swift, LevelsSheet.swift, CurvesControls.swift, HueSaturationSheet.swift,
 // EffectsSheet.swift, NewCanvasSheet.swift, CanvasSizeSheet.swift, ImageSizeSheet.swift, JPEGExportSheet.swift.
+import { fitsDevice, MAX_DOC_PIXELS, maxSide } from '../engine/limits';
 import { app } from './app';
 import { h, slider, select, checkbox, colorWell, button, toHex, floatingPanel, modal, toast, type Panel } from './dom';
 import {
@@ -1065,7 +1066,7 @@ export function newCanvasForm(onCreate: (w: number, h: number) => void, extra?: 
   const w = h('input', { type: 'number', value: 1920, min: 1, max: 30000, id: 'new-width', class: 'dim' }) as HTMLInputElement;
   const hh = h('input', { type: 'number', value: 1080, min: 1, max: 30000, id: 'new-height', class: 'dim' }) as HTMLInputElement;
   const dim = (i: HTMLInputElement) => { const v = i.value.trim(); return /^\d+$/.test(v) && +v >= 1 && +v <= 30000 ? +v : null; };
-  const valid = () => dim(w) !== null && dim(hh) !== null;
+  const valid = () => dim(w) !== null && dim(hh) !== null && fitsDevice(dim(w)!, dim(hh)!);
   for (const i of [w, hh]) {
     i.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') create(); });
     i.addEventListener('input', () => sync());
@@ -1082,7 +1083,9 @@ export function newCanvasForm(onCreate: (w: number, h: number) => void, extra?: 
   const createBtn = button('Create canvas', create, { class: 'btn primary', id: 'create-canvas' });
   function sync() {
     const ok = valid();
-    hint.textContent = ok ? 'Transparent canvas · sRGB' : 'Enter whole numbers from 1 to 30,000 pixels.';
+    hint.textContent = ok ? 'Transparent canvas · sRGB' : dim(w) !== null && dim(hh) !== null
+      ? `Too large for this device: up to ${Math.round(MAX_DOC_PIXELS / 1e6 * 10) / 10} megapixels, ${maxSide.toLocaleString('en-US')} px a side.`
+      : 'Enter whole numbers from 1 to 30,000 pixels.';
     hint.classList.toggle('warn', !ok); createBtn.disabled = !ok;
     preset.value = PRESETS.find(p => p && String(p.width) === w.value.trim() && String(p.height) === hh.value.trim())?.title ?? 'Custom';
   }

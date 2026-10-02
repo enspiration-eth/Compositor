@@ -30,3 +30,9 @@ async function boot() {
   window.addEventListener('beforeunload', e => { if (app.projects.some(p => p.doc.dirty)) { e.preventDefault(); e.returnValue = ''; } });
 }
 boot().finally(() => splashShown.then(hideSplash));
+
+// Installable PWA: the service worker (generated at build time) caches the app shell and the wasm engine.
+// Automated test browsers skip it unless the URL asks for it with ?sw, so smoke runs always see fresh files.
+if (import.meta.env.PROD && 'serviceWorker' in navigator && (!navigator.webdriver || new URLSearchParams(location.search).has('sw'))) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(e => console.warn('service worker:', e)); });
+}

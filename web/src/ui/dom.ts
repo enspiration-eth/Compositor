@@ -57,6 +57,9 @@ export const ICONS: Record<string, string> = {
   chevronDown: '<path d="M6 9l6 6 6-6"/>',
   clip: '<path d="M7 7v6a5 5 0 0010 0V6a3 3 0 00-6 0v7a1 1 0 002 0V7"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/>',
+  redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/>',
   swap: '<path d="M7 4l-3 3 3 3M4 7h11a3 3 0 013 3v1M17 20l3-3-3-3M20 17H9a3 3 0 01-3-3v-1"/>',
 };
 export function icon(name: string, size = 18) { return svg(ICONS[name] ?? '', size); }
@@ -128,13 +131,14 @@ export function floatingPanel(title: string, onClose: () => void, opts: { width?
   const el = h('div', { class: 'floating-panel', id: opts.id, style: `width:${opts.width ?? 340}px; z-index:${++panelZ}` }, head, body);
   document.body.append(el);
   const place = () => {
+    if (isCompact()) return; // a bottom sheet there (CSS)
     const r = el.getBoundingClientRect();
     if (opts.right) { el.style.left = `${window.innerWidth - r.width - 270}px`; el.style.top = '130px'; }
     else { el.style.left = `${Math.max(70, (window.innerWidth - r.width) / 2 - 120)}px`; el.style.top = `${Math.max(90, (window.innerHeight - r.height) / 2 - 60)}px`; }
   };
   requestAnimationFrame(place);
   head.addEventListener('pointerdown', e => {
-    if ((e.target as HTMLElement).closest('button')) return;
+    if ((e.target as HTMLElement).closest('button') || isCompact()) return;
     const r = el.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
     head.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => { el.style.left = `${ev.clientX - dx}px`; el.style.top = `${Math.max(0, ev.clientY - dy)}px`; };
@@ -172,6 +176,8 @@ export function toast(message: string, kind: 'info' | 'error' = 'info') {
   setTimeout(() => t.classList.add('show'), 10);
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, kind === 'error' ? 5000 : 2600);
 }
+/** The phone layout (narrow, or a short landscape phone): set on <html> by the layout. */
+export const isCompact = () => document.documentElement.classList.contains('compact');
 export interface MenuItem { label?: string; shortcut?: string; action?: () => void; disabled?: boolean; checked?: boolean; submenu?: MenuItem[]; separator?: boolean; id?: string }
 let openMenu: HTMLElement | null = null;
 export function closeMenus() { openMenu?.remove(); openMenu = null; document.querySelectorAll('.menubar .open').forEach(e => e.classList.remove('open')); }
@@ -184,12 +190,22 @@ export function showMenu(items: MenuItem[], x: number, y: number, nested = false
       h('span', { class: 'menu-check' }, it.checked ? '✓' : ''), h('span', { class: 'menu-label' }, it.label ?? ''),
       h('span', { class: 'menu-shortcut' }, it.submenu ? '▸' : menuShortcutLabel(it.shortcut ?? '')));
     if (it.submenu) {
-      let sub: HTMLElement | null = null;
-      row.addEventListener('mouseenter', () => {
+      const openSub = () => {
         m.querySelectorAll(':scope > .menu').forEach(s => s.remove());
         const r = row.getBoundingClientRect();
-        sub = showMenu(it.submenu!, r.width - 4, r.top - m.getBoundingClientRect().top - 5, true);
+        const sub = showMenu(it.submenu!, r.width - 4, r.top - m.getBoundingClientRect().top - 5, true);
         m.append(sub); sub.style.position = 'absolute';
+        // Keep a nested menu on screen: flip it to the left of its parent when there is no room on the right.
+        const sr = sub.getBoundingClientRect();
+        if (sr.right > window.innerWidth - 4) sub.style.left = `${-sr.width + 4}px`;
+      };
+      row.addEventListener('mouseenter', () => { if (!isCompact()) openSub(); });
+      row.addEventListener('click', e => {
+        e.stopPropagation(); if (it.disabled) return;
+        if (!isCompact()) { openSub(); return; }
+        // Phones: no room for a cascade, so the submenu replaces the menu, with a way back.
+        const r = (nested ? m.closest('.menu:not(.menu .menu)') ?? m : m).getBoundingClientRect();
+        showMenu([{ label: `‹ ${it.label}`, id: 'menu-back', action: () => showMenu(items, r.left, r.top) }, { separator: true }, ...it.submenu!], r.left, r.top);
       });
     } else {
       row.addEventListener('mouseenter', () => m.querySelectorAll(':scope > .menu').forEach(s => s.remove()));
@@ -200,7 +216,12 @@ export function showMenu(items: MenuItem[], x: number, y: number, nested = false
   if (!nested) {
     document.body.append(m); openMenu = m;
     const r = m.getBoundingClientRect();
-    if (r.bottom > window.innerHeight) m.style.top = `${Math.max(4, window.innerHeight - r.height - 4)}px`;
+    // A menu taller than the room below its anchor scrolls there rather than sliding up over the anchor
+    // (where, on a phone, the finger that opened it would pick an item); otherwise it moves up to fit.
+    if (r.bottom > window.innerHeight && r.height > window.innerHeight - 8 - (isCompact() ? y : 0)) {
+      m.style.top = `${isCompact() ? y : 4}px`;
+      m.style.maxHeight = `${window.innerHeight - (isCompact() ? y : 4) - 4}px`; m.style.overflowY = 'auto';
+    } else if (r.bottom > window.innerHeight) m.style.top = `${Math.max(4, window.innerHeight - r.height - 4)}px`;
     if (r.right > window.innerWidth) m.style.left = `${Math.max(4, window.innerWidth - r.width - 4)}px`;
   }
   return m;

@@ -14,7 +14,8 @@ import { canvasOf, ctx2d, imageDataOf, type RGB } from '../engine/adjustments';
 import * as Sel from '../engine/selection';
 import { wandMask, spotHeal, withHeap, kernels, distortWarp, alphaBounds, maskMorph, gaussBlur } from '../engine/kernels';
 import { objectMatte, saliency } from '../engine/segment';
-import { toast } from './dom';
+import { toast, showMenu } from './dom';
+import { withMods, swallowClickOnLift } from './touch';
 
 type Pt = [number, number];
 interface Stroke {
@@ -79,11 +80,13 @@ export class CanvasController {
     this.layoutRulers();
     this.octx = this.overlay.getContext('2d')!;
     new ResizeObserver(() => this.resize()).observe(stage);
-    stage.addEventListener('pointerdown', e => this.down(e));
-    stage.addEventListener('pointermove', e => this.move(e));
-    stage.addEventListener('pointerup', e => this.up(e));
-    stage.addEventListener('pointercancel', e => this.up(e));
-    stage.addEventListener('dblclick', e => this.dblclick(e));
+    stage.addEventListener('pointerdown', e => { if (!this.touchDown(e)) this.down(withMods(e)); });
+    stage.addEventListener('pointermove', e => { if (!this.touchMove(e)) this.move(withMods(e)); });
+    stage.addEventListener('pointerup', e => { if (!this.touchUp(e)) this.up(withMods(e)); });
+    stage.addEventListener('pointercancel', e => { if (!this.touchUp(e)) this.up(withMods(e)); });
+    stage.addEventListener('dblclick', e => this.dblclick(withMods(e)));
+    // iOS Safari's own pinch-to-zoom of the page: the canvas handles pinches itself.
+    for (const t of ['gesturestart', 'gesturechange']) stage.addEventListener(t, e => e.preventDefault());
     stage.addEventListener('pointerleave', () => { this.pointer = null; app.needsRender = true; });
     stage.addEventListener('wheel', e => this.wheel(e), { passive: false });
     stage.addEventListener('contextmenu', e => e.preventDefault());
@@ -271,12 +274,146 @@ export class CanvasController {
     const box = a.mask && app.maskTarget && a.maskLinked === false ? { ...a, transform: maskTransformOf(a) } : a;
     return this.handles(box).some(hp => Math.hypot(hp.s[0] - s[0], hp.s[1] - s[1]) < 8);
   }
+  // ---------- touch gestures ----------
+  // One finger uses the tool. A second finger landing cancels what the first one started (undoing it) and pinches:
+  // zoom about the fingers' midpoint and pan with it. A quick two-finger tap undoes, a three-finger tap redoes.
+  // A long press (finger held still) opens the canvas menu. Palm rejection: while a pen is down, touches are ignored,
+  // and once a pen has been used one finger pans instead of drawing (the pen draws).
+  private touches = new Map<number, Pt>();
+  private touchStart = new Map<number, Pt>();
+  private pinch: { dist: number; mid: Pt; zoom: number; ox: number; oy: number } | null = null;
+  private gestureDone = false;               // a pinch ended: ignore fingers until all are lifted
+  private tap: { t: number; max: number; moved: boolean } | null = null;
+  private undoMark = -1;
+  private longTimer = 0;
+  // A first finger's tool action waits a moment (or until it moves) so a second finger landing just after makes a
+  // clean pinch or two-finger tap instead of a dab that has to be undone.
+  private pendingTouch: { e: PointerEvent; timer: number } | null = null;
+  private flushPendingTouch() {
+    const p = this.pendingTouch; if (!p) return;
+    this.pendingTouch = null; clearTimeout(p.timer);
+    this.undoMark = app.history?.undoStack.length ?? -1;
+    this.down(withMods(p.e));
+  }
+  penSeen = false;
+  private penDown = false;
+  pressure = 1;
+  /** Handled as a gesture (true), or left for the tool (false). */
+  touchDown(e: PointerEvent): boolean {
+    if (e.pointerType === 'pen') { this.penSeen = true; this.penDown = true; return false; }
+    if (e.pointerType !== 'touch') return false;
+    if (this.penDown) return true;
+    const s = this.local(e);
+    this.touches.set(e.pointerId, s); this.touchStart.set(e.pointerId, s);
+    const n = this.touches.size;
+    if (n === 1) {
+      this.gestureDone = false; this.tap = { t: e.timeStamp, max: 1, moved: false };
+      this.undoMark = app.history?.undoStack.length ?? -1;
+      clearTimeout(this.longTimer);
+      this.longTimer = window.setTimeout(() => { if (this.longPress(e.clientX, e.clientY)) swallowClickOnLift(e.pointerId); }, 550);
+      if (this.penSeen && app.project) {
+        // The pen draws; a finger moves the canvas.
+        try { this.stage.setPointerCapture(e.pointerId); } catch { /* synthetic or gone */ }
+        this.drag = { kind: 'pan', start: s, startDoc: app.toDoc(...s), data: { ox: app.project.ox, oy: app.project.oy } };
+        return true;
+      }
+      this.pendingTouch = { e, timer: window.setTimeout(() => this.flushPendingTouch(), 90) };
+      return true;
+    }
+    clearTimeout(this.longTimer);
+    if (this.pendingTouch) { clearTimeout(this.pendingTouch.timer); this.pendingTouch = null; this.undoMark = -1; }
+    if (this.tap) this.tap.max = Math.max(this.tap.max, n);
+    try { this.stage.setPointerCapture(e.pointerId); } catch { /* already gone */ }
+    if (n === 2 && !this.gestureDone) { this.cancelGestureStart(); this.beginPinch(); }
+    return true;
+  }
+  touchMove(e: PointerEvent): boolean {
+    if (e.pointerType === 'pen') return false;
+    if (e.pointerType !== 'touch') return false;
+    if (this.penDown) return true;
+    if (!this.touches.has(e.pointerId)) return this.touches.size > 0 || this.gestureDone;
+    const s = this.local(e); this.touches.set(e.pointerId, s);
+    const st = this.touchStart.get(e.pointerId)!;
+    const far = Math.hypot(s[0] - st[0], s[1] - st[1]);
+    if (far > 10) { if (this.tap) this.tap.moved = true; clearTimeout(this.longTimer); }
+    if (this.pendingTouch?.e.pointerId === e.pointerId) { if (far <= 6) return true; this.flushPendingTouch(); }
+    if (this.pinch && this.touches.size >= 2) { this.updatePinch(); return true; }
+    return this.gestureDone || this.touches.size > 1;
+  }
+  touchUp(e: PointerEvent): boolean {
+    if (e.pointerType === 'pen') { this.penDown = false; return false; }
+    if (e.pointerType !== 'touch') return false;
+    clearTimeout(this.longTimer);
+    if (!this.touches.has(e.pointerId)) return this.penDown || this.gestureDone;
+    if (this.pendingTouch?.e.pointerId === e.pointerId) this.flushPendingTouch(); // a quick tap still clicks
+    const wasGesture = this.touches.size > 1 || !!this.pinch || this.gestureDone;
+    this.touches.delete(e.pointerId); this.touchStart.delete(e.pointerId);
+    if (this.pinch && this.touches.size < 2) { this.pinch = null; this.gestureDone = true; }
+    if (this.touches.size === 0) {
+      const tap = this.tap; this.tap = null;
+      if (tap && !tap.moved && tap.max >= 2 && e.timeStamp - tap.t < 450) { // event times, so a busy main thread doesn't turn a tap into a hold
+        if (tap.max === 2) { if (app.history?.undoLabel) { const l = app.history.undoLabel; app.undo(); toast(`Undo ${l}`); } }
+        else if (app.history?.redoLabel) { const l = app.history.redoLabel; app.redo(); toast(`Redo ${l}`); }
+      }
+      const done = this.gestureDone; this.gestureDone = false;
+      if (wasGesture || done) { this.drag = null; return true; }
+      // The pen-mode pan.
+      if (this.drag?.kind === 'pan' && this.penSeen) { this.drag = null; return true; }
+      return false;
+    }
+    return true;
+  }
+  private beginPinch() {
+    const p = app.project; if (!p) return;
+    const [a, b] = [...this.touches.values()];
+    this.pinch = { dist: Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1])), mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], zoom: p.zoom, ox: p.ox, oy: p.oy };
+  }
+  private updatePinch() {
+    const p = app.project, g = this.pinch; if (!p || !g) return;
+    const [a, b] = [...this.touches.values()];
+    const dist = Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1])), mid: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const z = Math.min(64, Math.max(0.01, g.zoom * dist / g.dist));
+    // The document point under the starting midpoint stays under the moving midpoint.
+    const dx = (g.mid[0] - g.ox) / g.zoom, dy = (g.mid[1] - g.oy) / g.zoom;
+    p.zoom = z; p.ox = mid[0] - dx * z; p.oy = mid[1] - dy * z; p.fitted = false;
+    app.emit('view');
+  }
+  /** Drops what a first finger started when it turns out to be a gesture: the stroke or drag, and its undo step. */
+  private cancelGestureStart() {
+    if (this.stroke) this.endStroke();
+    this.drag = null; this.marquee = null; this.shapeRect = null; this.gradientLine = null; this.ring = null;
+    if (this.lasso && app.lassoKind !== 'polygonal') this.lasso = null;
+    const h = app.history;
+    if (h && this.undoMark >= 0 && h.undoStack.length > this.undoMark) { app.undo(); h.redoStack.pop(); }
+    this.undoMark = -1;
+    app.needsRender = true;
+  }
+  private longPress(x: number, y: number): boolean {
+    if (this.touches.size !== 1 || this.tap?.moved || !app.project) return false;
+    this.cancelGestureStart();
+    this.gestureDone = true;
+    navigator.vibrate?.(10);
+    const h = app.history, d = app.doc!;
+    showMenu([
+      { label: h?.undoLabel ? `Undo ${h.undoLabel}` : 'Undo', disabled: !h?.undoLabel, action: () => app.undo(), id: 'lp-undo' },
+      { label: h?.redoLabel ? `Redo ${h.redoLabel}` : 'Redo', disabled: !h?.redoLabel, action: () => app.redo(), id: 'lp-redo' },
+      { separator: true },
+      { label: 'Select All', action: () => app.selectAll() },
+      { label: 'Deselect', disabled: !d.selection, action: () => app.deselect() },
+      { label: 'Inverse', disabled: !d.selection, action: () => app.inverseSelection() },
+      { separator: true },
+      { label: 'Fit on Screen', action: () => app.fit(), id: 'lp-fit' },
+      { label: 'Actual Pixels', action: () => app.zoomTo(1) },
+    ], x, y);
+    return true;
+  }
+
   // ---------- pointer ----------
   down(e: PointerEvent) {
     if (this.textEditor && e.target !== this.textEditor) { this.commitText(); }
     const p = app.project; if (!p) return;
     if ((e.target as HTMLElement).tagName === 'TEXTAREA') return;
-    this.stage.setPointerCapture(e.pointerId);
+    try { this.stage.setPointerCapture(e.pointerId); } catch { /* a synthetic or already-lifted pointer */ }
     const s = this.local(e);
     let dpt = app.toDoc(...s);
     if (['marquee', 'crop', 'shape'].includes(app.tool)) dpt = snapPoint(...dpt);
@@ -319,6 +456,7 @@ export class CanvasController {
       case 'crop': return this.cropDown(s, dpt);
       case 'brush': case 'spotHealing': case 'cloneStamp': case 'blur': {
         if (app.tool === 'cloneStamp' && e.altKey) { this.cloneSource = dpt; this.cloneOffset = null; app.needsRender = true; toast('Clone source set'); return; }
+        this.pressure = e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 1;
         return this.beginStroke(dpt, e.shiftKey);
       }
       case 'gradient': {
@@ -351,7 +489,7 @@ export class CanvasController {
     this.updateCursor(s);
     if (this.stroke && e.buttons & 1) {
       const events = (e.getCoalescedEvents?.() ?? [e]);
-      for (const ev of events) this.strokeTo(app.toDoc(...this.local(ev)));
+      for (const ev of events) { this.pressure = ev.pointerType === 'pen' && ev.pressure > 0 ? ev.pressure : 1; this.strokeTo(app.toDoc(...this.local(ev))); }
       return;
     }
     if (!dr) return;
@@ -867,7 +1005,8 @@ export class CanvasController {
   dab(p: Pt) {
     const st = this.stroke!;
     const [lx, ly] = apply(st.inv, p[0], p[1]);
-    const r = Math.max(0.5, app.brush.size / 2 * st.scale), hard = app.brush.hardness;
+    // Stylus pressure (Apple Pencil, Wacom, S Pen) scales the tip; a mouse or finger reports none and paints at full size.
+    const r = Math.max(0.5, app.brush.size / 2 * st.scale * (app.brush.pressure === false ? 1 : Math.max(0.08, this.pressure))), hard = app.brush.hardness;
     const grow = (x0: number, y0: number, x1: number, y1: number) => {
       const d0 = st.dirty; st.dirty = d0 ? [Math.min(d0[0], x0), Math.min(d0[1], y0), Math.max(d0[2], x1), Math.max(d0[3], y1)] : [x0, y0, x1, y1];
     };

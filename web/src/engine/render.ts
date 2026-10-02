@@ -6,6 +6,7 @@ import { type Doc, type Layer, type Mat, ancestors, apply, getLayer, invert, isE
 import { adjustmentAsFilter, applyFilter } from './adjustments';
 import { applyFilterAsync } from './filterPool';
 import { unpremultiplyFrom } from './kernels';
+import { isMobileDevice, setMaxSide } from './limits';
 
 const VS = `#version 300 es
 in vec2 a_unit;
@@ -137,6 +138,7 @@ export class Renderer {
     const gl = canvas.getContext('webgl2', { premultipliedAlpha: false, alpha: false, antialias: false, preserveDrawingBuffer: true });
     if (!gl) throw new Error('WebGL2 is required');
     this.gl = gl;
+    if (isMobileDevice) setMaxSide(gl.getParameter(gl.MAX_TEXTURE_SIZE) as number);
     this.layerProg = this.program(VS, FS_LAYER); this.maskProg = this.program(VS, FS_MASK);
     this.blendProg = this.program(VS, FS_BLEND); this.screenProg = this.program(VS_SCREEN, FS_SCREEN);
     this.quad = gl.createVertexArray()!;

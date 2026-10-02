@@ -5,7 +5,8 @@ import { applyFilterAsync, poolSize } from '../engine/filterPool';
 import { applyFilter, defaultFilterSettings } from '../engine/adjustments';
 import { app, TOOLS, type Tool } from './app';
 import { CanvasController } from './tools';
-import { h, icon, slider, select, checkbox, button, showMenu, showMenuAbove, closeMenus, toHex, fromHex, type MenuItem, toast } from './dom';
+import { modifierBar, longPress, coarsePointer, withMods } from './touch';
+import { h, icon, slider, select, checkbox, button, showMenu, showMenuAbove, closeMenus, toHex, fromHex, type MenuItem, toast, isCompact } from './dom';
 import { openFilter, editAdjustment, openEffects, newCanvasForm, showNewCanvas, showCanvasSize, showImageSize, showSelectionAmount, showExportJpeg, showGridSettings, showNewGuide, showShortcuts, closeOpenPanel, hasOpenPanel, openColorRange, showTrim } from './dialogs';
 import { fileToCanvas } from '../engine/files';
 import { translateCanvasKey } from './shortcuts';
@@ -27,10 +28,16 @@ export function buildLayout(root: HTMLElement) {
     els.newTab = h('button', { class: 'tb-btn', title: `New canvas (${MOD}N) · Drop images or layers here for new tabs`, id: 'newCanvasToolbar', onclick: () => showNewCanvas() }, icon('plus', 16)),
     els.tabs, h('div', { class: 'spacer' }),
     h('button', { class: 'tb-btn text', title: `Fit canvas in window (${MOD}0)`, onclick: () => app.fit() }, 'Fit'),
-    h('button', { class: 'tb-btn text', title: `Actual pixels (${MOD}1)`, onclick: () => app.zoomTo(1) }, '100%'),
-    h('div', { class: 'tb-group' },
+    h('button', { class: 'tb-btn text actual-px', title: `Actual pixels (${MOD}1)`, onclick: () => app.zoomTo(1) }, '100%'),
+    h('div', { class: 'tb-group zoom-group' },
       h('button', { class: 'tb-btn', title: `Zoom in (${MOD}+)`, onclick: () => app.zoomStep(1) }, icon('zoomIn', 16)),
-      h('button', { class: 'tb-btn', title: `Zoom out (${MOD}−)`, onclick: () => app.zoomStep(-1) }, icon('zoomOut', 16))));
+      h('button', { class: 'tb-btn', title: `Zoom out (${MOD}−)`, onclick: () => app.zoomStep(-1) }, icon('zoomOut', 16))),
+    // Touch devices: undo and redo within reach (also two- and three-finger taps on the canvas).
+    h('div', { class: 'tb-group touch-only' },
+      h('button', { class: 'tb-btn', title: 'Undo', id: 'tb-undo', onclick: () => app.undo() }, icon('undo', 16)),
+      h('button', { class: 'tb-btn', title: 'Redo', id: 'tb-redo', onclick: () => app.redo() }, icon('redo', 16))),
+    // Phones: the Layers panel is a bottom sheet.
+    els.layersToggle = h('button', { class: 'tb-btn compact-only', title: 'Layers', id: 'layers-toggle', 'aria-expanded': 'false', onclick: () => toggleLayersSheet() }, icon('layers', 17)));
   els.header = h('div', { class: 'tool-header' });
   els.rail = h('div', { class: 'tool-rail' });
   els.stage = h('div', { class: 'stage', id: 'stage' });
@@ -40,8 +47,10 @@ export function buildLayout(root: HTMLElement) {
   els.fileInput = h('input', { type: 'file', multiple: true, accept: 'image/*,.psd,.psb,.zip,.comp,.svg,.tif,.tiff,.dng,.nef,.cr2,.arw,.orf,.rw2,.raf,.pef,.srw,.heic,.heif', style: 'display:none', id: 'file-input' });
   els.folderInput = h('input', { type: 'file', style: 'display:none', id: 'folder-input' });
   (els.folderInput as HTMLInputElement).setAttribute('webkitdirectory', '');
+  els.sheetHandle = h('button', { class: 'sheet-handle compact-only', title: 'Close Layers', 'aria-label': 'Close Layers', onclick: () => toggleLayersSheet(false) });
+  els.layersWrap = h('div', { class: 'layers-sheet' }, els.sheetHandle, els.layers);
   root.append(els.menubar, els.toolbar, els.header,
-    h('div', { class: 'main' }, els.rail, h('div', { class: 'stage-wrap' }, els.stage, els.welcome), h('div', { class: 'resize-edge' }), els.layers),
+    h('div', { class: 'main' }, els.rail, h('div', { class: 'stage-wrap' }, els.stage, els.welcome, modifierBar()), h('div', { class: 'resize-edge' }), els.layersWrap),
     els.status, els.fileInput, els.folderInput);
   ctl = new CanvasController(els.stage);
   (window as unknown as { compositor: unknown }).compositor = { app, ctl, filters: { applyFilter, applyFilterAsync, poolSize, defaultFilterSettings } };
@@ -62,6 +71,20 @@ export function buildLayout(root: HTMLElement) {
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
+}
+/** The phone layout: narrow windows, and short landscape phones. Tablets keep the desktop layout with bigger targets. */
+const compactQuery = matchMedia('(max-width: 760px), (max-height: 520px) and (pointer: coarse)');
+function applyDeviceClasses() {
+  const root = document.documentElement;
+  root.classList.toggle('compact', compactQuery.matches);
+  root.classList.toggle('touch', coarsePointer() || navigator.maxTouchPoints > 0);
+  if (!compactQuery.matches) toggleLayersSheet(false);
+}
+compactQuery.addEventListener('change', applyDeviceClasses);
+applyDeviceClasses();
+function toggleLayersSheet(open = !document.documentElement.classList.contains('layers-open')) {
+  document.documentElement.classList.toggle('layers-open', open);
+  els.layersToggle?.setAttribute('aria-expanded', String(open));
 }
 export function openFileDialog(mode: 'open' | 'import') { const i = els.fileInput as HTMLInputElement; i.dataset.mode = mode; i.click(); }
 
@@ -327,6 +350,8 @@ function renderHeader() {
       if (t === 'blur' && app.smearMode === 'blur') hd.append(slider({ label: 'Radius', min: 0.5, max: 50, step: 0.5, value: app.blurRadius, unit: 'px', width: 190, onInput: v => app.blurRadius = v, id: 'blur-radius' }));
       else if (t !== 'spotHealing') hd.append(slider({ label: 'Opacity', min: 1, max: 100, value: Math.round(app.brush.opacity * 100), unit: '%', width: 190, onInput: v => app.brush.opacity = v / 100, id: 'brush-opacity' }));
       if (t === 'brush') hd.append(slider({ label: 'Smoothing', min: 0, max: 100, value: Math.round(app.brush.smoothing * 100), unit: '%', width: 200, onInput: v => app.brush.smoothing = v / 100 }));
+      // Stylus pressure sizes the tip (only shown once a pen has touched the canvas, or on touch devices).
+      if (ctl.penSeen || coarsePointer()) hd.append(checkbox('Pen Pressure', app.brush.pressure, v => app.brush.pressure = v, 'brush-pressure'));
       if (t === 'cloneStamp') hd.append(checkbox('Aligned', app.clone.aligned, v => app.clone.aligned = v), checkbox('Sample all layers', app.clone.sampleAll, v => app.clone.sampleAll = v));
       if (app.maskTarget && a?.mask) hd.append(h('span', { class: 'badge' }, 'Painting on mask'));
       break;
@@ -505,12 +530,15 @@ export function projectTabOverflow(order: number[], widths: number[], selected: 
   return { visible, hidden };
 }
 function layoutTabOverflow() {
+  if (!els.tabs) return; // a resize before the layout exists
   const tabs = Array.from(els.tabs.querySelectorAll<HTMLElement>('.tab'));
   els.tabs.querySelector('.tab-overflow')?.remove();
   tabs.forEach(t => { t.style.display = ''; t.style.order = ''; });
   if (tabs.length < 2) return;
   const widths = tabs.map(t => t.getBoundingClientRect().width);
-  const available = window.innerWidth - 340;
+  // Phones: whatever the toolbar's buttons leave; the desktop keeps its fixed allowance.
+  const others = Array.from(els.toolbar.children).filter(c => c !== els.tabs && (c as HTMLElement).offsetParent);
+  const available = isCompact() ? els.toolbar.clientWidth - 12 - others.reduce((s, c) => s + c.getBoundingClientRect().width + 4, 0) : window.innerWidth - 340;
   const { visible, hidden } = projectTabOverflow(tabs.map((_, i) => i), widths, app.current, available, overflowPillWidth);
   if (!hidden.length) return;
   hidden.forEach(i => { tabs[i].style.display = 'none'; });
@@ -578,6 +606,9 @@ function openBlendList(a: Layer, button: HTMLElement, commit: (mode: BlendMode) 
   const list = h('div', { class: 'menu blend-list', role: 'listbox', id: 'blend-list' });
   const rows = new Map<BlendMode, HTMLElement>();
   let current = original, pointer = { x: at?.screenX ?? NaN, y: at?.screenY ?? NaN };
+  // Touch has no hover: the first tap on a mode previews it, a second tap on it keeps it.
+  let touchy = false;
+  if (document.documentElement.classList.contains('touch')) list.append(h('div', { class: 'menu-hint' }, 'Tap to preview · tap again to apply'));
   const highlight = (mode: BlendMode, scroll: boolean) => {
     rows.get(current)?.classList.remove('active');
     current = mode;
@@ -593,12 +624,14 @@ function openBlendList(a: Layer, button: HTMLElement, commit: (mode: BlendMode) 
         h('span', { class: 'menu-check' }, mode === original ? '✓' : ''), h('span', { class: 'menu-label' }, mode));
       // Only real pointer motion: the browser also reports the row that appears under a still cursor, which would
       // undo the arrow keys.
+      row.addEventListener('pointerdown', e => { touchy = e.pointerType !== 'mouse'; });
       row.addEventListener('mousemove', e => {
+        if (touchy) return;
         if (e.screenX === pointer.x && e.screenY === pointer.y) return;
         pointer = { x: e.screenX, y: e.screenY };
         if (mode !== current) highlight(mode, false);
       });
-      row.addEventListener('click', e => { e.stopPropagation(); finish(true); });
+      row.addEventListener('click', e => { e.stopPropagation(); if (touchy && mode !== current) { highlight(mode, false); return; } finish(true); });
       rows.set(mode, row); list.append(row);
     }
   });
@@ -635,6 +668,7 @@ function openBlendList(a: Layer, button: HTMLElement, commit: (mode: BlendMode) 
 // ---------- welcome (NewCanvasSheet) ----------
 function renderWelcome() {
   const w = els.welcome;
+  w.parentElement?.classList.toggle('no-doc', !app.doc);
   if (app.doc) { w.style.display = 'none'; return; }
   w.style.display = '';
   if (w.childElementCount) return;
@@ -792,7 +826,10 @@ function layerRow(l: Layer, depth: number): HTMLElement {
     parts.push(fxb);
   }
   const row = h('div', { class: `layer-row${selected ? ' sel' : ''}${active ? ' active' : ''}${isEffectivelyVisible(d, l) ? '' : ' hidden'}`, draggable: true, 'data-id': l.id }, ...parts);
-  row.addEventListener('click', e => {
+  // Touch devices reorder from the row menu (Move Up / Move Down): a native drag would fight scrolling the list.
+  if (document.documentElement.classList.contains('touch')) row.draggable = false;
+  row.addEventListener('click', ev => {
+    const e = withMods(ev);
     // A click re-renders the panel, so the second click of a double-click lands on a new row; Chromium still fires
     // dblclick on the parent, Gecko and WebKit don't. Pair the clicks here instead.
     const now = performance.now();
@@ -806,6 +843,8 @@ function layerRow(l: Layer, depth: number): HTMLElement {
     app.emit('layers');
   });
   row.addEventListener('dblclick', e => e.stopPropagation());
+  // Touch: hold a row for its context menu (iOS Safari sends no contextmenu event).
+  longPress(row, (x, y) => row.dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true })));
   row.addEventListener('contextmenu', e => {
     e.preventDefault(); app.setActive(l.id);
     showMenu([
@@ -820,6 +859,8 @@ function layerRow(l: Layer, depth: number): HTMLElement {
       ...(l.adjustment ? [{ label: 'Edit Adjustment…', action: () => editAdjustment(l) }] : []),
       ...(l.text || l.shape ? [{ label: 'Rasterize', action: () => { app.edit('Rasterize'); app.rasterize(l); app.changed('layers'); } }] : []),
       { label: "Select Layer's Pixels", action: () => app.selectLayerPixels(), disabled: !l.canvas },
+      ...(document.documentElement.classList.contains('touch') ? [{ separator: true },
+        { label: 'Move Up', id: 'row-move-up', action: () => app.moveLayer(1) }, { label: 'Move Down', id: 'row-move-down', action: () => app.moveLayer(-1) }] : []),
     ], e.clientX, e.clientY);
   });
   // Drag and drop to reorder; drop on the middle of a folder to put the layer inside. Option-drag duplicates.

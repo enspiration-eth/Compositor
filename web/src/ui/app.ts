@@ -13,6 +13,7 @@ import * as Sel from '../engine/selection';
 import { contentFill, alphaBounds } from '../engine/kernels';
 import { writeComp, writeCompToDirectory, readCompZip, readCompFolder, readPsdFile, type PsdConversion, fileToCanvas, isImageFile, isPsd, isCompZip, download, canvasToBlob } from '../engine/files';
 import { toast } from './dom';
+import { importNote } from '../engine/limits';
 import { subjectMatte, modelLoaded } from '../engine/segment';
 
 export interface CanvasHook {
@@ -39,7 +40,7 @@ export class App {
   tool: Tool = 'brush';
   fg: RGB = { red: 0, green: 0, blue: 0 };
   bg: RGB = { red: 1, green: 1, blue: 1 };
-  brush = { size: 40, hardness: 0.8, opacity: 1, smoothing: 0.1, mode: 'paint' as 'paint' | 'erase' };
+  brush = { size: 40, hardness: 0.8, opacity: 1, smoothing: 0.1, mode: 'paint' as 'paint' | 'erase', pressure: true };
   marqueeKind: 'rectangle' | 'ellipse' = 'rectangle';
   marqueeFeather = 0;
   lassoKind: 'freehand' | 'polygonal' = 'freehand';
@@ -842,6 +843,7 @@ export class App {
         }
         else if (isImageFile(f)) {
           const c = await fileToCanvas(f);
+          if (importNote.text) { toast(importNote.text); importNote.text = ''; }
           const name = f.name.replace(/\.[^.]+$/, '');
           if (asLayers && this.doc) this.placeImage(c, name);
           else {
