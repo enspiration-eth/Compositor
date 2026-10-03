@@ -3,6 +3,7 @@
 import { h, icon } from './dom';
 import { toast } from './dom';
 import { app } from './app';
+import { blocksTouchPan } from './fields';
 
 const COMPACT = '(max-width: 820px), (max-height: 500px)';
 const PHONE = '(max-width: 600px) and (orientation: portrait)';
@@ -204,7 +205,16 @@ export function toolOptionsWrap(header: HTMLElement): HTMLElement {
     const open = document.body.classList.contains('tool-options-open');
     btn.hidden = !document.body.classList.contains('compact') || (!open && header.scrollWidth <= header.clientWidth + 2);
     btn.setAttribute('aria-expanded', String(open)); btn.setAttribute('aria-label', open ? 'Show fewer tool options' : 'Show all tool options');
+    fades();
   };
+  // Edge fades where the row continues: left once scrolled, right while more is cut off.
+  const fades = () => {
+    const over = !document.body.classList.contains('tool-options-open') && header.scrollWidth > header.clientWidth + 2;
+    header.classList.toggle('fade-l', over && header.scrollLeft > 2);
+    header.classList.toggle('fade-r', over && header.scrollLeft + header.clientWidth < header.scrollWidth - 2);
+  };
+  header.addEventListener('scroll', fades, { passive: true });
+  header.addEventListener('touchmove', e => { if (blocksTouchPan() && e.cancelable) e.preventDefault(); }, { passive: false });
   btn.addEventListener('click', () => { document.body.classList.toggle('tool-options-open'); sync(); });
   new ResizeObserver(sync).observe(header);
   new MutationObserver(() => requestAnimationFrame(sync)).observe(header, { childList: true, subtree: true });

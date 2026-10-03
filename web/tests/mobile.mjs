@@ -234,6 +234,30 @@ for (const dev of runs) {
         assert(await page.evaluate(() => document.body.classList.contains('pen-mode')), 'pen mode');
         await page.waitForTimeout(100); await shot('pen-pressure');
       });
+      if (dev.expect.compact) await step('options bar: a quick swipe across a field scrolls the bar; hold-then-drag scrubs it', async () => {
+        await page.tap('.rail-btn[data-tool="brush"]'); await wait(200);
+        const st = () => page.evaluate(() => { const b = document.querySelector('.tool-header'); return { sl: Math.round(b.scrollLeft), size: window.compositor.app.brush.size, fadeR: b.classList.contains('fade-r'), fadeL: b.classList.contains('fade-l'), gap: parseFloat(getComputedStyle(b).columnGap) }; });
+        await page.evaluate(() => { document.querySelector('.tool-header').scrollLeft = 0; }); await wait(150);
+        const a = await st();
+        assert(a.gap >= 20, 'touch gap between fields ' + a.gap);
+        assert(a.fadeR && !a.fadeL, 'right edge fade only at the start ' + JSON.stringify(a));
+        const box = await page.locator('.tool-header .num-box.labeled').first().boundingBox();
+        const y = box.y + box.height / 2, x = box.x + 30;
+        if (!useWebkit) { // native scrolling needs real touch input (CDP); WebKit here only gets synthetic pointer events
+          await touch('touchStart', [[x, y]]); for (let i = 1; i <= 8; i++) { await touch('touchMove', [[x - i * 25, y]]); await wait(16); } await touch('touchEnd', []); await wait(700);
+          const b = await st();
+          assert(b.sl > 60 && b.size === a.size, 'swipe scrolled the bar, value unchanged ' + JSON.stringify([a, b]));
+          assert(b.fadeL, 'left fade once scrolled ' + JSON.stringify(b));
+          await shot('inputs-v4-swiped');
+          await page.evaluate(() => { document.querySelector('.tool-header').scrollLeft = 0; }); await wait(200);
+        }
+        await touch('touchStart', [[x, y]]); await wait(300);
+        assert(await page.evaluate(() => !!document.querySelector('.tool-header .num-box.scrub-armed')), 'hold arms the field');
+        for (let i = 1; i <= 8; i++) { await touch('touchMove', [[x + i * 6, y]]); await wait(30); } await wait(100); await touch('touchEnd', []); await wait(300);
+        const c = await st();
+        assert(c.size > a.size + 10 && c.sl === 0, 'hold-then-drag scrubbed without scrolling ' + JSON.stringify([a, c]));
+        await page.evaluate(v => { window.compositor.app.brush.size = v; window.compositor.app.emit('tool'); }, a.size);
+      });
       if (dev.expect.compact) await step('tool options: the cut-off row expands into wrapped rows', async () => {
         await page.tap('.rail-btn[data-tool="brush"]');
         assert(await page.isVisible('#tool-options-toggle'), 'chevron shown when options are cut off');

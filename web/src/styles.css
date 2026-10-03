@@ -180,7 +180,11 @@ input[type=number]:focus, input[type=text]:focus { outline: 2px solid var(--acce
 .shortcut-row { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; break-inside: avoid; }
 kbd { font-family: inherit; color: var(--text2); }
 .toast { position: fixed; bottom: 44px; left: 50%; transform: translate(-50%, 20px); background: #3a3a3c; border: 1px solid #555; padding: 8px 14px; border-radius: 8px; opacity: 0; transition: all .25s; z-index: 2000; max-width: 70vw; }
-.toast.show { opacity: 1; transform: translate(-50%, 0); } .toast.error { background: #5a2020; border-color: #8a3a3a; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.has-action { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px; }
+.toast-action { background: var(--accent, #0a84ff); color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.toast-close { background: none; border: 0; color: #aaa; font-size: 18px; line-height: 1; padding: 4px 8px; cursor: pointer; }
+body.touch .toast-action, body.touch .toast-close { min-height: 44px; min-width: 44px; } .toast.error { background: #5a2020; border-color: #8a3a3a; }
 .tool-header .slider-row { margin-right: 6px; }
 .tool-header .slider-label { min-width: 0; }
 .ruler { position: absolute; z-index: 2; cursor: default; }
@@ -434,7 +438,10 @@ body.touch:not(.compact) .layers-panel { min-width: 290px; }
 body.touch .layers-foot { padding: 0 4px; }
 body.touch .tool-header .slider-val { margin-right: 8px; }
 /* The tool options scroll sideways on small screens; the fade says there's more. */
-body.compact .tool-header { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 28px; }
+body.compact .tool-header { padding-right: 28px; }
+body.compact .tool-header.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent); }
+body.compact .tool-header.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 36px); mask-image: linear-gradient(to right, transparent, #000 36px); }
+body.compact .tool-header.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to right, transparent, #000 36px, #000 calc(100% - 36px), transparent); }
 
 /* Tool options bar on narrow screens: scrolls sideways; the chevron expands it into wrapped rows. */
 .tool-header-wrap { position: relative; flex: none; }
@@ -532,3 +539,14 @@ body.touch .tool-header:has(.num-box.labeled) { gap: 12px; }
 body.touch:not(.tool-options-open) .tool-header:has(.num-box.labeled) { height: 56px; }
 body.compact.tool-options-open .tool-header .slider-row.has-labeled { flex: 1 0 auto; }
 body.compact.tool-options-open .tool-header .slider-row.has-labeled .slider-val, body.compact.tool-options-open .tool-header .slider-row.has-labeled .num-box { flex: 1; }
+
+/* Inputs v4: room between the fields, and the bar scrolls sideways under a finger. The gaps, the bar's padding and
+   outside labels hand touches to native horizontal scrolling; a field scrubs on touch only after a short hold
+   (fields.ts), so a quick swipe that starts on a field scrolls too. */
+.tool-header, .tool-header:has(.num-box.labeled) { gap: 16px; }
+body.touch .tool-header, body.touch .tool-header:has(.num-box.labeled), body.compact.touch .tool-header { gap: 22px; }
+body.touch .tool-header { touch-action: pan-x; overscroll-behavior-x: contain; }
+body.touch .tool-header .num-box, body.touch .tool-header .slider-label, body.touch .tool-header label { touch-action: pan-x; }
+body.touch .tool-header .num-box.scrub-armed, body.touch .tool-header .num-box:has(.scrubbing) { touch-action: none; }
+.num-box.scrub-armed { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 124, 246, .25); transition: box-shadow .12s; }
+body.compact.tool-options-open .tool-header { row-gap: 10px; }

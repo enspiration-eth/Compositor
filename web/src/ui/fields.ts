@@ -103,6 +103,11 @@ function resolveTyped(i: HTMLInputElement) {
   let w = clamp(v, st); if (st.integer) w = Math.round(w / st.step) * st.step;
   i.value = format(w, st);
 }
+/** Touch in the scrolling options bar: how long a finger rests on a field before a drag scrubs it. */
+export const HOLD_MS = 180;
+let panBlocker: (() => boolean) | null = null;
+/** Whether a touch scrub owns the current touch (so its touchmoves must not pan the container). */
+export function blocksTouchPan() { return !!panBlocker?.(); }
 const stepFactor = (e: { shiftKey: boolean; altKey: boolean }) => (e.shiftKey ? 10 : 1) * (e.altKey ? 0.1 : 1);
 
 // ---------- scrubbing ----------
@@ -113,6 +118,18 @@ function scrubFrom(i: HTMLInputElement, e: PointerEvent, from: HTMLElement, imme
   const v0 = Number.isFinite(start) ? start : Number.isFinite(st.min) ? st.min : 0;
   const x0 = e.clientX, y0 = e.clientY, id = e.pointerId;
   let scrubbing = immediate, acc = 0, lastX = x0;
+  // Touch in a row that scrolls sideways (the options bar): a horizontal drag is ambiguous, so scrubbing waits for a
+  // short hold (HOLD_MS, the box lights up) and a swipe before that is left to native scrolling. Elsewhere, and with
+  // a mouse or pen, a sideways drag scrubs straight away. (Chosen over "drag from the value area" because a hold
+  // works the same anywhere on the box and is easy to see and to test.)
+  const bar = e.pointerType === 'touch' ? from.closest<HTMLElement>('.tool-header') : null;
+  const hold = !!bar && bar.scrollWidth > bar.clientWidth + 2 && !immediate;
+  const box = i.closest<HTMLElement>('.num-box');
+  let armed = !hold, holdTimer = 0;
+  if (hold) holdTimer = window.setTimeout(() => { armed = true; box?.classList.add('scrub-armed'); navigator.vibrate?.(8); }, HOLD_MS);
+  // Once a scrub is on, keep the browser from also panning: touch-action is fixed when the touch starts, so a
+  // non-passive touchmove listener on the bar (mobile.ts, blocksTouchPan) cancels the moves instead.
+  if (e.pointerType === 'touch') panBlocker = () => (armed && hold) || scrubbing;
   // Per pixel: one step, or a 1/300 of the span for wide ranges with fine steps (opacity 0–1), so a short drag covers it.
   const span = st.max - st.min;
   const perPx = Number.isFinite(span) && span / st.step > 600 && !st.integer ? span / 300 : st.step;
@@ -130,8 +147,9 @@ function scrubFrom(i: HTMLInputElement, e: PointerEvent, from: HTMLElement, imme
     if (ev.pointerId !== id) return;
     if (!scrubbing) {
       const dx = ev.clientX - x0, dy = ev.clientY - y0;
-      if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) { end(); return; } // a vertical swipe scrolls the sheet
-      if (Math.abs(dx) < (ev.pointerType === 'mouse' ? 3 : 8)) return;
+      if (!armed) { if (Math.hypot(dx, dy) > 8) end(); return; } // a quick swipe: the bar scrolls
+      if (!hold && Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) { end(); return; } // a vertical swipe scrolls the sheet
+      if (Math.abs(dx) < (ev.pointerType === 'mouse' ? 3 : hold ? 2 : 8)) return;
       begin(); lastX = ev.clientX;
     }
     ev.preventDefault();
@@ -141,6 +159,7 @@ function scrubFrom(i: HTMLInputElement, e: PointerEvent, from: HTMLElement, imme
   const end = (ev?: PointerEvent) => {
     if (ev && ev.pointerId !== id) return;
     window.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', end, true); window.removeEventListener('pointercancel', end, true);
+    panBlocker = null; clearTimeout(holdTimer); box?.classList.remove('scrub-armed');
     document.body.classList.remove('scrubbing'); i.classList.remove('scrubbing');
     if (scrubbing) {
       if (acc !== 0) i.dispatchEvent(new Event('change', { bubbles: true }));
