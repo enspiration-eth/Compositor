@@ -315,6 +315,20 @@ for (const dev of runs) {
         assert((await st()).layers === after.layers + 1, 'duplicated from the long-press menu');
         if (dev.expect.compact) { await page.tap('#close-layers'); await wait(300); assert(!(await page.evaluate(() => document.body.classList.contains('layers-open'))), 'closed'); }
       });
+      if (dev.expect.compact) await step('Layers sheet: drag the handle between detents, flick down, tap cycles, drag away dismisses', async () => {
+        await page.tap('#toggle-layers'); await wait(400);
+        const info = () => page.evaluate(() => { const el = document.querySelector('.layers-panel'); return { h: Math.round(el.getBoundingClientRect().height), detent: el.dataset.detent, open: document.body.classList.contains('layers-open') }; });
+        const drag = async (dy, steps, ms, rest = 0) => { const hb = await page.locator('#layers-sheet-handle').boundingBox(); const x = hb.x + hb.width / 2, y = hb.y + hb.height / 2;
+          await touch('touchStart', [[x, y]]); for (let i = 1; i <= steps; i++) { await touch('touchMove', [[x, y + dy * i / steps]]); await wait(ms); } await wait(rest); await touch('touchEnd', []); await wait(500); };
+        const a = await info(); assert(a.open && a.detent === 'half', 'opens at half ' + JSON.stringify(a));
+        await drag(-300, 15, 30); const b = await info(); assert(b.detent === 'full' && b.h > a.h + 100, 'dragged up to full ' + JSON.stringify(b));
+        await shot('layers-sheet-full');
+        await drag(250, 15, 30); const c = await info(); assert(c.detent === 'half', 'settles back at half ' + JSON.stringify(c));
+        await drag(120, 4, 30); const d = await info(); assert(d.open && d.detent === 'peek' && d.h < c.h, 'flick down goes to peek ' + JSON.stringify(d));
+        await page.tap('#layers-sheet-handle'); await wait(500); const e = await info(); assert(e.detent === 'half', 'tap cycles ' + JSON.stringify(e));
+        await drag(500, 10, 20, 150); const f = await info(); assert(!f.open, 'dragged far down closes ' + JSON.stringify(f));
+        const fit = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); return r.height > 200; }); assert(fit, 'stage back to full height');
+      });
       await step('dialogs fit: New Canvas, Image Size and Canvas Size (device caps)', async () => {
         await page.tap('#newCanvasToolbar');
         await page.waitForSelector('.modal #create-canvas');

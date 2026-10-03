@@ -98,7 +98,101 @@ function installLongPress() {
 }
 
 // ---------- Layers drawer ----------
-export function setLayersOpen(open: boolean) { document.body.classList.toggle('layers-open', open); }
+export function setLayersOpen(open: boolean) {
+  if (open && !document.body.classList.contains('layers-open') && layersSheet) layersSheet.reset();
+  document.body.classList.toggle('layers-open', open);
+}
+let layersSheet: { reset: () => void } | null = null;
+
+// ---------- draggable bottom sheet (phones) ----------
+// Like an iOS sheet: drag the grab handle or the header and the sheet follows the finger between detents (peek, half,
+// full); a flick up expands, a flick down shrinks or, from the peek (or dragged well below it), dismisses; it snaps
+// with a little spring; a tap on the handle cycles the detents. The content keeps scrolling inside whatever height it
+// has, so nothing is ever cut off.
+export type Detent = 'peek' | 'half' | 'full';
+export function makeSheetDraggable(sheet: HTMLElement, grabAreas: HTMLElement[], opts: { dismiss: () => void; active: () => boolean; detents?: Detent[]; initial?: Detent }) {
+  const detents = opts.detents ?? ['peek', 'half', 'full'];
+  const vvh = () => window.visualViewport?.height ?? innerHeight;
+  const heightOf = (d: Detent) => {
+    const top = parseFloat(getComputedStyle(document.body).getPropertyValue('--sat') || '0') || 0;
+    return d === 'peek' ? Math.min(170, vvh() * 0.3) : d === 'half' ? Math.min(vvh() * 0.64, 560) : vvh() - Math.max(44, top + 12);
+  };
+  let detent: Detent = opts.initial ?? 'half';
+  const apply = (animate: boolean) => {
+    sheet.classList.toggle('sheet-anim', animate);
+    sheet.style.setProperty('--sheet-h', `${Math.round(heightOf(detent))}px`);
+    sheet.style.removeProperty('--sheet-drag');
+    sheet.dataset.detent = detent;
+  };
+  const reset = () => { detent = opts.initial ?? 'half'; apply(false); };
+  reset();
+  window.addEventListener('resize', () => apply(false));
+  const handle = grabAreas[0];
+  const attach = (area: HTMLElement) => {
+    area.style.touchAction = 'none';
+    area.addEventListener('pointerdown', e => {
+      if (!opts.active() || e.button !== 0) return;
+      if (area !== handle && (e.target as HTMLElement).closest('button, input, select, [contenteditable], .cs-button')) return;
+      const id = e.pointerId, y0 = e.clientY, h0 = heightOf(detent);
+      const samples: [number, number][] = [[e.timeStamp, e.clientY]];
+      let moved = false;
+      try { area.setPointerCapture(id); } catch { /* gone */ }
+      sheet.classList.remove('sheet-anim');
+      const move = (ev: PointerEvent) => {
+        if (ev.pointerId !== id) return;
+        const dy = ev.clientY - y0;
+        if (!moved && Math.abs(dy) < 6) return;
+        if (!moved) sheet.classList.add('sheet-dragging');
+        moved = true;
+        samples.push([ev.timeStamp, ev.clientY]); if (samples.length > 6) samples.shift();
+        let hgt = h0 - dy;
+        const max = heightOf('full');
+        if (hgt > max) hgt = max + (hgt - max) * 0.25; // rubber band past the top
+        const min = heightOf(detents[0]);
+        if (hgt < min) { sheet.style.setProperty('--sheet-h', `${Math.round(min)}px`); sheet.style.setProperty('--sheet-drag', `${Math.round(min - hgt)}px`); }
+        else { sheet.style.setProperty('--sheet-h', `${Math.round(hgt)}px`); sheet.style.removeProperty('--sheet-drag'); }
+      };
+      const up = (ev: PointerEvent) => {
+        if (ev.pointerId !== id) return;
+        area.removeEventListener('pointermove', move); area.removeEventListener('pointerup', up); area.removeEventListener('pointercancel', up);
+        sheet.classList.remove('sheet-dragging');
+        if (!moved) {
+          if (area === handle && ev.type === 'pointerup') { detent = detents[(detents.indexOf(detent) + 1) % detents.length]; apply(true); }
+          return;
+        }
+        const [t0, yA] = samples[0], v = (ev.clientY - yA) / Math.max(1, ev.timeStamp - t0); // px/ms, down is positive
+        const hNow = h0 - (ev.clientY - y0);
+        const order = detents.map(d => [d, heightOf(d)] as const);
+        const lowest = order[0][1];
+        if (hNow < lowest * 0.55 || (v > 0.9 && detent === detents[0]) || (v > 1.6 && hNow < heightOf('half'))) { apply(true); opts.dismiss(); return; }
+        if (Math.abs(v) > 0.5) {
+          // A flick goes one detent in its direction from where the finger let go.
+          const above = order.filter(([, hh]) => hh > hNow + 1), below = order.filter(([, hh]) => hh < hNow - 1);
+          const pick = v < 0 ? above[0] ?? order[order.length - 1] : below[below.length - 1] ?? order[0];
+          detent = pick[0];
+        } else detent = order.reduce((a, b) => Math.abs(b[1] - hNow) < Math.abs(a[1] - hNow) ? b : a)[0];
+        apply(true);
+      };
+      area.addEventListener('pointermove', move); area.addEventListener('pointerup', up); area.addEventListener('pointercancel', up);
+    });
+  };
+  grabAreas.forEach(attach);
+  handle.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); detent = detents[(detents.indexOf(detent) + 1) % detents.length]; apply(true); }
+    else if (e.key === 'Escape') opts.dismiss();
+  });
+  return { reset, attach, get detent() { return detent; }, set: (d: Detent) => { detent = d; apply(true); } };
+}
+/** The Layers panel as a draggable sheet on phones. */
+export function installLayersSheet(panel: HTMLElement) {
+  const grab = h('button', { class: 'sheet-handle', type: 'button', 'aria-label': 'Resize the Layers sheet (tap to cycle sizes)', id: 'layers-sheet-handle' });
+  panel.prepend(grab);
+  const sheet = makeSheetDraggable(panel, [grab], { dismiss: () => setLayersOpen(false), active: () => document.body.classList.contains('phone') });
+  // The header is a grab area too (the panel is re-rendered, so it's picked up whenever a new one appears).
+  const pick = () => { if (grab.parentElement !== panel || panel.firstElementChild !== grab) panel.prepend(grab); const hd = panel.querySelector<HTMLElement>('.layers-head'); if (hd && !hd.dataset.grab) { hd.dataset.grab = '1'; sheet.attach(hd); } };
+  pick(); new MutationObserver(pick).observe(panel, { childList: true, subtree: true });
+  layersSheet = sheet;
+}
 export function toggleLayers() { setLayersOpen(!document.body.classList.contains('layers-open')); }
 
 // ---------- tool options bar ----------

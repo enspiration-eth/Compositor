@@ -15,7 +15,7 @@ import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLE
 import { ADJUSTMENT_KINDS, FILTER_MENU, IMAGE_ADJUSTMENTS, type FilterKind } from '../engine/adjustments';
 import { limitNotice } from '../engine/limits';
 import { installFieldEnhancer, setFieldDpiSource } from './fields';
-import { setupMobile, modifierBar, toolOptionsWrap, toggleLayers, setLayersOpen } from './mobile';
+import { setupMobile, modifierBar, toolOptionsWrap, toggleLayers, setLayersOpen, installLayersSheet } from './mobile';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl+';
@@ -63,6 +63,7 @@ export function buildLayout(root: HTMLElement) {
   root.append(els.menubar, els.toolbar, toolOptionsWrap(els.header),
     h('div', { class: 'main' }, els.rail, h('div', { class: 'stage-wrap' }, els.stage, els.welcome, modifierBar()), h('div', { class: 'resize-edge' }), els.layers),
     els.status, els.fileInput, els.folderInput);
+  installLayersSheet(els.layers);
   ctl = new CanvasController(els.stage);
   ctl.onContextMenu = canvasContextMenu;
   (window as unknown as { compositor: unknown }).compositor = { app, ctl, filters: { applyFilter, applyFilterAsync, poolSize, defaultFilterSettings } };
