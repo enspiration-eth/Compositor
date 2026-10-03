@@ -487,7 +487,7 @@ body.touch .num-pop-btn { width: 32px; height: 40px; }
 /* The value and its unit share one bordered box (ui/fields.ts), sized to fit them. */
 .num-box { display: inline-flex; align-items: center; flex: none; background: #1c1c1c; border: 1px solid #444; border-radius: 5px; box-sizing: border-box; cursor: ew-resize; touch-action: pan-y; }
 .num-box:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
-.num-box > input.num-field { border: none; background: transparent; outline: none; border-radius: 5px; padding: 3px 6px; text-align: right; min-width: 0; box-sizing: content-box; }
+.num-box > input.num-field { border: none; background: transparent; outline: none; border-radius: 5px; padding: 3px 6px; text-align: right; min-width: 4ch; box-sizing: content-box; }
 .num-box > input.num-field:focus { outline: none; }
 .num-box.has-unit > input.num-field { padding-right: 1px; }
 .num-box > .unit { color: var(--text3); padding: 0 6px 0 1px; user-select: none; white-space: nowrap; }
@@ -581,7 +581,8 @@ body.tool-options-hidden .tool-header-wrap, body.tool-options-hidden > #app > .t
 body.phone .tabs { container-type: inline-size; }
 @container (max-width: 96px) { .tab .tab-close { display: none; } .tab { padding-left: 10px; } }
 
-/* Number fields: tabular figures in a value area at least four digits wide (fields.ts sizes it), right-aligned. */
+/* Number fields: tabular figures in a value area at least four digits wide (fields.ts sizes it; the 4ch min-width
+   on .num-box > input.num-field is the floor, so 6 → 1000 never resizes the box or moves the unit), right-aligned. */
 input.num-field { font-variant-numeric: tabular-nums; text-align: right; }
 /* The color picker sheet may run a little taller than other sheets so field, values and buttons fit (colorpicker.ts sizes the field to match). */
 body.compact #color-picker.floating-panel { max-height: min(72dvh, calc(var(--vvh, 100dvh) - 60px)); }

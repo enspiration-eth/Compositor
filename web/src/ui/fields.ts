@@ -283,9 +283,10 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
   if (inlineLabel) { syncFill(); i.addEventListener('input', syncFill); i.addEventListener('change', syncFill); }
   box.addEventListener('pointerdown', e => { if (e.target !== i && !(e.target as HTMLElement).closest('button')) { if (document.activeElement === i) e.preventDefault(); else scrubFrom(i, e, i, false); } });
   const st = stateOf(i);
-  const chars = Math.min(7, Math.max(2, ...[st.min, st.max].filter(Number.isFinite).map(v => format(v, st).length), Number.isFinite(st.max) ? 0 : st.integer ? 5 : 6));
+  const chars = Math.min(7, Math.max(2, ...[st.min, st.max].filter(Number.isFinite).map(v => v.toFixed(st.decimals).length), Number.isFinite(st.max) ? 0 : st.integer ? 5 : 6));
   // Room for four digits at least (tabular figures, so 6 → 1000 doesn't move the unit or resize the box); longer
-  // values (negatives, decimals, five-digit sizes) grow it. With a mouse: as wide as the widest value of its range.
+  // values (negatives, decimals, five-digit sizes) grow it. With a mouse: as wide as the widest value of its range,
+  // counted with all its decimals (dialogs show 20.00, not 20), so a decimal field doesn't jump from 6.00 to 20.00.
   const fit = () => {
     const n = document.body.classList.contains('touch') ? Math.max(4, i.value.trim().length) : Math.max(4, chars, i.value.trim().length);
     const w = `calc(${n}ch + ${unitEl ? 8 : 14}px)`;
