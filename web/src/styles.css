@@ -254,8 +254,9 @@ body.busy, body.busy * { cursor: progress !important; }
 .cp-preview { width: 64px; height: 64px; border-radius: 5px; overflow: hidden; border: 1px solid rgba(0,0,0,0.6); flex: none; }
 .cp-new, .cp-current { height: 50%; } .cp-current { cursor: pointer; }
 .cp-buttons { display: flex; flex-direction: column; gap: 8px; flex: 1; } .cp-buttons .btn { width: 100%; }
-/* R G B and # in one row under the picker (phones: R G B, then # below). */
-.cp-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.25fr); gap: 10px; margin-top: 14px; }
+/* R G B side by side under the picker, the # field on its own full-width row below. */
+.cp-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.cp-hexrow { grid-column: 1 / -1; }
 .cp-row { display: flex; align-items: center; min-width: 0; }
 body .cp-fields .num-box.labeled, body.touch .cp-fields .num-box.labeled { min-width: 0; width: 100%; max-width: none; padding-left: 10px; }
 .cp-fields .num-box.labeled > .num-inlabel { margin-right: 6px; flex: none; }
@@ -264,7 +265,7 @@ body .cp-fields .num-box.labeled, body.touch .cp-fields .num-box.labeled { min-w
 .cp-hexbox > .cp-hex { flex: 1 1 auto; min-width: 0; width: 100%; height: 100%; border: none; background: transparent; outline: none; padding: 0 10px 0 0; text-align: right; color: inherit;
   font: inherit; font-family: ui-monospace, Menlo, monospace; text-transform: uppercase; }
 .cp-hint { margin-top: auto; font-size: 11px; }
-body.compact .cp-fields { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.45fr); gap: 8px; }
+body.compact .cp-fields { gap: 8px; }
 body.compact .cp-fields .num-box.labeled { padding-left: 8px; }
 body.compact .cp-hexbox > .cp-hex { padding-right: 8px; }
 body.touch .cp-hexbox > .cp-hex { font-size: 16px; }
@@ -582,3 +583,5 @@ body.phone .tabs { container-type: inline-size; }
 
 /* Number fields: tabular figures in a value area at least four digits wide (fields.ts sizes it), right-aligned. */
 input.num-field { font-variant-numeric: tabular-nums; text-align: right; }
+/* The color picker sheet may run a little taller than other sheets so field, values and buttons fit (colorpicker.ts sizes the field to match). */
+body.compact #color-picker.floating-panel { max-height: min(72dvh, calc(var(--vvh, 100dvh) - 60px)); }

@@ -385,7 +385,7 @@ for (const dev of runs) {
         await drag(500, 10, 20, 150); const f = await info(); assert(!f.open, 'dragged far down closes ' + JSON.stringify(f));
         const fit = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); return r.height > 200; }); assert(fit, 'stage back to full height');
       });
-      await step('color picker: R G B (and # on phones) side by side as labeled fields; the sheet fits without scrolling', async () => {
+      await step('color picker: R G B side by side as labeled fields, # full width below; the sheet fits without scrolling', async () => {
         await page.tap('#swatch-fg'); await page.waitForSelector('#color-picker .cp-fields'); await wait(400);
         const g = await page.evaluate(() => {
           const boxes = [...document.querySelectorAll('#color-picker .cp-fields .num-box')].map(b => { const r = b.getBoundingClientRect(); return { top: Math.round(r.top), left: r.left, right: r.right, h: r.height, label: b.querySelector('.num-inlabel')?.textContent, val: b.querySelector('input').value, vw: b.querySelector('input').getBoundingClientRect().width }; });
@@ -396,7 +396,7 @@ for (const dev of runs) {
         const [r, gg, b, hx] = g.boxes;
         assert(g.boxes.length === 4 && r.label === 'R' && gg.label === 'G' && b.label === 'B' && hx.label === '#', 'labels inside the boxes ' + JSON.stringify(g.boxes));
         assert(r.top === gg.top && gg.top === b.top && r.right <= gg.left && gg.right <= b.left, 'R G B in one row ' + JSON.stringify(g.boxes));
-        if (dev.expect.compact) assert(hx.top === r.top, 'hex alongside on phones ' + JSON.stringify(g.boxes));
+        assert(hx.top > r.top + r.h - 1 && Math.abs(hx.left - r.left) < 1 && Math.abs(hx.right - b.right) < 1, 'hex on its own full-width row ' + JSON.stringify(g.boxes));
         assert(g.boxes.every(x => x.h >= 40 && x.vw >= 24), 'touch-sized, values visible ' + JSON.stringify(g.boxes));
         assert(g.inView && g.scroll <= 1, 'picker fits on screen without scrolling ' + JSON.stringify(g));
         await shot('color-picker');

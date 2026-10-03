@@ -57,7 +57,7 @@ export function openColorPicker(opts: PickerOptions) {
   let hsb = setRGB({ hue: 0, saturation: 0, brightness: 0 }, original);
   const color = () => quantize(hsbToRgb(hsb));
   // Phones: a smaller field on short screens so the whole sheet (values and buttons too) fits without scrolling.
-  const SIZE = document.body.classList.contains('compact') ? (() => { const vh = window.visualViewport?.height ?? innerHeight; return Math.round(Math.max(150, Math.min(256, Math.min(vh * 0.62, vh - 60) - 200))); })() : 256;
+  const SIZE = document.body.classList.contains('compact') ? (() => { const vh = window.visualViewport?.height ?? innerHeight; return Math.round(Math.max(150, Math.min(256, Math.min(vh * 0.72, vh - 60) - 252))); })() : 256;
 
   let done = false;
   const finish = (commit: boolean) => {
@@ -101,7 +101,7 @@ export function openColorPicker(opts: PickerOptions) {
   hex.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitHex(); } });
   const hint = h('div', { class: 'hint cp-hint' }, document.querySelector('.modal-back') ? '' : 'Click the canvas to sample');
 
-  // R, G, B side by side as labeled fields ([R   255]), the hex field with them on a wide panel or below on a phone.
+  // R, G, B side by side as labeled fields ([R   255]); the hex field on its own full-width row below.
   const hexBox = h('label', { class: 'cp-row cp-hexrow' }, h('div', { class: 'num-box labeled cp-hexbox' }, h('span', { class: 'num-inlabel' }, '#'), hex));
   const side = h('div', { class: 'cp-side' },
     h('div', { class: 'cp-top' }, h('div', { class: 'cp-preview' }, newSwatch, curSwatch), h('div', { class: 'cp-buttons' }, ok, cancel)),
