@@ -1,6 +1,6 @@
 // Phones and tablets: the body classes the responsive layout keys off (styles.css), on-screen Shift/Option/Command
 // toggles, long press as the context-menu (and tooltip) gesture outside the canvas, and the Layers drawer.
-import { h } from './dom';
+import { h, icon } from './dom';
 import { toast } from './dom';
 import { app } from './app';
 
@@ -100,6 +100,23 @@ function installLongPress() {
 // ---------- Layers drawer ----------
 export function setLayersOpen(open: boolean) { document.body.classList.toggle('layers-open', open); }
 export function toggleLayers() { setLayersOpen(!document.body.classList.contains('layers-open')); }
+
+// ---------- tool options bar ----------
+// On narrow screens the options of a tool rarely fit one row. The row scrolls sideways, and a chevron at its end
+// (shown only when something is cut off) expands it into wrapped rows; the choice sticks across tools.
+export function toolOptionsWrap(header: HTMLElement): HTMLElement {
+  const btn = h('button', { class: 'tool-options-toggle', id: 'tool-options-toggle', type: 'button', 'aria-label': 'Show all tool options', 'aria-expanded': 'false', title: 'All tool options' }, icon('chevronDown', 18)) as HTMLButtonElement;
+  const sync = () => {
+    const open = document.body.classList.contains('tool-options-open');
+    btn.hidden = !document.body.classList.contains('compact') || (!open && header.scrollWidth <= header.clientWidth + 2);
+    btn.setAttribute('aria-expanded', String(open)); btn.setAttribute('aria-label', open ? 'Show fewer tool options' : 'Show all tool options');
+  };
+  btn.addEventListener('click', () => { document.body.classList.toggle('tool-options-open'); sync(); });
+  new ResizeObserver(sync).observe(header);
+  new MutationObserver(() => requestAnimationFrame(sync)).observe(header, { childList: true, subtree: true });
+  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  return h('div', { class: 'tool-header-wrap' }, header, btn);
+}
 
 // ---------- keep the fitted canvas above bottom sheets ----------
 function watchSheets() {

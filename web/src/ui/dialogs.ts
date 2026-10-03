@@ -1152,6 +1152,7 @@ export function showCanvasSize() {
     if (skip !== w) w.value = fmtNum(shown(true)); if (skip !== hh) hh.value = fmtNum(shown(false));
     unitLbl.forEach(u => { u.textContent = { Pixels: 'px', Percent: '%', Inches: 'in', Centimeters: 'cm' }[dr.unit]; });
     const ok = valid(); result.classList.toggle('warn', !ok);
+    const okBtn = document.querySelector('#canvas-size-modal .modal-buttons .primary') as HTMLButtonElement | null; if (okBtn) okBtn.disabled = !ok;
     result.textContent = ok ? `New: ${Math.round(dr.width)} × ${Math.round(dr.height)} pixels · ${fmtBytes(Math.round(dr.width) * Math.round(dr.height) * 4)} uncompressed` : (limits.mobile ? `Final dimensions must fit this device: up to ${limits.maxSide.toLocaleString('en-US')} pixels per side and ${Math.round(limits.maxPixels / 1e6 * 10) / 10} megapixels.` : 'Final dimensions must be 1–30,000 pixels per side.');
   };
   w.addEventListener('input', () => { if (w.value !== '' && isFinite(+w.value)) { set(+w.value, true); refresh(w); } });

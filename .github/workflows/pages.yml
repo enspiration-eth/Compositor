@@ -54,6 +54,14 @@ jobs:
           sleep 3
           URL=http://localhost:4173/${{ github.event.repository.name }}/ SHOTS=$RUNNER_TEMP/shots npm run test:e2e
 
+      # The phone/tablet checks again in WebKit (the engine behind every iOS browser). Informational for now: a WebKit
+      # difference shows up here without holding back the deploy.
+      - name: Mobile checks in WebKit
+        continue-on-error: true
+        run: |
+          npx playwright install --with-deps webkit
+          URL=http://localhost:4173/${{ github.event.repository.name }}/ SHOTS=$RUNNER_TEMP/shots-webkit BROWSER=webkit npm run test:mobile
+
       - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v5

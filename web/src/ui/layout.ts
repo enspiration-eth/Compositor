@@ -14,7 +14,7 @@ import { view, setView, clearGuides } from './guides';
 import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
 import { ADJUSTMENT_KINDS, FILTER_MENU, IMAGE_ADJUSTMENTS, type FilterKind } from '../engine/adjustments';
 import { limitNotice } from '../engine/limits';
-import { setupMobile, modifierBar, toggleLayers, setLayersOpen } from './mobile';
+import { setupMobile, modifierBar, toolOptionsWrap, toggleLayers, setLayersOpen } from './mobile';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl+';
@@ -57,7 +57,7 @@ export function buildLayout(root: HTMLElement) {
   els.fileInput = h('input', { type: 'file', multiple: true, accept: 'image/*,.psd,.psb,.zip,.comp,.svg,.tif,.tiff,.dng,.nef,.cr2,.arw,.orf,.rw2,.raf,.pef,.srw,.heic,.heif', style: 'display:none', id: 'file-input' });
   els.folderInput = h('input', { type: 'file', style: 'display:none', id: 'folder-input' });
   (els.folderInput as HTMLInputElement).setAttribute('webkitdirectory', '');
-  root.append(els.menubar, els.toolbar, els.header,
+  root.append(els.menubar, els.toolbar, toolOptionsWrap(els.header),
     h('div', { class: 'main' }, els.rail, h('div', { class: 'stage-wrap' }, els.stage, els.welcome, modifierBar()), h('div', { class: 'resize-edge' }), els.layers),
     els.status, els.fileInput, els.folderInput);
   ctl = new CanvasController(els.stage);
@@ -656,8 +656,10 @@ function openBlendList(a: Layer, button: HTMLElement, commit: (mode: BlendMode) 
       // Touch has no hover: the first tap on a mode previews it, a second tap on it keeps it.
       row.addEventListener('click', e => {
         e.stopPropagation();
-        const kind = (e as PointerEvent).pointerType || rowPointer;
+        // WebKit (iOS Safari) reports a tap's click as pointerType 'mouse', so the finger's own pointerdown decides.
+        const kind = rowPointer !== 'mouse' ? rowPointer : (e as PointerEvent).pointerType || 'mouse';
         if (kind !== 'mouse' && kind !== '' && mode !== current) { highlight(mode, false); return; }
+        if (mode !== current) highlight(mode, false); // a click keeps the row clicked, hover or not (WebKit sends no mousemove first)
         finish(true);
       });
       row.addEventListener('pointerdown', e => { rowPointer = e.pointerType; });

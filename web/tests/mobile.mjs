@@ -44,15 +44,33 @@ for (const dev of runs) {
   const context = await browser.newContext({ ...desc });
   const page = await context.newPage();
   const errors = [];
-  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  // WebKit (like iOS Safari) logs the Chromium-only interactive-widget viewport key as an error; it's harmless there.
+  page.on('console', m => { if (m.type() === 'error' && !/interactive-widget/.test(m.text())) errors.push('console: ' + m.text()); });
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   const cdp = useWebkit ? null : await context.newCDPSession(page);
   let shotN = 0;
-  const slug = dev.name.toLowerCase().replace(/\s+/g, '-');
+  const slug = (useWebkit ? 'webkit-' : '') + dev.name.toLowerCase().replace(/\s+/g, '-');
   for (const f of readdirSync(SHOTS)) if (f.startsWith(`mobile-${slug}-`) && /^\d\d-/.test(f.slice(`mobile-${slug}-`.length))) rmSync(`${SHOTS}/${f}`);
   const shot = name => page.screenshot({ path: `${SHOTS}/mobile-${slug}-${String(++shotN).padStart(2, '0')}-${name}.png` });
   const step = async (name, fn) => { process.stdout.write(`• [${dev.name}] ${name} … `); await fn(); console.log('ok'); };
-  const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id, radiusX: 3, radiusY: 3, force: 1 })) });
+  // Multi-touch: real touch input through CDP in Chromium. WebKit has no such protocol, so there the same fingers are
+  // dispatched as touch PointerEvents (what the app listens to) on whatever is under them.
+  const touch = cdp ? (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id, radiusX: 3, radiusY: 3, force: 1 })) })
+    : (type, pts) => page.evaluate(([type, pts]) => {
+      const live = window.__fingers ??= new Map();
+      const fire = (kind, id, x, y, target) => target.dispatchEvent(new PointerEvent(kind, { bubbles: true, cancelable: true, composed: true, pointerId: 100 + id, pointerType: 'touch', isPrimary: id === 0,
+        clientX: x, clientY: y, width: 6, height: 6, pressure: kind === 'pointerup' ? 0 : 0.5, buttons: kind === 'pointerup' ? 0 : 1, button: kind === 'pointermove' ? -1 : 0 }));
+      if (type === 'touchEnd' || type === 'touchCancel') {
+        const keep = new Set(pts.map((_, i) => i));
+        for (const [id, f] of [...live]) if (!keep.has(id)) { fire(type === 'touchEnd' ? 'pointerup' : 'pointercancel', id, f.x, f.y, f.target); live.delete(id); }
+        return;
+      }
+      pts.forEach(([x, y], id) => {
+        const f = live.get(id);
+        if (!f) { const target = document.elementFromPoint(x, y) ?? document.body; live.set(id, { x, y, target }); fire('pointerdown', id, x, y, target); }
+        else if (f.x !== x || f.y !== y) { f.x = x; f.y = y; fire('pointermove', id, x, y, f.target); }
+      });
+    }, [type, pts]);
   const wait = ms => page.waitForTimeout(ms);
   const st = () => page.evaluate(() => { const { app } = window.compositor; const d = app.doc; return d ? { undo: app.history.undoStack.length, redo: app.history.redoStack.length, zoom: app.project.zoom, layers: d.layers.length, blend: app.active?.blend, sel: !!d.selection } : null; });
   const toScreen = (x, y) => page.evaluate(([x, y]) => { const { app } = window.compositor; const r = document.getElementById('stage').getBoundingClientRect(); const s = app.toScreen(x, y); return [s[0] + r.left, s[1] + r.top]; }, [x, y]);
@@ -92,7 +110,7 @@ for (const dev of runs) {
       await page.waitForTimeout(150);
       await shot('editor');
     });
-    if (dev.quick || useWebkit) {
+    if (dev.quick) {
       await step('landscape: canvas gets the room, layers drawer fits', async () => {
         const r = await page.evaluate(() => { const s = document.getElementById('stage').getBoundingClientRect(); return { w: s.width, h: s.height, iw: innerWidth, ih: innerHeight }; });
         assert(r.h >= r.ih * 0.55, 'stage height ' + JSON.stringify(r));
@@ -216,6 +234,17 @@ for (const dev of runs) {
         assert(await page.evaluate(() => document.body.classList.contains('pen-mode')), 'pen mode');
         await page.waitForTimeout(100); await shot('pen-pressure');
       });
+      if (dev.expect.compact) await step('tool options: the cut-off row expands into wrapped rows', async () => {
+        await page.tap('.rail-btn[data-tool="brush"]');
+        assert(await page.isVisible('#tool-options-toggle'), 'chevron shown when options are cut off');
+        const h0 = await page.evaluate(() => document.querySelector('.tool-header').getBoundingClientRect().height);
+        await page.tap('#tool-options-toggle'); await wait(150);
+        const r = await page.evaluate(() => { const hd = document.querySelector('.tool-header'); const kids = [...hd.children].map(c => c.getBoundingClientRect()); return { h: hd.getBoundingClientRect().height, right: Math.max(...kids.map(k => k.right)), vw: innerWidth, overflow: hd.scrollWidth - hd.clientWidth, pressure: !!document.getElementById('brush-pressure')?.getBoundingClientRect().width }; });
+        assert(r.h > h0 + 20 && r.right <= r.vw + 1 && r.overflow <= 2 && r.pressure, 'expanded options all on screen ' + JSON.stringify({ h0, ...r }));
+        await shot('tool-options');
+        await page.tap('#tool-options-toggle'); await wait(150);
+        assert(await page.evaluate(() => document.querySelector('.tool-header').getBoundingClientRect().height) <= h0 + 1, 'collapsed again');
+      });
       await step('menus fit: ☰ drills into submenus (or the menu bar on tablets), panels sit on screen', async () => {
         if (dev.expect.compact) {
           await page.tap('#mobile-menu');
@@ -266,7 +295,7 @@ for (const dev of runs) {
         assert((await st()).layers === after.layers + 1, 'duplicated from the long-press menu');
         if (dev.expect.compact) { await page.tap('#close-layers'); await wait(300); assert(!(await page.evaluate(() => document.body.classList.contains('layers-open'))), 'closed'); }
       });
-      await step('dialogs fit: New Canvas and Image Size', async () => {
+      await step('dialogs fit: New Canvas, Image Size and Canvas Size (device caps)', async () => {
         await page.tap('#newCanvasToolbar');
         await page.waitForSelector('.modal #create-canvas');
         assert(await inViewport('.modal'), 'new canvas modal on screen');
@@ -284,6 +313,12 @@ for (const dev of runs) {
         assert(await page.isDisabled('#image-size-modal .modal-buttons .primary') && /this device/.test(await page.textContent('#image-result')), 'Image Size: device size cap');
         await shot('image-size-cap');
         await page.locator('#image-size-modal .modal-buttons button', { hasText: 'Cancel' }).tap();
+        await menuItem('Image', 'Canvas Size…');
+        await page.waitForSelector('.modal #canvas-width');
+        assert(await inViewport('.modal'), 'Canvas Size on screen');
+        await page.fill('#canvas-width', '20000');
+        assert(await page.isDisabled('.modal .modal-buttons .primary') && /this device/.test(await page.textContent('#canvas-result')), 'Canvas Size: device size cap');
+        await page.locator('.modal .modal-buttons button', { hasText: 'Cancel' }).tap();
       });
       await step('PWA: manifest, icons, service worker caches the shell and the wasm', async () => {
         const m = await page.evaluate(async () => { const l = document.querySelector('link[rel=manifest]'); const r = await fetch(l.href); return { ok: r.ok, type: r.headers.get('content-type'), json: await r.json() }; });
@@ -296,12 +331,14 @@ for (const dev of runs) {
           return { scope: reg.scope, keys, wasm: urls.some(u => /pixels-.*\.wasm$/.test(u)), shell: urls.some(u => /\/$/.test(u)), n: urls.length };
         });
         assert(sw && sw.wasm && sw.shell, 'service worker caches ' + JSON.stringify(sw));
-        // Installed, the app boots offline.
-        await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 10000 }).catch(() => page.reload({ waitUntil: 'networkidle' }));
-        await context.setOffline(true);
-        await page.reload({ waitUntil: 'load' });
-        await page.waitForSelector('#stage canvas', { timeout: 15000 });
-        await context.setOffline(false);
+        // Installed, the app boots offline. (Playwright's WebKit can't reload offline at all: "internal error".)
+        if (!useWebkit) await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 10000 }).catch(() => page.reload({ waitUntil: 'networkidle' }));
+        if (!useWebkit) {
+          await context.setOffline(true);
+          await page.reload({ waitUntil: 'load' });
+          await page.waitForSelector('#stage canvas', { timeout: 15000 });
+          await context.setOffline(false);
+        }
       });
     }
     assert(!errors.length, 'console errors:\n' + errors.join('\n'));

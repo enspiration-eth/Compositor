@@ -1,7 +1,9 @@
 // Canvas size limits. Phones and tablets cap a canvas at 16.7 megapixels (iOS Safari refuses bigger 2D canvases and
 // every layer is one) and at the GPU's texture size, so documents and opened images stay inside them there.
 // Desktop browsers keep the Mac app's 30,000 px limit.
-const touchDevice = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0 && typeof screen !== 'undefined' && Math.min(screen.width, screen.height) < 1100;
+const coarse = typeof matchMedia !== 'undefined' && matchMedia('(any-pointer: coarse)').matches;
+const touchDevice = typeof navigator !== 'undefined' && (navigator.maxTouchPoints > 0 || coarse || /iPhone|iPad|iPod|Android/.test(navigator.userAgent))
+  && typeof screen !== 'undefined' && Math.min(screen.width, screen.height) < 1100;
 export const limits = { mobile: touchDevice, maxSide: touchDevice ? 8192 : 30000, maxPixels: touchDevice ? 4096 * 4096 : Infinity };
 
 /** Tightens the side limit to what the GPU can hold (called once the WebGL2 context exists). */

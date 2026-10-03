@@ -426,3 +426,17 @@ body.touch .layers-foot { padding: 0 4px; }
 body.touch .tool-header .slider-val { margin-right: 8px; }
 /* The tool options scroll sideways on small screens; the fade says there's more. */
 body.compact .tool-header { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); padding-right: 28px; }
+
+/* Tool options bar on narrow screens: scrolls sideways; the chevron expands it into wrapped rows. */
+.tool-header-wrap { position: relative; flex: none; }
+.tool-options-toggle { display: none; }
+body.compact .tool-options-toggle:not([hidden]) { display: flex; align-items: center; justify-content: center; position: absolute; right: 6px; top: 5px; width: 40px; height: 40px;
+  border-radius: 50%; border: 1px solid var(--line); background: var(--bg3); color: var(--text); padding: 0; z-index: 2; transition: transform 0.15s; }
+body.compact .tool-header-wrap:has(.tool-options-toggle:not([hidden])) .tool-header { padding-right: 52px; }
+body.compact.tool-options-open .tool-header { flex-wrap: wrap; height: auto; min-height: 50px; overflow: visible; white-space: normal; row-gap: 8px; padding-top: 5px; padding-bottom: 5px;
+  -webkit-mask-image: none; mask-image: none; }
+body.compact.tool-options-open .tool-options-toggle { transform: rotate(180deg); }
+/* Expanded on a phone, each slider gets a full row with the labels lined up. */
+body.phone.tool-options-open .tool-header .slider-row { flex: 1 1 100%; margin-right: 0; }
+body.phone.tool-options-open .tool-header .slider-label { min-width: 92px; }
+body.phone.tool-options-open .tool-header .slider-range { flex: 1; }

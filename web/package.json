@@ -11,7 +11,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
     "test:e2e": "node tests/smoke.mjs && node tests/mobile.mjs",
-    "test:mobile": "node tests/mobile.mjs"
+    "test:mobile": "node tests/mobile.mjs",
+    "test:mobile:webkit": "BROWSER=webkit node tests/mobile.mjs"
   },
   "devDependencies": {
     "playwright": "^1.63.0",

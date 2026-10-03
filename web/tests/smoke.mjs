@@ -24,7 +24,7 @@ const errors = [];
 const engine = { chromium, firefox, webkit }[process.env.BROWSER] ?? chromium; // BROWSER may also be a desktop browser path (xdg), which means Chromium here.
 const browser = await engine.launch(engine === chromium ? { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+page.on('console', m => { if (m.type() === 'error' && !/interactive-widget/.test(m.text())) errors.push('console: ' + m.text()); }); // WebKit warns about the Chromium-only viewport key
 page.on('pageerror', e => errors.push('pageerror: ' + e.message));
 // STOP=text ends the run (successfully) after the first step whose name contains it, for quicker iteration.
 // ONLY="<substring>[|<substring>…]" runs just the first step (loading the app) and the matching ones, for quick iteration.
@@ -703,7 +703,8 @@ try {
     const drag = async (a, b, mods = []) => { const [x0, y0] = await toScreen(...a), [x1, y1] = await toScreen(...b); for (const m of mods) await page.keyboard.down(m); await page.mouse.move(x0, y0); await page.mouse.down(); for (let i = 1; i <= 6; i++) await page.mouse.move(x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6); await page.mouse.up(); for (const m of mods) await page.keyboard.up(m); };
     await drag([1000, 600], [1200, 700]);
     const s0 = await page.evaluate(() => { const a = window.compositor.app.active; return { shape: a.shape?.kind, cw: a.canvas.width, t: a.transform }; });
-    assert(s0.shape === 'Rectangle' && s0.cw === 200, 'shape drawn ' + JSON.stringify(s0));
+    // About 200 wide: at WebKit's zoom the edge can snap to a nearby layer edge a few pixels off.
+    assert(s0.shape === 'Rectangle' && Math.abs(s0.cw - 200) <= 12, 'shape drawn ' + JSON.stringify(s0));
     await page.click('.rail-btn[data-tool="move"]');
     await drag([s0.t.x + s0.t.w, s0.t.y + s0.t.h], [s0.t.x + s0.t.w + 200, s0.t.y + s0.t.h + 100]);
     const s1 = await page.evaluate(() => { const a = window.compositor.app.active; return { shape: !!a.shape, cw: a.canvas.width, ch: a.canvas.height, t: a.transform }; });

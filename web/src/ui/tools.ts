@@ -219,10 +219,7 @@ export class CanvasController {
       x.restore();
     }
     if (app.canvasHook?.draw) { x.save(); app.canvasHook.draw(x, S); x.restore(); }
-    { // CropControls: the frame's size in the header, kept current while it's dragged.
-      const el = document.getElementById('crop-size');
-      if (el) el.textContent = this.crop ? `${Math.round(this.crop.w)} × ${Math.round(this.crop.h)} px` : '';
-    }
+    this.cropReadout();
     if (this.crop) {
       const c = this.crop, [cx, cy] = S(c.x, c.y), w = c.w * p.zoom, h = c.h * p.zoom;
       x.save(); x.fillStyle = 'rgba(0,0,0,0.55)'; x.beginPath(); x.rect(0, 0, this.overlay.width, this.overlay.height); x.rect(cx, cy, w, h); x.fill('evenodd');
@@ -355,6 +352,12 @@ export class CanvasController {
       default: return;
     }
   }
+  /** CropControls: the frame's size in the header, kept current while it's dragged (set on each move as well as each
+   *  frame, so it never lags the pointer, which it did in WebKit, where input can arrive ahead of the next frame). */
+  cropReadout() {
+    const el = document.getElementById('crop-size');
+    if (el) { const t = this.crop ? `${Math.round(this.crop.w)} × ${Math.round(this.crop.h)} px` : ''; if (el.textContent !== t) el.textContent = t; }
+  }
   move(e: PointerEvent) {
     if (this.guideDrag) { this.dragGuideTo(e); return; }
     const p = app.project; const s = this.local(e); this.pointer = s; app.needsRender = true;
@@ -399,7 +402,7 @@ export class CanvasController {
         dist.corners[dr.data!.i as number] = snapPoint(...dpt, [dist.layer]);
         this.previewDistort(); return;
       }
-      case 'cropNew': case 'cropMove': case 'cropHandle': return this.cropDrag(dr, dpt, e);
+      case 'cropNew': case 'cropMove': case 'cropHandle': this.cropDrag(dr, dpt, e); this.cropReadout(); return;
       case 'gradient': {
         let end = dpt;
         if (e.shiftKey) { const dx = dpt[0] - dr.startDoc[0], dy = dpt[1] - dr.startDoc[1], ang = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * Math.PI / 4, len = Math.hypot(dx, dy); end = [dr.startDoc[0] + Math.cos(ang) * len, dr.startDoc[1] + Math.sin(ang) * len]; }
@@ -419,6 +422,11 @@ export class CanvasController {
   }
   up(e: PointerEvent) {
     if (this.guideDrag) { this.endGuideDrag(e); return; }
+    // The release point is final. WebKit hands moves over once per frame, so the last one before a quick release
+    // can go undelivered, leaving a drawn shape, marquee or crop a few pixels short of where the pointer let go.
+    if (this.drag && !this.stroke && e.type === 'pointerup' && ['marquee', 'shape', 'cropNew', 'cropMove', 'cropHandle', 'move', 'gradient', 'distort', 'pan'].includes(this.drag.kind)) {
+      const s = this.local(e); if (!this.pointer || Math.hypot(s[0] - this.pointer[0], s[1] - this.pointer[1]) > 0.5) this.move(e);
+    }
     const p = app.project; const dr = this.drag; this.drag = null;
     if (this.stroke) { this.endStroke(); return; }
     if (!p || !dr) return;
