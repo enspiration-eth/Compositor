@@ -80,6 +80,8 @@ export function slider(o: SliderOpts): HTMLElement {
   range.addEventListener('input', () => set(+range.value));
   range.addEventListener('change', () => set(+range.value, true));
   num.addEventListener('change', () => set(+num.value, true));
+  // Scrubbing the field or dragging its slider popover (ui/fields.ts) updates live; typed text waits for Enter.
+  num.addEventListener('input', e => { if (!e.isTrusted && num.value !== '' && isFinite(+num.value)) set(+num.value); });
   num.addEventListener('keydown', e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); e.stopPropagation(); });
   const label = h('label', { class: 'slider-label scrub', title: 'Drag to scrub' }, o.label);
   label.addEventListener('pointerdown', e => {

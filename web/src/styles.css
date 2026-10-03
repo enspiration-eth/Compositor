@@ -436,7 +436,38 @@ body.compact .tool-header-wrap:has(.tool-options-toggle:not([hidden])) .tool-hea
 body.compact.tool-options-open .tool-header { flex-wrap: wrap; height: auto; min-height: 50px; overflow: visible; white-space: normal; row-gap: 8px; padding-top: 5px; padding-bottom: 5px;
   -webkit-mask-image: none; mask-image: none; }
 body.compact.tool-options-open .tool-options-toggle { transform: rotate(180deg); }
-/* Expanded on a phone, each slider gets a full row with the labels lined up. */
-body.phone.tool-options-open .tool-header .slider-row { flex: 1 1 100%; margin-right: 0; }
-body.phone.tool-options-open .tool-header .slider-label { min-width: 92px; }
-body.phone.tool-options-open .tool-header .slider-range { flex: 1; }
+
+/* Scrubby number fields (ui/fields.ts): drag sideways to change, the cursor says so until the field is focused. */
+.num-field { cursor: ew-resize; touch-action: pan-y; font-variant-numeric: tabular-nums; }
+.num-field:focus { cursor: text; }
+.num-field.scrubbing { outline: 2px solid var(--accent); outline-offset: -1px; }
+.scrub-label { cursor: ew-resize; touch-action: pan-y; }
+.scrub-label > span:first-child { user-select: none; }
+body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: none !important; }
+.num-pop-btn { width: 16px; height: 22px; margin-left: -2px; padding: 0; border: none; background: transparent; color: var(--text2); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none; border-radius: 4px; }
+.num-pop-btn:hover { color: var(--text); background: #3a3a3a; }
+.num-popover { position: fixed; z-index: 3000; width: 200px; box-sizing: border-box; padding: 8px 10px; background: #2c2c2c; border: 1px solid #4a4a4a; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.num-popover input[type=range] { width: 100%; }
+body.touch .num-pop-btn { width: 32px; height: 40px; }
+
+/* The value and its unit share one bordered box (ui/fields.ts), sized to fit them. */
+.num-box { display: inline-flex; align-items: center; flex: none; background: #1c1c1c; border: 1px solid #444; border-radius: 5px; box-sizing: border-box; cursor: ew-resize; touch-action: pan-y; }
+.num-box:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
+.num-box > input.num-field { border: none; background: transparent; outline: none; border-radius: 5px; padding: 3px 6px; text-align: right; min-width: 0; box-sizing: content-box; }
+.num-box > input.num-field:focus { outline: none; }
+.num-box.has-unit > input.num-field { padding-right: 1px; }
+.num-box > .unit { color: var(--text3); padding: 0 6px 0 1px; user-select: none; white-space: nowrap; }
+.num-box.has-pop > .unit { padding-right: 2px; }
+.num-box > .num-pop-btn { margin: 0 2px 0 0; height: 18px; width: 14px; }
+.num-box > input.num-field.scrubbing { outline: none; }
+.num-box:has(.scrubbing) { outline: 2px solid var(--accent); outline-offset: -1px; }
+.slider-val .num-box + .unit { display: none; }
+/* Options bar: label, compact field and a slider popover (Photoshop's options bar), not a full slider each. */
+.tool-header .slider-row { width: auto !important; gap: 4px; }
+.tool-header .slider-row .slider-range { display: none; }
+body.touch .num-box { min-height: 40px; }
+body.touch .num-box > input.num-field { min-height: 0; font-size: 16px; padding-top: 6px; padding-bottom: 6px; }
+body.touch .num-box > .num-pop-btn { width: 26px; height: 36px; }
+body.touch .tool-header .num-box > .num-pop-btn { display: none; }
+body.touch .tool-header .num-box.has-pop > .unit { padding-right: 8px; }
+body.touch .tool-header .slider-label { padding: 10px 2px; }

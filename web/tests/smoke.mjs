@@ -66,6 +66,33 @@ try {
     await page.evaluate(() => window.compositor.app.closeProject());
   });
 
+  await step('scrubby number fields: expressions, units, arrows (Shift ×10), clamping, field and label drags', async () => {
+    const w = page.locator('#new-width');
+    assert(await w.getAttribute('role') === 'spinbutton' && await w.getAttribute('type') === 'text', 'enhanced field');
+    await w.fill('50*2'); await w.press('Enter'); assert(await w.inputValue() === '100', 'expression ' + await w.inputValue());
+    await w.fill('(1920-40)/2'); await w.press('Enter'); assert(await w.inputValue() === '940', 'parentheses');
+    await w.press('ArrowUp'); assert(await w.inputValue() === '941', 'arrow up');
+    await w.press('Shift+ArrowDown'); assert(await w.inputValue() === '931', 'shift arrow ×10');
+    await w.fill('-50'); await w.press('Enter'); assert(await w.inputValue() === '1', 'clamped to min');
+    await w.fill('1200px'); await w.press('Enter'); assert(await w.inputValue() === '1200', 'unit stripped');
+    await w.fill('12*'); await w.press('Enter'); assert(await w.inputValue() === '1200', 'nonsense reverts');
+    await page.mouse.click(5, 895); // blur
+    const drag = async (sel, dx) => { const b = await page.locator(sel).boundingBox(); const y = b.y + b.height / 2, x = b.x + Math.min(20, b.width / 2);
+      await page.mouse.move(x, y); await page.mouse.down(); for (let i = 1; i <= 10; i++) await page.mouse.move(x + dx * i / 10, y); await page.mouse.up(); };
+    await drag('#new-width', 44); const a = +await w.inputValue();
+    assert(a > 1220 && a <= 1244, 'field drag scrubs ' + a);
+    assert(await page.evaluate(() => document.activeElement?.id !== 'new-width'), 'a drag does not focus the field');
+    const h0 = +await page.inputValue('#new-height');
+    await drag('.new-canvas .row:has(#new-height) .lbl', -30); const hgt = +await page.inputValue('#new-height');
+    assert(hgt >= h0 - 30 && hgt < h0, 'label drag scrubs ' + h0 + ' → ' + hgt);
+    assert(await page.textContent('#new-hint') && !(await page.isDisabled('#create-canvas')), 'form follows the scrubbed values');
+    await w.click(); assert(await page.evaluate(() => document.activeElement?.id === 'new-width'), 'a click still edits');
+    await page.keyboard.type('1920'); await page.mouse.click(5, 895);
+    assert(await w.inputValue() === '1920', 'typed after a click');
+    await page.waitForTimeout(100);
+    if (await page.evaluate(() => !!window.compositor.app.doc)) await page.evaluate(() => { const { app } = window.compositor; app.doc.dirty = false; app.closeProject(); });
+  });
+
   await step('paste an image on the welcome screen → new canvas sized to it', async () => {
     assert(!(await page.evaluate(() => !!window.compositor.app.doc)), 'welcome screen showing');
     assert(await page.isVisible('#welcome-paste'), 'Paste from clipboard button');
@@ -125,7 +152,7 @@ try {
     const before = await pixel(100, 100);
     await menu('Image', 'Hue/Saturation');
     await page.waitForSelector('#filter-panel');
-    const hue = page.locator('#filter-panel .slider-row').first().locator('input[type=number]');
+    const hue = page.locator('#filter-panel .slider-row').first().locator('input.num-field');
     await hue.fill('120'); await hue.press('Enter');
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${SHOTS}/02-filter-panel.png` });
@@ -140,7 +167,7 @@ try {
     await page.waitForSelector('#filter-panel');
     const sec = name => page.locator(`#filter-panel .cr-section:has(summary:text-is("${name}"))`);
     await sec('Color Grading').locator('summary').click();
-    const setRow = async (section, i, v) => { const n = sec(section).locator('.slider-row').nth(i).locator('input[type=number]'); await n.fill(String(v)); await n.press('Enter'); };
+    const setRow = async (section, i, v) => { const n = sec(section).locator('.slider-row').nth(i).locator('input.num-field'); await n.fill(String(v)); await n.press('Enter'); };
     await setRow('Color Grading', 0, 200); await setRow('Color Grading', 1, 80);   // shadows hue / saturation
     await sec('Detail').locator('summary').click(); await setRow('Detail', 0, 120); // sharpen amount
     await sec('Calibration').locator('summary').click(); await setRow('Calibration', 5, -60); // blue saturation
@@ -169,11 +196,11 @@ try {
     await page.click('#cr-point-sample');
     const [sx, sy] = await toScreen(800, 60); await page.mouse.click(sx, sy);
     await page.waitForSelector('#cr-point-color .pc-swatch');
-    const hs = page.locator('#cr-point-color .slider-row').first().locator('input[type=number]'); await hs.fill('80'); await hs.press('Enter');
+    const hs = page.locator('#cr-point-color .slider-row').first().locator('input.num-field'); await hs.fill('80'); await hs.press('Enter');
     await open('Point Color', false);
     // Geometry: vertical perspective + a guided line.
     await open('Geometry');
-    const gv = page.locator('#cr-geometry .slider-row').first().locator('input[type=number]'); await gv.fill('40'); await gv.press('Enter');
+    const gv = page.locator('#cr-geometry .slider-row').first().locator('input.num-field'); await gv.fill('40'); await gv.press('Enter');
     await page.selectOption('#cr-upright', 'Guided');
     const [g0x, g0y] = await toScreen(300, 200), [g1x, g1y] = await toScreen(1300, 260);
     await page.mouse.move(g0x, g0y); await page.mouse.down(); await page.mouse.move(g1x, g1y, { steps: 5 }); await page.mouse.up();
@@ -198,7 +225,7 @@ try {
     await page.waitForSelector('#filter-panel');
     const sec = name => page.locator(`#filter-panel .cr-section:has(summary:text-is("${name}"))`);
     const open = async (name, on = true) => { const d = sec(name); if ((await d.evaluate(e => e.open)) !== on) await d.locator('summary').click(); };
-    const val = async (name, i) => +(await sec(name).locator('.slider-row').nth(i).locator('input[type=number]').inputValue());
+    const val = async (name, i) => +(await sec(name).locator('.slider-row').nth(i).locator('input.num-field').inputValue());
     await open('Basic');
     await page.selectOption('#cr-wb', 'Auto');
     await page.waitForTimeout(200);
@@ -222,7 +249,7 @@ try {
     await open('Optics');
     await page.click('#cr-defringe-picker'); await page.mouse.click(sx, sy);
     await page.waitForTimeout(200);
-    const purple = await page.evaluate(() => [...document.querySelectorAll('#filter-panel .slider-row')].filter(r => /Purple amount|Green amount/.test(r.textContent)).map(r => +r.querySelector('input[type=number]').value));
+    const purple = await page.evaluate(() => [...document.querySelectorAll('#filter-panel .slider-row')].filter(r => /Purple amount|Green amount/.test(r.textContent)).map(r => +r.querySelector('input.num-field').value));
     assert(purple.includes(50), 'defringe picker set an amount ' + purple);
     await page.click('#cr-defringe-picker'); await open('Optics', false);
     // Option-drag Masking: the sharpen mask replaces the preview while held.
@@ -247,7 +274,7 @@ try {
     assert(/^R \d+ {3}G \d+ {3}B \d+$/.test(await page.textContent('#cr-readout')), 'readout ' + await page.textContent('#cr-readout'));
     await page.click('#cr-scope', { button: 'right' });
     await open('Basic');
-    const expo = sec('Basic').locator('.slider-row').nth(2).locator('input[type=number]');
+    const expo = sec('Basic').locator('.slider-row').nth(2).locator('input.num-field');
     await expo.fill('3'); await expo.press('Enter');
     await page.click('#cr-clip-highlights');
     await page.waitForFunction(() => { const c = window.compositor.app.active.canvas, d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 120 && d[i + 2] < 120) n++; return n > 1000; }, null, { timeout: 20000 });
@@ -411,7 +438,7 @@ try {
     await page.dblclick('.layer-row.active .layer-name');
     await page.waitForSelector('#filter-panel #hs-range');
     await page.selectOption('#hs-range', 'Greens');
-    const hue = page.locator('#filter-panel .slider-row').first().locator('input[type=number]');
+    const hue = page.locator('#filter-panel .slider-row').first().locator('input.num-field');
     await hue.fill('180'); await hue.press('Enter');
     // Slide the Greens band a little (drag inside it).
     const box = await page.locator('#hs-spectrum').boundingBox();
@@ -710,7 +737,7 @@ try {
     const s1 = await page.evaluate(() => { const a = window.compositor.app.active; return { shape: !!a.shape, cw: a.canvas.width, ch: a.canvas.height, t: a.transform }; });
     assert(s1.shape && Math.abs(s1.cw - s1.t.w) <= 1 && Math.abs(s1.ch - s1.t.h) <= 1 && s1.cw > 300, 'shape redrawn at new size ' + JSON.stringify(s1));
     await page.click('.rail-btn[data-tool="shape"]');
-    const r = page.locator('#shape-radius input[type=number], .slider-row:has-text("Corner Radius") input[type=number]').first(); await r.fill('5'); await r.press('Enter');
+    const r = page.locator('#shape-radius input.num-field, .slider-row:has-text("Corner Radius") input.num-field').first(); await r.fill('5'); await r.press('Enter');
     const s2 = await page.evaluate(() => { const { app } = window.compositor; return { r: app.active.shape?.cornerRadius, label: app.history.undoLabel }; });
     assert(s2.r === 5 && s2.label === 'Corner Radius', 'corner radius edited ' + JSON.stringify(s2));
   });
@@ -785,15 +812,15 @@ try {
     await page.click('.rail-btn[data-tool="marquee"]');
     const drag = async (a, b) => { const [x0, y0] = await toScreen(...a), [x1, y1] = await toScreen(...b); await page.mouse.move(x0, y0); await page.mouse.down(); for (let i = 1; i <= 6; i++) await page.mouse.move(x0 + (x1 - x0) * i / 6, y0 + (y1 - y0) * i / 6); await page.mouse.up(); };
     await drag([200, 200], [400, 300]);
-    const stats = () => page.evaluate(() => { const s = window.compositor.app.doc.selection; if (!s) return null; const d = s.getContext('2d').getImageData(0, 0, s.width, s.height).data; let sum = 0, soft = 0; for (let i = 3; i < d.length; i += 4) { sum += d[i] / 255; if (d[i] > 0 && d[i] < 255) soft++; } return { sum: Math.round(sum), soft }; });
+    const stats = () => page.evaluate(() => { const s = window.compositor.app.doc.selection; if (!s) return null; const d = s.getContext('2d').getImageData(0, 0, s.width, s.height).data; let sum = 0, soft = 0, x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1; for (let i = 3; i < d.length; i += 4) { sum += d[i] / 255; if (d[i] > 0 && d[i] < 255) soft++; if (d[i] > 127) { const p = (i - 3) / 4, x = p % s.width, y = (p - x) / s.width; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } } return { sum: Math.round(sum), soft, w: x1 - x0 + 1, h: y1 - y0 + 1 }; });
     const s0 = await stats();
     await page.evaluate(() => window.compositor.app.modifySelection('expand', 10));
     const s1 = await stats();
-    // A 200×100 rectangle grown by 10 with round corners: 200·100 + 2·10·300 + π·100.
-    assert(Math.abs(s1.sum - (s0.sum + 6000 + 314)) < 150, `expand ${s0.sum} -> ${s1.sum}`);
+    // A w×h rectangle (about 200×100; the marquee may snap to a layer edge) grown by 10 with round corners: w·h + 2·10·(w+h) + π·100.
+    assert(Math.abs(s1.sum - (s0.sum + 20 * (s0.w + s0.h) + 314)) < 150, `expand ${s0.sum} -> ${s1.sum}`);
     await page.evaluate(() => window.compositor.app.modifySelection('contract', 20));
     const s2 = await stats();
-    assert(Math.abs(s2.sum - 180 * 80) < 250, 'contract ' + s2.sum);
+    assert(Math.abs(s2.sum - (s0.w - 20) * (s0.h - 20)) < 250, 'contract ' + s2.sum + ' from ' + JSON.stringify(s0) + ' ' + JSON.stringify(s1));
     await page.evaluate(() => window.compositor.app.modifySelection('feather', 8));
     const s3 = await stats();
     assert(s3.soft > 2000 && Math.abs(s3.sum - s2.sum) < 300, 'feather ' + JSON.stringify(s3));
@@ -945,7 +972,7 @@ try {
     await page.waitForTimeout(150);
     const a1 = await area();
     assert(a1 > 0, 'live selection from the picked color');
-    const fz = page.locator('#color-range-panel .slider-row input[type=number]').first(); await fz.fill('120'); await fz.press('Enter');
+    const fz = page.locator('#color-range-panel .slider-row input.num-field').first(); await fz.fill('120'); await fz.press('Enter');
     await page.waitForTimeout(150);
     const a2 = await area();
     assert(a2 > a1, `more fuzziness selects more ${a1} -> ${a2}`);

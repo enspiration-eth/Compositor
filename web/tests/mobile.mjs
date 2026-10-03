@@ -242,6 +242,14 @@ for (const dev of runs) {
         const r = await page.evaluate(() => { const hd = document.querySelector('.tool-header'); const kids = [...hd.children].map(c => c.getBoundingClientRect()); return { h: hd.getBoundingClientRect().height, right: Math.max(...kids.map(k => k.right)), vw: innerWidth, overflow: hd.scrollWidth - hd.clientWidth, pressure: !!document.getElementById('brush-pressure')?.getBoundingClientRect().width }; });
         assert(r.h > h0 + 20 && r.right <= r.vw + 1 && r.overflow <= 2 && r.pressure, 'expanded options all on screen ' + JSON.stringify({ h0, ...r }));
         await shot('tool-options');
+        // Values and units share one box; a tap on a label opens its slider.
+        const box = await page.evaluate(() => { const n = document.querySelector('.tool-header .slider-row .num-box'); const u = n?.querySelector('.unit'); return n && u ? { inside: n.contains(u), uw: u.getBoundingClientRect().right <= n.getBoundingClientRect().right } : null; });
+        assert(box && box.inside && box.uw, 'unit inside the field box ' + JSON.stringify(box));
+        await page.locator('.tool-header .slider-label', { hasText: 'Opacity' }).tap(); await wait(150);
+        assert(await page.isVisible('.num-popover input[type=range]'), 'label tap opens the slider popover');
+        await shot('options-popover');
+        await page.keyboard.press('Escape'); await wait(100);
+        assert(!(await page.isVisible('.num-popover')), 'Escape closes the slider popover');
         await page.tap('#tool-options-toggle'); await wait(150);
         assert(await page.evaluate(() => document.querySelector('.tool-header').getBoundingClientRect().height) <= h0 + 1, 'collapsed again');
       });
