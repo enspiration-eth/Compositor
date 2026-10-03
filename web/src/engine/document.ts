@@ -319,6 +319,11 @@ export class History {
     const s = this.redoStack.pop(); if (!s) return null;
     this.undoStack.push(this.snap(doc, s.label)); this.restore(doc, s); return s.label;
   }
+  /** Keeps only the newest `undo` steps (and `redo` redo steps): frees the pixels older steps hold on to. */
+  trim(undo: number, redo = undo) {
+    if (this.undoStack.length > undo) this.undoStack.splice(0, this.undoStack.length - undo);
+    if (this.redoStack.length > redo) this.redoStack.splice(0, this.redoStack.length - redo);
+  }
   get undoLabel() { return this.undoStack[this.undoStack.length - 1]?.label; }
   get redoLabel() { return this.redoStack[this.redoStack.length - 1]?.label; }
 }

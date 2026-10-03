@@ -44,6 +44,13 @@ function post(w: Worker, kind: FilterKind, s: FilterSettings, ctx: ApplyContext,
   });
 }
 
+/** Stops the idle workers (each holds its own wasm heap); the next filter starts them again. */
+export function releaseFilterPool() {
+  if (!workers || pending.size) return;
+  for (const w of workers) w.terminate();
+  workers = null;
+}
+
 /** Rows a strip needs above and below its own so that neighborhood filters see what they would in the whole image. */
 function halo(kind: FilterKind, s: FilterSettings, ctx: ApplyContext): number | null {
   if (POINTWISE.has(kind)) return 0;

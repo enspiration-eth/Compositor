@@ -26,6 +26,12 @@ async function session(): Promise<InferenceSession> {
   }
   return sessionPromise;
 }
+/** Drops the Select Subject model session (tens of MB of wasm memory); it loads again on next use. */
+export function releaseSegmenter() {
+  const p = sessionPromise; if (!p) return;
+  sessionPromise = null;
+  p.then(s => s.release()).catch(() => {});
+}
 export function modelLoaded() { return ortModule !== null; }
 
 /** The model's saliency map for `src` (any size), 320×320, 0–1, normalized to its own range as rembg does. */

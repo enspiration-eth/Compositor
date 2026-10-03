@@ -80,7 +80,7 @@ export function buildLayout(root: HTMLElement) {
   let lastAnts = 0;
   const loop = (t: number) => {
     if (app.doc?.selection || ctl.marquee || ctl.lasso) { if (t - lastAnts > 120) { ctl.antsPhase = (ctl.antsPhase + 1) % 8; lastAnts = t; app.needsRender = true; } }
-    if (app.needsRender) { app.needsRender = false; try { ctl.frame(); } catch (e) { console.error(e); } }
+    if (app.needsRender && !app.renderer.gl.isContextLost()) { app.needsRender = false; try { ctl.frame(); } catch (e) { console.error(e); } }
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);

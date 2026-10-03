@@ -179,11 +179,22 @@ export function modal(title: string, content: HTMLElement, buttons: { label: str
   requestAnimationFrame(() => (back.querySelector('input, select, button.primary') as HTMLElement | null)?.focus());
   return close;
 }
-export function toast(message: string, kind: 'info' | 'error' = 'info') {
-  const t = h('div', { class: `toast ${kind}` }, message);
+/** A short message at the bottom. With `action` it carries a button and stays until used or dismissed (or `ms`). */
+export function toast(message: string, kind: 'info' | 'error' = 'info', action?: { label: string; run: () => void; id?: string; ms?: number }) {
+  const t = h('div', { class: `toast ${kind}${action ? ' has-action' : ''}` }, message);
+  const close = () => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); };
+  if (action) {
+    if (action.id) document.getElementById(action.id)?.closest('.toast')?.remove();
+    const b = h('button', { class: 'toast-action', ...(action.id ? { id: action.id } : {}) }, action.label) as HTMLButtonElement;
+    b.addEventListener('click', () => { close(); action.run(); });
+    const x = h('button', { class: 'toast-close', 'aria-label': 'Dismiss' }, '×') as HTMLButtonElement;
+    x.addEventListener('click', close);
+    t.append(b, x);
+  }
   document.body.append(t);
   setTimeout(() => t.classList.add('show'), 10);
-  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, kind === 'error' ? 5000 : 2600);
+  const ms = action ? action.ms ?? 0 : kind === 'error' ? 5000 : 2600;
+  if (ms) setTimeout(close, ms);
 }
 /** Menus open submenus in place on touch screens and narrow windows (see the mobile layout in styles.css). */
 export function drillDownMenus() { return document.body.classList.contains('touch') || document.body.classList.contains('compact'); }

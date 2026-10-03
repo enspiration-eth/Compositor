@@ -433,5 +433,19 @@ export class Renderer {
   }
   forget(layerId: string) { this.texCache.delete('L' + layerId); this.texCache.delete('M' + layerId); }
   invalidate() { this.compositeKey = ''; }
+  /** Frees every GPU texture and cached effect canvas; the next frame rebuilds what it needs from the layers. Called
+   *  when the tab goes to the background so iOS is less likely to kill the page for memory. */
+  releaseMemory() {
+    const gl = this.gl;
+    for (const c of this.texCache.values()) gl.deleteTexture(c.tex);
+    this.texCache.clear();
+    for (const a of this.adjCache.values()) gl.deleteTexture(a.tex);
+    this.adjCache.clear(); this.adjJobs.clear(); this.adjGen++;
+    for (const t of this.targets) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fbo); }
+    this.targets = [];
+    if (this.composite) { gl.deleteTexture(this.composite.tex); gl.deleteFramebuffer(this.composite.fbo); this.composite = null; }
+    this.effectCache.clear();
+    this.compositeKey = '';
+  }
 }
 export { apply, invert };

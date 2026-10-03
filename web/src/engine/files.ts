@@ -50,9 +50,16 @@ async function svgToCanvas(file: Blob): Promise<HTMLCanvasElement> {
   } finally { URL.revokeObjectURL(url); }
 }
 
-export async function writeComp(doc: Doc): Promise<Uint8Array> { return zipSync(await writeCompFiles(doc), { level: 0 }); }
+/** `pngCache` (autosave): encoded layer images by layer id and revision, so unchanged layers aren't encoded again. */
+export async function writeComp(doc: Doc, pngCache?: Map<string, Uint8Array>): Promise<Uint8Array> { return zipSync(await writeCompFiles(doc, pngCache), { level: 0 }); }
 /** The project package's files ("Name.comp/manifest.json", "Name.comp/images/…"), as the Mac app lays them out. */
-export async function writeCompFiles(doc: Doc): Promise<Record<string, Uint8Array>> {
+export async function writeCompFiles(doc: Doc, pngCache?: Map<string, Uint8Array>): Promise<Record<string, Uint8Array>> {
+  const cached = async (key: string, encode: () => Promise<Uint8Array>) => {
+    if (!pngCache) return encode();
+    let b = pngCache.get(key); if (!b) { b = await encode(); pngCache.set(key, b); }
+    used.add(key); return b;
+  };
+  const used = new Set<string>();
   const folder = (doc.name.replace(/\.comp$/i, '') || 'Untitled') + '.comp';
   const files: Record<string, Uint8Array> = {};
   const layers: ManifestLayer[] = [];
@@ -65,14 +72,16 @@ export async function writeCompFiles(doc: Doc): Promise<Record<string, Uint8Arra
     };
     if (l.canvas && !l.adjustment && !l.isGroup) {
       rec.imageFile = `${l.id}.png`;
-      files[`${folder}/images/${l.id}.png`] = await canvasToPng(l.canvas);
+      const c = l.canvas;
+      files[`${folder}/images/${l.id}.png`] = await cached(`${l.id}|${l.rev}|${c.width}x${c.height}`, () => canvasToPng(c));
     }
     if (l.mask) {
       rec.maskFile = `${l.id}.mask.png`; rec.maskEnabled = l.maskEnabled;
       const mp = maskPlacementOf(l) ?? (l.maskLinked === false ? l.transform : undefined);
       if (mp && maskPlacementOf(l)) rec.maskPlacement = { origin: [mp.x, mp.y], size: [mp.w, mp.h], rotation: mp.rotation, flipX: mp.flipX, flipY: mp.flipY, sampling: mp.sampling };
       if (l.maskLinked === false) rec.maskLinked = false;
-      files[`${folder}/images/${l.id}.mask.png`] = await maskToPng(l.mask);
+      const m = l.mask;
+      files[`${folder}/images/${l.id}.mask.png`] = await cached(`${l.id}|m|${l.rev}|${m.width}x${m.height}`, () => maskToPng(m));
     }
     if (l.clipTo) rec.maskSourceID = l.clipTo;
     if (l.adjustment) rec.adjustment = l.adjustment.hsvSettings ? { ...l.adjustment, hsvSettings: hueSatToMac(l.adjustment.hsvSettings) as never } : l.adjustment;
@@ -84,6 +93,7 @@ export async function writeCompFiles(doc: Doc): Promise<Record<string, Uint8Arra
   const manifest: Manifest = { format: 'com.compositor.project', version: 11, colorSpace: 'sRGB', documentID: doc.id, width: doc.width,
     height: doc.height, resolution: doc.resolution, activeLayerID: doc.activeId, layers, ...(doc.guides.length ? { guides: doc.guides.map(g => ({ id: g.id, axis: g.axis, position: g.position })) } : {}) };
   files[`${folder}/manifest.json`] = strToU8(JSON.stringify(manifest, null, 2));
+  if (pngCache) for (const k of [...pngCache.keys()]) if (!used.has(k)) pngCache.delete(k);
   return files;
 }
 /** Writes the package as a real folder into a directory the user picked (File System Access API), replacing an

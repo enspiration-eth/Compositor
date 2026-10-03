@@ -10,7 +10,8 @@ const scopeURL = new URL(self.registration.scope);
 const rel = url => url.pathname.slice(scopeURL.pathname.length);
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(SHELL).then(c => c.addAll(PRECACHE.map(p => new Request(p, { cache: 'reload' })))).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(SHELL).then(c => c.addAll(PRECACHE.map(p => new Request(p, { cache: 'reload' })))));
+  // No skipWaiting here: a page that is open keeps its version until the user takes the update (main.ts).
 });
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
@@ -21,6 +22,7 @@ self.addEventListener('activate', event => {
     await self.clients.claim();
   })());
 });
+self.addEventListener('message', event => { if (event.data && event.data.type === 'skip-waiting') self.skipWaiting(); });
 self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET' || req.headers.has('range')) return;
