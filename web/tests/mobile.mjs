@@ -76,6 +76,16 @@ for (const dev of runs) {
   const toScreen = (x, y) => page.evaluate(([x, y]) => { const { app } = window.compositor; const r = document.getElementById('stage').getBoundingClientRect(); const s = app.toScreen(x, y); return [s[0] + r.left, s[1] + r.top]; }, [x, y]);
   const pixel = (x, y) => page.evaluate(([x, y]) => { const { app } = window.compositor; return Array.from(app.renderer.readPixel(app.doc, x, y)); }, [x, y]);
   const inViewport = sel => page.evaluate(s => { const el = document.querySelector(s); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1; }, sel);
+  // Every visible custom pop-up shows its selected option's text, readable (not collapsed to the chevron).
+  const selectsShowValues = async (where) => {
+    const bad = await page.evaluate(() => [...document.querySelectorAll('.cs-button')].filter(b => !b.hidden && b.offsetParent && b.getBoundingClientRect().width > 0).flatMap(b => {
+      const s = b.previousElementSibling, l = b.querySelector('.cs-label'), o = s?.selectedOptions?.[0];
+      const want = o ? (o.label || o.textContent || '').trim() : '';
+      const lw = l.getBoundingClientRect().width;
+      return !want || l.textContent.trim() !== want || lw < Math.min(l.scrollWidth, 36) ? [{ id: b.id, text: l.textContent, want, lw: Math.round(lw), bw: Math.round(b.getBoundingClientRect().width) }] : [];
+    }));
+    assert(!bad.length, `${where}: custom selects without a readable value ${JSON.stringify(bad)}`);
+  };
   // The finger rests a moment before lifting: a release at speed starts a fling, and Chromium spends the next tap on
   // stopping it instead of clicking.
   const menuItem = async (menu, label) => {
@@ -96,6 +106,10 @@ for (const dev of runs) {
       assert(info.sw <= info.iw && info.sh <= info.ih, `no page scroll: ${JSON.stringify(info)}`);
       await page.locator('#create-canvas').scrollIntoViewIfNeeded();
       assert(await inViewport('.welcome-card #create-canvas'), 'Create button reachable');
+      await selectsShowValues('welcome');
+      await page.evaluate(() => document.querySelector('.rail-btn[data-tool="type"]')?.click()); await wait(150);
+      await selectsShowValues('Type options on the welcome screen');
+      await page.evaluate(() => document.querySelector('.rail-btn[data-tool="brush"]')?.click());
       await shot('welcome');
     });
     await step('sample opens; toolbar, rail and modifier targets are at least 44 px', async () => {
@@ -107,6 +121,11 @@ for (const dev of runs) {
       assert(!small.length, 'small targets ' + JSON.stringify(small));
       const railMin = await page.evaluate(() => Math.min(...[...document.querySelectorAll('.rail-btn')].map(b => Math.min(b.offsetWidth, b.offsetHeight))));
       assert(railMin >= 44, 'rail buttons ' + railMin);
+      for (const t of await page.evaluate(() => [...document.querySelectorAll('.rail-btn[data-tool]')].map(b => b.dataset.tool))) {
+        await page.evaluate(t => document.querySelector(`.rail-btn[data-tool="${t}"]`).click(), t); await wait(80);
+        await selectsShowValues(`${t} options`);
+      }
+      await page.evaluate(() => document.querySelector('.rail-btn[data-tool="brush"]').click());
       await page.waitForTimeout(150);
       await shot('editor');
     });
@@ -317,10 +336,12 @@ for (const dev of runs) {
       });
       await step('Layers drawer, blend mode tap-to-preview, long-press layer menu', async () => {
         if (dev.expect.compact) {
-          await page.tap('#toggle-layers'); await wait(300);
+          await page.tap('#toggle-layers');
+          await page.waitForFunction(() => { const r = document.querySelector('.layers-panel').getBoundingClientRect(); return r.bottom <= innerHeight + 1 && r.top >= 0; }, null, { timeout: 3000 }).catch(() => {});
           assert(await inViewport('.layers-panel'), 'layers sheet on screen');
           await shot('layers');
         }
+        await selectsShowValues('Layers panel');
         const before = await st();
         await page.tap('#blend-mode');
         await page.waitForSelector('#blend-list .menu-hint');
@@ -366,6 +387,7 @@ for (const dev of runs) {
         await menuItem('Image', 'Image Size…');
         await page.waitForSelector('#image-size-modal #image-width');
         assert(await inViewport('#image-size-modal'), 'Image Size on screen');
+        await selectsShowValues('Image Size');
         await page.selectOption('#image-units', 'Pixels').catch(() => {});
         await page.fill('#image-width', '20000');
         assert(await page.isDisabled('#image-size-modal .modal-buttons .primary') && /this device/.test(await page.textContent('#image-result')), 'Image Size: device size cap');

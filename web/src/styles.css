@@ -493,6 +493,10 @@ select.cs-native { position: absolute !important; width: 1px !important; height:
 .cs-button { display: inline-flex; align-items: center; gap: 6px; justify-content: space-between; text-align: left; cursor: default; min-width: 0; max-width: 100%; line-height: 1.2; }
 .cs-button.popup { height: 24px; padding: 3px 8px 3px 10px; }
 .cs-button .cs-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+/* The label may ellipsize but never collapse: in a row that overflows (the options bar scrolling sideways on a phone)
+   flex items shrink to their min-content width, which for a button whose label has min-width 0 is just the chevron. */
+.cs-button { min-width: min(6.5em, 100%); }
+.tool-header .cs-button, .tool-header .popup { flex: none; }
 .cs-button .cs-chevron { flex: none; color: var(--text2); }
 .cs-button:focus-visible, .cs-button.open { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cs-button:disabled { color: var(--text3); }
