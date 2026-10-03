@@ -695,6 +695,14 @@ function openBlendList(a: Layer, button: HTMLElement, commit: (mode: BlendMode) 
   document.addEventListener('pointerdown', onOutside, true);
 }
 
+/** The image a paste event carries: a file, or an image item (some browsers list it only under items). */
+function clipboardImage(e: ClipboardEvent): File | null {
+  const dt = e.clipboardData; if (!dt) return null;
+  const f = Array.from(dt.files ?? []).find(x => x.type.startsWith('image/'));
+  if (f) return f;
+  for (const it of Array.from(dt.items ?? [])) if (it.kind === 'file' && it.type.startsWith('image/')) { const g = it.getAsFile(); if (g) return g; }
+  return null;
+}
 // ---------- welcome (NewCanvasSheet) ----------
 function renderWelcome() {
   const w = els.welcome;
@@ -703,7 +711,8 @@ function renderWelcome() {
   if (w.childElementCount) return;
   const extra = h('div', { class: 'welcome-actions' },
     button('Open project', () => openFileDialog('open')), button('Import image', () => openFileDialog('open')),
-    button('Try a sample', () => loadSample()));
+    button('Try a sample', () => loadSample()),
+    button('Paste from clipboard', () => app.paste(), { id: 'welcome-paste', title: `Paste an image as a new canvas (${MOD}V)` }));
   w.append(h('div', { class: 'welcome-card' }, newCanvasForm((W, H) => { app.newCanvas(W, H); app.fit(); }, extra), welcomeRecent,
     h('p', { class: 'hint center' }, 'Drop images, PSDs or .comp.zip projects anywhere.')));
   fillWelcomeRecent();
@@ -956,8 +965,8 @@ function setupDrop() {
   });
   document.addEventListener('paste', e => {
     if ((e.target as HTMLElement).closest('input, textarea')) return;
-    const f = Array.from(e.clipboardData?.files ?? []).find(x => x.type.startsWith('image/'));
-    if (f) { e.preventDefault(); if (app.doc) import('../engine/files').then(async m => app.placeImage(await m.fileToCanvas(f), 'Pasted')); else app.openFiles([f]); }
+    const f = clipboardImage(e);
+    if (f) { e.preventDefault(); void app.pasteImage(f).catch(err => toast(`Couldn’t paste the image: ${(err as Error).message}`, 'error')); }
   });
 }
 
@@ -1048,5 +1057,6 @@ function setupKeys() {
     if (t) return run(() => selectTool(t.id));
   });
   window.addEventListener('keyup', raw => { const e = translateCanvasKey(raw); if (e?.key === ' ') { ctl.spaceDown = false; ctl.updateCursor(ctl.pointer ?? [0, 0]); } });
-  document.addEventListener('paste', e => { if (!(e.target as HTMLElement).closest('input, textarea') && !e.clipboardData?.files.length) app.paste(); });
+  // No image on the clipboard: paste the in-app layer clipboard (the image case is handled by the drop/paste setup).
+  document.addEventListener('paste', e => { if (!e.defaultPrevented && !(e.target as HTMLElement).closest('input, textarea') && !clipboardImage(e) && app.doc) app.paste(); });
 }

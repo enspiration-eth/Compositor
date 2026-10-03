@@ -946,25 +946,36 @@ export class App {
       if (cut) this.deleteLayers();
     }
   }
+  /** Pastes an image from the system clipboard: as a new layer when a document is open, otherwise as a new document
+   *  sized exactly to the image (scaled down only where the device's canvas limits require it), with the image as its
+   *  only layer. */
+  async pasteImage(blob: Blob) {
+    const type = blob.type || 'image/png';
+    const c = await fileToCanvas(new File([blob], 'Pasted image', { type }));
+    if (this.doc) { this.placeImage(c, 'Pasted'); return; }
+    const doc = newDoc(c.width, c.height, this.uniqueName('Pasted'));
+    const l = newPixelLayer(doc, 'Pasted', c); doc.layers.push(l); doc.activeId = l.id; doc.selectedIds = [l.id];
+    this.addProject(doc); this.fit();
+  }
+  /** Edit › Paste (and the welcome screen's Paste button): reads the clipboard with the async Clipboard API. */
   async paste() {
     const d = this.doc;
-    try {
-      const items = await navigator.clipboard.read();
-      for (const it of items) {
-        const type = it.types.find(t => t.startsWith('image/'));
-        if (type && !this.clipboardLayer) {
-          const blob = await it.getType(type);
-          const c = await fileToCanvas(new File([blob], 'Pasted.png', { type }));
-          if (!d) { this.newCanvas(c.width, c.height, 'Pasted'); }
-          this.placeImage(c, 'Pasted');
-          return;
+    let denied = false;
+    if (!(this.clipboardLayer && d)) {
+      try {
+        const items = await navigator.clipboard.read();
+        for (const it of items) {
+          const type = it.types.find(t => t.startsWith('image/'));
+          if (type) { await this.pasteImage(await it.getType(type)); return; }
         }
-      }
-    } catch { /* fall back to the in-app clipboard */ }
+      } catch (e) { denied = (e as Error).name !== 'DataError'; /* fall back to the in-app clipboard */ }
+    }
     if (this.clipboardLayer && d) {
       this.edit('Paste');
       const l = { ...this.clipboardLayer, id: uuid(), canvas: this.clipboardLayer.canvas ? cloneCanvas(this.clipboardLayer.canvas) : null, transform: { ...this.clipboardLayer.transform }, rev: 1, clipTo: null };
       this.insertAboveActive(l); this.changed('layers');
+    } else if (!d) {
+      toast(denied ? 'Couldn’t read the clipboard here. Press ⌘V / Ctrl+V instead, or allow clipboard access.' : 'There’s no image on the clipboard.', denied ? 'error' : undefined);
     }
   }
   blendIndex(mode: BlendMode, delta: number): BlendMode { const i = BLEND_MODES.indexOf(mode); return BLEND_MODES[(i + delta + BLEND_MODES.length) % BLEND_MODES.length]; }

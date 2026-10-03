@@ -66,6 +66,23 @@ try {
     await page.evaluate(() => window.compositor.app.closeProject());
   });
 
+  await step('paste an image on the welcome screen → new canvas sized to it', async () => {
+    assert(!(await page.evaluate(() => !!window.compositor.app.doc)), 'welcome screen showing');
+    assert(await page.isVisible('#welcome-paste'), 'Paste from clipboard button');
+    await page.evaluate(async () => {
+      const c = document.createElement('canvas'); c.width = 321; c.height = 123;
+      const x = c.getContext('2d'); x.fillStyle = 'rgb(255,0,0)'; x.fillRect(0, 0, 321, 123);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+      document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await page.waitForFunction(() => window.compositor.app.doc?.width === 321, null, { timeout: 10000 });
+    const r = await page.evaluate(() => { const d = window.compositor.app.doc; const l = d.layers[0];
+      return { w: d.width, h: d.height, n: d.layers.length, name: l.name, doc: d.name, px: Array.from(l.canvas.getContext('2d').getImageData(5, 5, 1, 1).data) }; });
+    assert(r.w === 321 && r.h === 123 && r.n === 1 && r.name === 'Pasted' && r.doc.startsWith('Pasted') && r.px[0] === 255 && r.px[3] === 255, JSON.stringify(r));
+    await page.evaluate(() => window.compositor.app.closeProject());
+  });
+
   await step('open sample project', async () => {
     await page.getByText('Try a sample').click();
     await page.waitForFunction(() => window.compositor.app.doc?.layers.length === 4);
