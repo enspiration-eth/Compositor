@@ -61,6 +61,7 @@ export const ICONS: Record<string, string> = {
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/>',
   layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
   swap: '<path d="M7 4l-3 3 3 3M4 7h11a3 3 0 013 3v1M17 20l3-3-3-3M20 17H9a3 3 0 01-3-3v-1"/>',
 };
 export function icon(name: string, size = 18) { return svg(ICONS[name] ?? '', size); }

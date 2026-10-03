@@ -705,6 +705,36 @@ try {
     await page.evaluate(fg => { window.compositor.app.fg = fg; window.compositor.app.emit('colors'); }, fg0);
   });
 
+  await step('number fields keep their width from 6 to 1000 (four tabular digits reserved)', async () => {
+    await page.click('.rail-btn[data-tool="brush"]');
+    const r = await page.evaluate(() => [...document.querySelectorAll('.tool-header .num-box input.num-field, .layers .num-box input.num-field')].filter(i => i.offsetParent).map(i => {
+      const box = i.closest('.num-box'), unit = box.querySelector('.unit');
+      const set = v => { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); return [Math.round(box.getBoundingClientRect().width * 10), unit ? Math.round(unit.getBoundingClientRect().left * 10) : 0]; };
+      const orig = i.value, a = set('6'), b = set('1000'); i.value = orig; i.dispatchEvent(new Event('input', { bubbles: true }));
+      return { id: i.id || i.getAttribute('aria-label'), a, b, tab: getComputedStyle(i).fontVariantNumeric };
+    }));
+    assert(r.length >= 3, 'fields found ' + r.length);
+    const bad = r.filter(x => x.a[0] !== x.b[0] || x.a[1] !== x.b[1] || !/tabular/.test(x.tab));
+    assert(!bad.length, 'fields that moved ' + JSON.stringify(bad));
+  });
+
+  await step('tool options bar: top-bar button and ⌥⌘O hide/show it, the canvas refits, the choice is remembered', async () => {
+    const shown = () => page.evaluate(() => ({ bar: !!document.querySelector('.tool-header')?.offsetParent, stage: Math.round(document.getElementById('stage').getBoundingClientRect().height), pressed: document.getElementById('toggle-options').getAttribute('aria-pressed') }));
+    const a = await shown();
+    assert(a.bar && a.pressed === 'true', 'shown at first ' + JSON.stringify(a));
+    await page.click('#toggle-options');
+    const b = await shown();
+    assert(!b.bar && b.pressed === 'false' && b.stage > a.stage + 20, 'hidden, stage taller ' + JSON.stringify([a, b]));
+    assert(await page.getAttribute('#toggle-options', 'title').then(t => /tool options/i.test(t) && /O\)/.test(t)), 'tooltip names the shortcut');
+    await page.keyboard.press('Control+Alt+KeyO');
+    const c = await shown();
+    assert(c.bar && c.stage === a.stage, 'shortcut shows it again ' + JSON.stringify(c));
+    await page.keyboard.press('Control+Alt+KeyO');
+    assert(await page.evaluate(() => localStorage.getItem('compositor.toolOptionsHidden')) === '1', 'remembered');
+    await page.click('#toggle-options');
+    assert((await shown()).bar, 'shown again');
+  });
+
   await step('Export JPEG sheet: encoded preview, zoom, quality, background color, remembered quality', async () => {
     await menu('File', 'Export JPEG');
     await page.waitForSelector('#jpeg-modal');

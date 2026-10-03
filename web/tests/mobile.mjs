@@ -253,6 +253,18 @@ for (const dev of runs) {
         assert(await page.evaluate(() => document.body.classList.contains('pen-mode')), 'pen mode');
         await page.waitForTimeout(100); await shot('pen-pressure');
       });
+      await step('number fields keep their width from 6 to 1000 (four tabular digits reserved)', async () => {
+        await page.tap('.rail-btn[data-tool="brush"]'); await wait(150);
+        const r = await page.evaluate(async () => {
+          const i = document.querySelector('.tool-header .num-box input.num-field'), box = i.closest('.num-box'), unit = box.querySelector('.unit');
+          const set = v => { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); return { box: box.getBoundingClientRect().width, unit: unit ? unit.getBoundingClientRect().left : 0 }; };
+          const orig = i.value, a = set('6'), b = set('1000'), c = set('25');
+          set(orig); i.dispatchEvent(new Event('change', { bubbles: true }));
+          return { a, b, c, tab: getComputedStyle(i).fontVariantNumeric };
+        });
+        assert(r.a.box === r.b.box && r.b.box === r.c.box && r.a.unit === r.b.unit, 'width unchanged ' + JSON.stringify(r));
+        assert(/tabular-nums/.test(r.tab), 'tabular figures ' + r.tab);
+      });
       if (dev.expect.compact) await step('options bar: a quick swipe across a field scrolls the bar; hold-then-drag scrubs it', async () => {
         await page.tap('.rail-btn[data-tool="brush"]'); await wait(200);
         const st = () => page.evaluate(() => { const b = document.querySelector('.tool-header'); return { sl: Math.round(b.scrollLeft), size: window.compositor.app.brush.size, fadeR: b.classList.contains('fade-r'), fadeL: b.classList.contains('fade-l'), gap: parseFloat(getComputedStyle(b).columnGap) }; });
@@ -288,10 +300,9 @@ for (const dev of runs) {
         // Values and units share one box; a tap on a label opens its slider.
         const box = await page.evaluate(() => { const n = document.querySelector('.tool-header .slider-row .num-box'); const u = n?.querySelector('.unit'); return n && u ? { inside: n.contains(u), uw: u.getBoundingClientRect().right <= n.getBoundingClientRect().right } : null; });
         assert(box && box.inside && box.uw, 'unit inside the field box ' + JSON.stringify(box));
-        // The Size box fits the value it holds (not the 4-digit maximum), and still shows it whole.
-        // The Size value is as wide as the value it holds (not the 4-digit maximum), shown whole; the label sits inside the box.
+        // The Size value area holds four digits (stable while the value changes), shown whole; the label sits inside the box.
         const sz = await page.evaluate(() => { const i = document.getElementById('brush-size'); return { input: i.getBoundingClientRect().width, fits: i.scrollWidth <= i.clientWidth + 1, v: i.value, label: !!i.parentElement.querySelector('.num-inlabel'), h: i.parentElement.getBoundingClientRect().height }; });
-        assert(sz.fits && sz.input <= (sz.v.length <= 2 ? 34 : 44) && sz.label && sz.h >= 43, 'Size field ' + JSON.stringify(sz));
+        assert(sz.fits && sz.input <= 56 && sz.label && sz.h >= 43, 'Size field ' + JSON.stringify(sz));
         // A drag anywhere on the labeled box scrubs; its slider button opens the popover.
         const ob = await page.locator('.tool-header .num-box', { hasText: 'Hardness' }).boundingBox();
         const hv0 = await page.evaluate(() => window.compositor.app.brush.hardness);
@@ -373,6 +384,45 @@ for (const dev of runs) {
         await page.tap('#layers-sheet-handle'); await wait(500); const e = await info(); assert(e.detent === 'half', 'tap cycles ' + JSON.stringify(e));
         await drag(500, 10, 20, 150); const f = await info(); assert(!f.open, 'dragged far down closes ' + JSON.stringify(f));
         const fit = await page.evaluate(() => { const r = document.getElementById('stage').getBoundingClientRect(); return r.height > 200; }); assert(fit, 'stage back to full height');
+      });
+      await step('color picker: R G B (and # on phones) side by side as labeled fields; the sheet fits without scrolling', async () => {
+        await page.tap('#swatch-fg'); await page.waitForSelector('#color-picker .cp-fields'); await wait(400);
+        const g = await page.evaluate(() => {
+          const boxes = [...document.querySelectorAll('#color-picker .cp-fields .num-box')].map(b => { const r = b.getBoundingClientRect(); return { top: Math.round(r.top), left: r.left, right: r.right, h: r.height, label: b.querySelector('.num-inlabel')?.textContent, val: b.querySelector('input').value, vw: b.querySelector('input').getBoundingClientRect().width }; });
+          const body = document.querySelector('#color-picker .panel-body') ?? document.querySelector('#color-picker .cp').parentElement;
+          const pr = document.getElementById('color-picker').getBoundingClientRect();
+          return { boxes, scroll: body.scrollHeight - body.clientHeight, inView: pr.top >= 0 && pr.bottom <= innerHeight + 1 && pr.left >= -1 && pr.right <= innerWidth + 1 };
+        });
+        const [r, gg, b, hx] = g.boxes;
+        assert(g.boxes.length === 4 && r.label === 'R' && gg.label === 'G' && b.label === 'B' && hx.label === '#', 'labels inside the boxes ' + JSON.stringify(g.boxes));
+        assert(r.top === gg.top && gg.top === b.top && r.right <= gg.left && gg.right <= b.left, 'R G B in one row ' + JSON.stringify(g.boxes));
+        if (dev.expect.compact) assert(hx.top === r.top, 'hex alongside on phones ' + JSON.stringify(g.boxes));
+        assert(g.boxes.every(x => x.h >= 40 && x.vw >= 24), 'touch-sized, values visible ' + JSON.stringify(g.boxes));
+        assert(g.inView && g.scroll <= 1, 'picker fits on screen without scrolling ' + JSON.stringify(g));
+        await shot('color-picker');
+        await page.fill('#cp-hex', 'ff8000'); await page.press('#cp-hex', 'Enter');
+        const rgb = await page.evaluate(() => ['r', 'g', 'b'].map(c => document.getElementById('cp-' + c).value));
+        assert(rgb.join() === '255,128,0', 'hex updates R G B ' + rgb);
+        await page.tap('#cp-cancel'); await wait(200);
+      });
+      await step('top bar: the sliders button hides and shows the tool options bar, refits, remembers', async () => {
+        const st0 = await page.evaluate(() => ({ h: document.getElementById('stage').getBoundingClientRect().height, zoom: window.compositor.app.project.zoom }));
+        await page.evaluate(() => window.compositor.app.fit());
+        assert(await page.evaluate(() => document.getElementById('toggle-options').getAttribute('aria-pressed')) === 'true', 'pressed while shown');
+        await page.tap('#toggle-options'); await wait(300);
+        const st1 = await page.evaluate(() => ({ h: document.getElementById('stage').getBoundingClientRect().height, hidden: document.body.classList.contains('tool-options-hidden'), bar: !!document.querySelector('.tool-header')?.offsetParent,
+          pressed: document.getElementById('toggle-options').getAttribute('aria-pressed'), saved: localStorage.getItem('compositor.toolOptionsHidden'), fitted: window.compositor.app.project.fitted, oy: window.compositor.app.project.oy, sh: window.compositor.app.stageSize.h }));
+        assert(st1.hidden && !st1.bar && st1.pressed === 'false' && st1.saved === '1', 'hidden ' + JSON.stringify(st1));
+        assert(st1.h > st0.h + 30 && Math.abs(st1.sh - st1.h) < 2 && st1.fitted, 'stage grew and the canvas refit ' + JSON.stringify([st0, st1]));
+        await shot('options-hidden');
+        // Remembered at the next launch (a second page shares the storage).
+        const fresh = await context.newPage(); await fresh.goto(URL_, { waitUntil: 'networkidle' }); await fresh.waitForFunction(() => window.compositor?.app);
+        const there = await fresh.evaluate(() => document.body.classList.contains('tool-options-hidden') && document.getElementById('toggle-options').getAttribute('aria-pressed') === 'false');
+        await fresh.close();
+        assert(there, 'hidden at the next launch');
+        await page.tap('#toggle-options'); await wait(300);
+        const st2 = await page.evaluate(() => ({ hidden: document.body.classList.contains('tool-options-hidden'), bar: !!document.querySelector('.tool-header')?.offsetParent, saved: localStorage.getItem('compositor.toolOptionsHidden') }));
+        assert(!st2.hidden && st2.bar && st2.saved === '0', 'shown again ' + JSON.stringify(st2));
       });
       await step('dialogs fit: New Canvas, Image Size and Canvas Size (device caps)', async () => {
         await page.tap('#newCanvasToolbar');

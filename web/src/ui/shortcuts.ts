@@ -26,7 +26,7 @@ export const SHORTCUTS: ShortcutDef[] = (() => {
   menu('Duplicate / Layer via Copy', 'j', 1); menu('Layer via Cut', 'j', 9); menu('Toggle Clipping Mask', 'g', 3); menu('Group Layers', 'g', 1);
   menu('Ungroup Layers', 'g', 9); menu('New Blank Layer', 'n', 9); menu('Move Layer Up', ']', 1); menu('Move Layer Down', '[', 1);
   menu('Merge Layers', 'e', 1); menu('Show Grid', "'", 1); menu('Show Guides', ';', 1); menu('Show Rulers', 'r', 1); menu('Snap', ';', 9);
-  menu('Lock Guides', ';', 3);
+  menu('Lock Guides', ';', 3); menu('Tool Options Bar', 'o', 3);
   for (const [title, key] of [['Select tool', 'a'], ['Move / Transform tool', 'v'], ['Hand tool', 'h'], ['Zoom tool', 'z'], ['Brush tool', 'b'], ['Eraser', 'e'],
     ['Spot Healing', 'j'], ['Clone Stamp', 's'], ['Type tool', 't'], ['Gradient tool', 'g'], ['Shape tool', 'u'], ['Eyedropper tool', 'i'],
     ['Marquee / cycle shape', 'm'], ['Magic', 'w'], ['Lasso / cycle mode', 'l'], ['Blur / Smudge / Liquify', 'r'], ['Crop tool', 'c'],

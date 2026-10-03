@@ -199,7 +199,9 @@ function sliderPopover(i: HTMLInputElement, anchor: HTMLElement) {
 
 /** The label to put inside the field's box, if the field has one in its row and there's room for it. */
 function findInlineLabel(i: HTMLInputElement): HTMLElement | null {
-  if (i.closest('.cp-row, [data-compact]') || i.dataset.compact !== undefined) return null;
+  const cp = i.closest('.cp-row');
+  if (cp) return cp.classList.contains('cp-chan') ? cp.querySelector<HTMLElement>(':scope > span') : null; // color picker R/G/B
+  if (i.closest('[data-compact]') || i.dataset.compact !== undefined) return null;
   const row = i.closest('.slider-row');
   if (row) return row.closest('.tool-header') ? row.querySelector<HTMLElement>(':scope > .slider-label') : null; // panels keep their sliders
   const p = i.parentElement; if (!p) return null;
@@ -282,9 +284,10 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
   box.addEventListener('pointerdown', e => { if (e.target !== i && !(e.target as HTMLElement).closest('button')) { if (document.activeElement === i) e.preventDefault(); else scrubFrom(i, e, i, false); } });
   const st = stateOf(i);
   const chars = Math.min(7, Math.max(2, ...[st.min, st.max].filter(Number.isFinite).map(v => format(v, st).length), Number.isFinite(st.max) ? 0 : st.integer ? 5 : 6));
-  // Sized for the widest value of its range; on touch screens, where room is scarcer, for the value it holds.
+  // Room for four digits at least (tabular figures, so 6 → 1000 doesn't move the unit or resize the box); longer
+  // values (negatives, decimals, five-digit sizes) grow it. With a mouse: as wide as the widest value of its range.
   const fit = () => {
-    const n = document.body.classList.contains('touch') ? Math.min(chars, Math.max(2, i.value.trim().length)) : chars;
+    const n = document.body.classList.contains('touch') ? Math.max(4, i.value.trim().length) : Math.max(4, chars, i.value.trim().length);
     const w = `calc(${n}ch + ${unitEl ? 8 : 14}px)`;
     if (i.style.width !== w) i.style.width = w;
   };

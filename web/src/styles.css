@@ -254,10 +254,27 @@ body.busy, body.busy * { cursor: progress !important; }
 .cp-preview { width: 64px; height: 64px; border-radius: 5px; overflow: hidden; border: 1px solid rgba(0,0,0,0.6); flex: none; }
 .cp-new, .cp-current { height: 50%; } .cp-current { cursor: pointer; }
 .cp-buttons { display: flex; flex-direction: column; gap: 8px; flex: 1; } .cp-buttons .btn { width: 100%; }
-.cp-fields { margin-top: auto; display: grid; gap: 6px; }
-.cp-row { display: flex; align-items: center; gap: 8px; } .cp-row span { width: 14px; color: var(--text2); }
-.cp-row input.dim { width: 60px; } .cp-hex { width: 84px; font-family: ui-monospace, Menlo, monospace; }
-.cp-hint { margin-top: 8px; font-size: 11px; }
+/* R G B and # in one row under the picker (phones: R G B, then # below). */
+.cp-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.25fr); gap: 10px; margin-top: 14px; }
+.cp-row { display: flex; align-items: center; min-width: 0; }
+body .cp-fields .num-box.labeled, body.touch .cp-fields .num-box.labeled { min-width: 0; width: 100%; max-width: none; padding-left: 10px; }
+.cp-fields .num-box.labeled > .num-inlabel { margin-right: 6px; flex: none; }
+.cp-fields .num-box.labeled > input.num-field { flex: 1 1 auto; width: 100% !important; min-width: 2.5ch; }
+.cp-hexbox { cursor: text; }
+.cp-hexbox > .cp-hex { flex: 1 1 auto; min-width: 0; width: 100%; height: 100%; border: none; background: transparent; outline: none; padding: 0 10px 0 0; text-align: right; color: inherit;
+  font: inherit; font-family: ui-monospace, Menlo, monospace; text-transform: uppercase; }
+.cp-hint { margin-top: auto; font-size: 11px; }
+body.compact .cp-fields { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.45fr); gap: 8px; }
+body.compact .cp-fields .num-box.labeled { padding-left: 8px; }
+body.compact .cp-hexbox > .cp-hex { padding-right: 8px; }
+body.touch .cp-hexbox > .cp-hex { font-size: 16px; }
+body.compact .cp-side { width: auto; height: auto; margin-top: 12px; }
+body.compact .cp-top { align-items: center; gap: 10px; }
+body.compact .cp-preview { width: 44px; height: 44px; display: flex; flex-direction: column; }
+body.compact .cp-buttons { flex-direction: row-reverse; }
+body.compact .cp-buttons .btn { flex: 1; width: auto; }
+body.compact .cp-hint { display: none; }
+body.compact .cp-fields { margin-top: 12px; }
 /* Export JPEG (JPEGExportSheet) */
 .jpeg-export { display: flex; flex-direction: column; gap: 12px; }
 .jpeg-tools { justify-content: flex-end; gap: 6px; margin-bottom: -6px; }
@@ -554,3 +571,14 @@ body.touch .tool-header .num-box, body.touch .tool-header .slider-label, body.to
 body.touch .tool-header .num-box.scrub-armed, body.touch .tool-header .num-box:has(.scrubbing) { touch-action: none; }
 .num-box.scrub-armed { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47, 124, 246, .25); transition: box-shadow .12s; }
 body.compact.tool-options-open .tool-header { row-gap: 10px; }
+
+/* The tool options bar can be hidden from the top bar (⌥⌘O). */
+body.tool-options-hidden .tool-header-wrap, body.tool-options-hidden > #app > .tool-header { display: none; }
+.tb-btn.tb-options.active { color: var(--accent2); background: rgba(47, 124, 246, .16); }
+/* Phones: with the options toggle in the top bar the tab strip is narrow; a tab too narrow for both drops its ×
+   (File › Close, ⌘W) so the name stays readable. */
+body.phone .tabs { container-type: inline-size; }
+@container (max-width: 96px) { .tab .tab-close { display: none; } .tab { padding-left: 10px; } }
+
+/* Number fields: tabular figures in a value area at least four digits wide (fields.ts sizes it), right-aligned. */
+input.num-field { font-variant-numeric: tabular-nums; text-align: right; }

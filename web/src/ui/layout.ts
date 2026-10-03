@@ -15,7 +15,7 @@ import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLE
 import { ADJUSTMENT_KINDS, FILTER_MENU, IMAGE_ADJUSTMENTS, type FilterKind } from '../engine/adjustments';
 import { limitNotice } from '../engine/limits';
 import { installFieldEnhancer, setFieldDpiSource } from './fields';
-import { setupMobile, modifierBar, toolOptionsWrap, toggleLayers, setLayersOpen, installLayersSheet } from './mobile';
+import { setupMobile, modifierBar, toolOptionsWrap, toggleLayers, setLayersOpen, installLayersSheet, toggleToolOptions, toolOptionsHidden, initToolOptionsVisibility } from './mobile';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const MOD = isMac ? '⌘' : 'Ctrl+';
@@ -45,6 +45,7 @@ export function buildLayout(root: HTMLElement) {
     // Touch screens have no ⌘Z: undo and redo get buttons (a two-finger tap also undoes).
     els.undoBtn = h('button', { class: 'tb-btn tb-touch', id: 'tb-undo', title: `Undo (${MOD}Z · two-finger tap)`, 'aria-label': 'Undo', onclick: () => app.undo() }, icon('undo', 17)),
     els.redoBtn = h('button', { class: 'tb-btn tb-touch', id: 'tb-redo', title: `Redo (⇧${MOD}Z · three-finger tap)`, 'aria-label': 'Redo', onclick: () => app.redo() }, icon('redo', 17)),
+    h('button', { class: 'tb-btn tb-options active', id: 'toggle-options', title: `Show or hide the tool options bar (⌥${MOD}O)`, 'aria-label': 'Tool options bar', 'aria-pressed': 'true', onclick: () => toggleToolOptions() }, icon('sliders', 18)),
     h('button', { class: 'tb-btn text', title: `Fit canvas in window (${MOD}0)`, onclick: () => app.fit() }, 'Fit'),
     h('button', { class: 'tb-btn text tb-wide', title: `Actual pixels (${MOD}1)`, onclick: () => app.zoomTo(1) }, '100%'),
     h('div', { class: 'tb-group tb-wide' },
@@ -64,6 +65,7 @@ export function buildLayout(root: HTMLElement) {
     h('div', { class: 'main' }, els.rail, h('div', { class: 'stage-wrap' }, els.stage, els.welcome, modifierBar()), h('div', { class: 'resize-edge' }), els.layers),
     els.status, els.fileInput, els.folderInput);
   installLayersSheet(els.layers);
+  initToolOptionsVisibility();
   ctl = new CanvasController(els.stage);
   ctl.onContextMenu = canvasContextMenu;
   (window as unknown as { compositor: unknown }).compositor = { app, ctl, filters: { applyFilter, applyFilterAsync, poolSize, defaultFilterSettings } };
@@ -228,6 +230,7 @@ function buildMenubar() {
         { label: 'Guides', shortcut: `${MOD};`, checked: view.guides, action: () => setView('guides', !view.guides), disabled: !app.doc },
       ] },
       { label: 'Grid Settings…', action: () => showGridSettings(), disabled: !app.doc },
+      { label: 'Tool Options Bar', shortcut: `⌥${MOD}O`, checked: !toolOptionsHidden(), action: () => toggleToolOptions() },
       { label: 'Rulers', shortcut: `${MOD}R`, checked: view.rulers, action: () => setView('rulers', !view.rulers), disabled: !app.doc },
       { separator: true },
       { label: 'Show Transform Controls', shortcut: `${MOD}H`, checked: app.showsTransformControls, action: () => { app.showsTransformControls = !app.showsTransformControls; }, disabled: app.tool !== 'move' || !app.doc },
@@ -990,6 +993,7 @@ function setupKeys() {
       if (k === 'z') return run(() => e.shiftKey ? app.redo() : app.undo());
       if (k === 'y') return run(() => app.redo());
       if (k === 'n') return run(() => e.shiftKey ? app.addBlankLayer() : showNewCanvas());
+      if (e.code === 'KeyO' && e.altKey && !e.shiftKey) return run(() => toggleToolOptions()); // ⌥ turns the key into ø on a Mac
       if (k === 'o') return run(() => openFileDialog(e.shiftKey ? 'import' : 'open'));
       if (k === 's') return run(() => e.altKey && e.shiftKey ? showExportJpeg() : e.shiftKey ? app.saveAs() : app.save());
       if (k === 'e') return run(() => e.shiftKey ? app.exportImage('png') : app.mergeSelected());

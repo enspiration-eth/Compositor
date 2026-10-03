@@ -196,6 +196,28 @@ export function installLayersSheet(panel: HTMLElement) {
 }
 export function toggleLayers() { setLayersOpen(!document.body.classList.contains('layers-open')); }
 
+// ---------- tool options bar: shown or hidden from the top bar (⌥⌘O), remembered ----------
+const OPTIONS_KEY = 'compositor.toolOptionsHidden';
+export const toolOptionsHidden = () => document.body.classList.contains('tool-options-hidden');
+export function setToolOptionsHidden(hidden: boolean) {
+  const p = app.project, stage = document.getElementById('stage'), before = stage?.getBoundingClientRect().top ?? 0;
+  document.body.classList.toggle('tool-options-hidden', hidden);
+  try { localStorage.setItem(OPTIONS_KEY, hidden ? '1' : '0'); } catch { /* private mode */ }
+  const b = document.getElementById('toggle-options');
+  if (b) { b.classList.toggle('active', !hidden); b.setAttribute('aria-pressed', String(!hidden)); }
+  // The stage changes height: a fitted canvas refits; a zoomed one stays where it was on screen.
+  if (p && stage) {
+    const r = stage.getBoundingClientRect();
+    app.stageSize = { w: r.width, h: r.height };
+    if (p.fitted) app.fit(); else { p.oy += before - r.top; app.emit('view'); }
+  }
+}
+export function toggleToolOptions() { setToolOptionsHidden(!toolOptionsHidden()); }
+export function initToolOptionsVisibility() {
+  let hidden = false; try { hidden = localStorage.getItem(OPTIONS_KEY) === '1'; } catch { /* default */ }
+  setToolOptionsHidden(hidden);
+}
+
 // ---------- tool options bar ----------
 // On narrow screens the options of a tool rarely fit one row. The row scrolls sideways, and a chevron at its end
 // (shown only when something is cut off) expands it into wrapped rows; the choice sticks across tools.

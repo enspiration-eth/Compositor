@@ -56,7 +56,8 @@ export function openColorPicker(opts: PickerOptions) {
   const original = quantize(opts.color);
   let hsb = setRGB({ hue: 0, saturation: 0, brightness: 0 }, original);
   const color = () => quantize(hsbToRgb(hsb));
-  const SIZE = 256;
+  // Phones: a smaller field on short screens so the whole sheet (values and buttons too) fits without scrolling.
+  const SIZE = document.body.classList.contains('compact') ? (() => { const vh = window.visualViewport?.height ?? innerHeight; return Math.round(Math.max(150, Math.min(256, Math.min(vh * 0.62, vh - 60) - 200))); })() : 256;
 
   let done = false;
   const finish = (commit: boolean) => {
@@ -90,7 +91,8 @@ export function openColorPicker(opts: PickerOptions) {
       const c = color(); c[key] = Math.min(255, Math.max(0, Math.round(+i.value))) / 255;
       hsb = setRGB(hsb, c); update(i);
     });
-    return { row: h('label', { class: 'cp-row' }, h('span', {}, label), i), i, key };
+    i.dataset.noPopover = '1'; // the field and the hue strip are the sliders here
+    return { row: h('label', { class: 'cp-row cp-chan' }, h('span', {}, label), i), i, key };
   };
   const chans = [chan('R', 'red'), chan('G', 'green'), chan('B', 'blue')];
   const hex = h('input', { type: 'text', class: 'cp-hex', id: 'cp-hex', spellcheck: 'false', 'aria-label': 'Hex color' }) as HTMLInputElement;
@@ -99,11 +101,15 @@ export function openColorPicker(opts: PickerOptions) {
   hex.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitHex(); } });
   const hint = h('div', { class: 'hint cp-hint' }, document.querySelector('.modal-back') ? '' : 'Click the canvas to sample');
 
-  panel.body.append(h('div', { class: 'cp' }, field, hue,
-    h('div', { class: 'cp-side' },
-      h('div', { class: 'cp-top' }, h('div', { class: 'cp-preview' }, newSwatch, curSwatch), h('div', { class: 'cp-buttons' }, ok, cancel)),
-      h('div', { class: 'cp-fields' }, ...chans.map(c => c.row), h('label', { class: 'cp-row' }, h('span', {}, '#'), hex)),
-      hint)));
+  // R, G, B side by side as labeled fields ([R   255]), the hex field with them on a wide panel or below on a phone.
+  const hexBox = h('label', { class: 'cp-row cp-hexrow' }, h('div', { class: 'num-box labeled cp-hexbox' }, h('span', { class: 'num-inlabel' }, '#'), hex));
+  const side = h('div', { class: 'cp-side' },
+    h('div', { class: 'cp-top' }, h('div', { class: 'cp-preview' }, newSwatch, curSwatch), h('div', { class: 'cp-buttons' }, ok, cancel)),
+    hint);
+  const fields = h('div', { class: 'cp-fields' }, ...chans.map(c => c.row), hexBox);
+  // Phones: field and hue strip, the values, then one row with the swatch and the buttons at the bottom of the sheet.
+  if (document.body.classList.contains('compact')) panel.body.append(h('div', { class: 'cp' }, field, hue), fields, side);
+  else panel.body.append(h('div', { class: 'cp' }, field, hue, side), fields);
   panel.place(); // in place before anything can be clicked
 
   function update(except?: HTMLElement) {
