@@ -14,7 +14,7 @@ import { view, setView, clearGuides } from './guides';
 import { newPixelLayer, renderText, setTextColor, setTextFont, BLEND_GROUPS, BLEND_MODES, EFFECT_NAMES, type EffectKey, type Layer, type BlendMode, childrenOf, ancestors, getLayer, isEffectivelyVisible } from '../engine/document';
 import { ADJUSTMENT_KINDS, FILTER_MENU, IMAGE_ADJUSTMENTS, type FilterKind } from '../engine/adjustments';
 import { limitNotice } from '../engine/limits';
-import { installFieldEnhancer } from './fields';
+import { installFieldEnhancer, setFieldDpiSource } from './fields';
 import { setupMobile, modifierBar, toolOptionsWrap, toggleLayers, setLayersOpen } from './mobile';
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -24,6 +24,7 @@ const els: Record<string, HTMLElement> = {};
 
 export function buildLayout(root: HTMLElement) {
   installFieldEnhancer(document.body);
+  setFieldDpiSource(() => app.doc?.resolution || 72);
   void loadRecent();
   setupMobile();
   limitNotice.onDownscale = (name, [w0, h0], [w1, h1]) => toast(`${name} was ${w0} × ${h0}; scaled to ${w1} × ${h1} to fit this device's memory.`);

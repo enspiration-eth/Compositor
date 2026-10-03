@@ -1146,6 +1146,7 @@ export function showCanvasSize() {
   const valid = () => isFinite(dr.width) && isFinite(dr.height) && Math.round(dr.width) >= 1 && Math.round(dr.width) <= 30000 && Math.round(dr.height) >= 1 && Math.round(dr.height) <= 30000 && fitsLimits(Math.round(dr.width), Math.round(dr.height));
   const w = h('input', { type: 'number', class: 'dim', id: 'canvas-width', step: 'any' }) as HTMLInputElement;
   const hh = h('input', { type: 'number', class: 'dim', id: 'canvas-height', step: 'any' }) as HTMLInputElement;
+  w.dataset.percentOf = String(W0); hh.dataset.percentOf = String(H0); // "50%" typed in pixels: half the current size
   const unitLbl = [h('span', { class: 'unit' }), h('span', { class: 'unit' })];
   const result = h('p', { class: 'hint', id: 'canvas-result' });
   const refresh = (skip?: HTMLInputElement) => {
@@ -1169,7 +1170,7 @@ export function showCanvasSize() {
   const customRow = h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Extension color'), colorWell(custom, c => { custom = c; }));
   customRow.style.display = 'none';
   refresh();
-  modal('Canvas Size', h('div', { class: 'canvas-size' },
+  modal('Canvas Size', h('div', { class: 'canvas-size', 'data-dpi': res },
     h('p', {}, `Current: ${W0} × ${H0} pixels`), h('p', { class: 'hint' }, `${fmtBytes(W0 * H0 * 4)} uncompressed RGBA canvas`), h('hr'),
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Units'), select([...UNITS], dr.unit, v => { dr.unit = v as Unit; refresh(); }, { id: 'canvas-units' })),
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w, unitLbl[0]),
@@ -1221,6 +1222,10 @@ export function showImageSize() {
   const w = h('input', { type: 'number', class: 'dim', id: 'image-width', step: 'any' }) as HTMLInputElement;
   const hh = h('input', { type: 'number', class: 'dim', id: 'image-height', step: 'any' }) as HTMLInputElement;
   const resIn = h('input', { type: 'number', class: 'dim', id: 'image-resolution', step: 'any' }) as HTMLInputElement;
+  // Typed units convert at the resolution being set here; "50%" means half the current pixels (ui/fields.ts).
+  w.dataset.percentOf = String(W0); hh.dataset.percentOf = String(H0);
+  const imgUnit = [h('span', { class: 'unit' }), h('span', { class: 'unit' })];
+  const body = h('div', { class: 'image-size' });
   const unitSel = h('select', { id: 'image-units' }) as HTMLSelectElement;
   const lockBox = checkbox('Lock aspect ratio', true, v => { st.locked = v; }, 'image-lock');
   const samplingRow = h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Sampling'), select(['High quality', 'Smooth', 'Nearest'], st.sampling, v => { st.sampling = v as typeof st.sampling; }, { id: 'image-sampling' }));
@@ -1230,6 +1235,8 @@ export function showImageSize() {
     if (unitSel.options.length !== units.length) unitSel.replaceChildren(...units.map(u => h('option', { value: u }, u)));
     unitSel.value = st.unit;
     if (skip !== w) w.value = fmtNum(display(st.width, W0)); if (skip !== hh) hh.value = fmtNum(display(st.height, H0)); if (skip !== resIn) resIn.value = fmtNum(st.resolution);
+    imgUnit.forEach(u => { u.textContent = { Pixels: 'px', Percent: '%', Inches: 'in', Centimeters: 'cm' }[st.unit]; });
+    if (st.resolution > 0) body.dataset.dpi = String(st.resolution);
     (lockBox.querySelector('input') as HTMLInputElement).disabled = !st.resample; (lockBox.querySelector('input') as HTMLInputElement).checked = st.locked;
     samplingRow.style.display = st.resample ? '' : 'none';
     note.textContent = st.resample ? 'Resizes layer pixels and applies existing transforms. Undo restores the originals.' : 'Only print dimensions and resolution change. Pixels stay unchanged.';
@@ -1253,13 +1260,14 @@ export function showImageSize() {
     if (!v) { st.width = W0; st.height = H0; st.locked = true; if (st.unit === 'Pixels' || st.unit === 'Percent') st.unit = 'Inches'; }
     refresh();
   }, 'image-resample');
-  modal('Image Size', h('div', { class: 'image-size' },
+  body.append(
     h('p', { class: 'hint' }, `Current: ${W0} × ${H0} pixels`),
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Units'), unitSel),
-    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w), h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh),
+    h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Width'), w, imgUnit[0]), h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Height'), hh, imgUnit[1]),
     lockBox,
     h('div', { class: 'row' }, h('span', { class: 'lbl' }, 'Resolution'), resIn, h('span', { class: 'unit' }, 'pixels/inch')),
-    resampleBox, samplingRow, note, result),
+    resampleBox, samplingRow, note, result);
+  modal('Image Size', body,
     [{ label: 'Cancel', onClick: () => {} }, { label: 'Resize', primary: true, onClick: () => {
       if (!valid()) return false;
       app.imageSize(Math.round(st.width), Math.round(st.height), { resolution: st.resolution, sampling: st.sampling, resample: st.resample });

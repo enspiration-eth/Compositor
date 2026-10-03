@@ -245,6 +245,9 @@ for (const dev of runs) {
         // Values and units share one box; a tap on a label opens its slider.
         const box = await page.evaluate(() => { const n = document.querySelector('.tool-header .slider-row .num-box'); const u = n?.querySelector('.unit'); return n && u ? { inside: n.contains(u), uw: u.getBoundingClientRect().right <= n.getBoundingClientRect().right } : null; });
         assert(box && box.inside && box.uw, 'unit inside the field box ' + JSON.stringify(box));
+        // The Size box fits the value it holds (not the 4-digit maximum), and still shows it whole.
+        const sz = await page.evaluate(() => { const i = document.getElementById('brush-size'); return { box: i.parentElement.getBoundingClientRect().width, fits: i.scrollWidth <= i.clientWidth + 1, v: i.value }; });
+        assert(sz.fits && sz.box <= (sz.v.length <= 2 ? 80 : 92), 'compact Size field ' + JSON.stringify(sz));
         await page.locator('.tool-header .slider-label', { hasText: 'Opacity' }).tap(); await wait(150);
         assert(await page.isVisible('.num-popover input[type=range]'), 'label tap opens the slider popover');
         await shot('options-popover');

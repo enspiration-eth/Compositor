@@ -8,6 +8,10 @@
 import { enhanceSelects, pruneSelectButtons } from './selectmenu';
 
 const enhanced = new WeakSet<HTMLInputElement>();
+const typingTimers = new WeakMap<HTMLInputElement, number>();
+const fitters = new WeakMap<HTMLInputElement, () => void>();
+/** Where a field's value takes effect right away (so typed values wait for a pause or Enter). */
+const LIVE = '.tool-header, .floating-panel, .layers, .appearance';
 interface FieldState { min: number; max: number; step: number; decimals: number; unit: string; integer: boolean }
 
 /** Evaluates + - * / ( ) and unary minus over numbers (no names, no eval). Returns NaN when it isn't arithmetic. */
@@ -27,12 +31,39 @@ export function evalExpression(src: string): number {
   try { if (!s) return NaN; const v = expr(); return i === s.length && Number.isFinite(v) ? v : NaN; } catch { return NaN; }
 }
 
-const UNIT_RE = /\s*(px|pixels?|%|percent|°|deg|degrees?|pt|in|cm|mm|ppi|dpi)\s*$/i;
-/** The number a field's text means: a plain number, or an expression, with an optional unit at the end. */
-export function parseFieldValue(text: string): number {
-  const t = text.trim().replace(UNIT_RE, '');
-  if (/^[-+]?(\d+\.?\d*|\.\d+)$/.test(t)) return parseFloat(t);
-  return evalExpression(t);
+const UNIT_RE = /\s*(px|pixels?|%|percent|°|deg|degrees?|pt|points?|in|inch(?:es)?|"|cm|mm|ppi|dpi)\s*$/i;
+const UNIT_ALIAS: Record<string, string> = { pixel: 'px', pixels: 'px', percent: '%', deg: '°', degree: '°', degrees: '°', point: 'pt', points: 'pt', inch: 'in', inches: 'in', '"': 'in', dpi: 'ppi' };
+const normUnit = (u: string) => { const l = u.trim().toLowerCase(); return UNIT_ALIAS[l] ?? l; };
+/** Where conversions get the document's resolution (set by the layout; 72 ppi without a document). */
+let dpiOf: () => number = () => 72;
+export function setFieldDpiSource(fn: () => number) { dpiOf = fn; }
+const pxPer = (u: string, dpi: number): number | null => ({ px: 1, in: dpi, cm: dpi / 2.54, mm: dpi / 25.4, pt: dpi / 72 } as Record<string, number>)[u] ?? null;
+/** The unit a field shows (its unit label or data-unit), normalized: px, %, in, cm, mm, pt, ° or ''. */
+function fieldUnit(i: HTMLInputElement): string {
+  const u = i.parentElement?.classList.contains('num-box') ? i.parentElement.querySelector(':scope > .unit')?.textContent : null;
+  return normUnit(u ?? i.dataset.unit ?? '');
+}
+/** The number a field's text means: a plain number, or an expression, with an optional unit at the end. Given the
+ *  field, a typed unit is converted into the field's own: in, cm, mm and pt ↔ px at the document's resolution, and
+ *  % of the field's reference size (data-percent-of, in px) or of its current value. */
+export function parseFieldValue(text: string, i?: HTMLInputElement): number {
+  const m = UNIT_RE.exec(text.trim());
+  const t = m ? text.trim().slice(0, m.index) : text.trim();
+  const v = /^[-+]?(\d+\.?\d*|\.\d+)$/.test(t) ? parseFloat(t) : evalExpression(t);
+  if (!m || !i || !Number.isFinite(v)) return v;
+  const typed = normUnit(m[1]), own = fieldUnit(i);
+  if (!own || typed === own) return v;
+  const dpi = (i.closest<HTMLElement>('[data-dpi]')?.dataset.dpi ? +i.closest<HTMLElement>('[data-dpi]')!.dataset.dpi! : 0) || dpiOf() || 72;
+  const ref = i.dataset.percentOf ? +i.dataset.percentOf : NaN; // px
+  const a = pxPer(typed, dpi), b = pxPer(own, dpi);
+  if (a && b) return v * a / b;
+  if (typed === '%') {
+    if (Number.isFinite(ref) && b) return ref * v / 100 / b;
+    const cur = parseFloat(i.dataset.lastGood ?? '');
+    return Number.isFinite(cur) ? cur * v / 100 : v;
+  }
+  if (own === '%' && a && Number.isFinite(ref) && ref > 0) return v * a / ref * 100;
+  return v; // nothing to convert between (° and px, say): the number as typed
 }
 const plainNumber = (t: string) => /^\s*[-+]?(\d+\.?\d*|\.\d+)?\s*$/.test(t);
 
@@ -66,7 +97,7 @@ function commit(i: HTMLInputElement, v: number, events: ('input' | 'change')[] =
 function resolveTyped(i: HTMLInputElement) {
   const raw = i.value;
   if (raw.trim() === '') return;
-  const v = parseFieldValue(raw);
+  const v = parseFieldValue(raw, i);
   if (Number.isNaN(v)) { i.value = i.dataset.lastGood ?? ''; return; }
   const st = stateOf(i);
   let w = clamp(v, st); if (st.integer) w = Math.round(w / st.step) * st.step;
@@ -204,7 +235,19 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
   box.addEventListener('pointerdown', e => { if (e.target !== i && !(e.target as HTMLElement).closest('button')) { if (document.activeElement === i) e.preventDefault(); else scrubFrom(i, e, i, false); } });
   const st = stateOf(i);
   const chars = Math.min(7, Math.max(2, ...[st.min, st.max].filter(Number.isFinite).map(v => format(v, st).length), Number.isFinite(st.max) ? 0 : st.integer ? 5 : 6));
-  i.style.width = `calc(${chars}ch + ${unitEl ? 8 : 14}px)`;
+  // Sized for the widest value of its range; on touch screens, where room is scarcer, for the value it holds.
+  const fit = () => {
+    const n = document.body.classList.contains('touch') ? Math.min(chars, Math.max(2, i.value.trim().length)) : chars;
+    const w = `calc(${n}ch + ${unitEl ? 8 : 14}px)`;
+    if (i.style.width !== w) i.style.width = w;
+  };
+  fit();
+  i.addEventListener('input', fit); i.addEventListener('change', fit); i.addEventListener('blur', fit);
+  fitters.set(i, fit);
+  if (document.body.classList.contains('touch')) { // values set in code (the [ and ] keys, a slider) refit it too
+    const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
+    Object.defineProperty(i, 'value', { configurable: true, get() { return d.get!.call(this); }, set(v) { d.set!.call(this, v); fit(); } });
+  }
   const inSlider = !!i.closest('.slider-row') && !i.closest('.tool-header');
   if (opts.popover ?? (!inSlider && Number.isFinite(st.min) && Number.isFinite(st.max) && st.max - st.min > 0 && (st.max - st.min <= 1000 || !!i.closest('.tool-header')) && !i.dataset.noPopover)) {
     const b = document.createElement('button');
@@ -241,12 +284,32 @@ export function installFieldEnhancer(root: HTMLElement = document.body, extra?: 
   }).observe(root, { childList: true, subtree: true });
   // While an expression is half typed ("50*"), the app's own 'input' listeners must not see it; on 'change' (blur) it
   // is resolved first. These run before any listener on the field itself.
+  // Fields that change the document as you go (options bar, panels) don't apply every keystroke either: typing 100
+  // must not paint with size 1 and then 10 on the way. They apply on Enter, on blur, while scrubbing / stepping /
+  // sliding, or once typing pauses (~400 ms) on a value inside the field's range.
   window.addEventListener('input', e => {
     const i = e.target as HTMLInputElement;
-    if (enhanced.has(i) && e.isTrusted && !plainNumber(i.value)) e.stopImmediatePropagation();
+    if (!enhanced.has(i) || !e.isTrusted) return;
+    if (!plainNumber(i.value)) { e.stopImmediatePropagation(); return; }
+    if (!i.closest(LIVE)) return; // dialogs validate and preview as you type; nothing is applied before OK
+    e.stopImmediatePropagation();
+    clearTimeout(typingTimers.get(i));
+    typingTimers.set(i, window.setTimeout(() => {
+      typingTimers.delete(i);
+      if (!i.isConnected || !plainNumber(i.value) || i.value.trim() === '') return;
+      const v = parseFloat(i.value), st = stateOf(i);
+      if (v >= st.min && v <= st.max) i.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 400));
+  }, true);
+  // Enter resolves an expression before the field's own listeners (a dialog's Enter-to-OK) read it.
+  window.addEventListener('keydown', e => {
+    const i = e.target as HTMLInputElement;
+    if (e.key === 'Enter' && enhanced.has(i) && !plainNumber(i.value)) resolveTyped(i);
   }, true);
   window.addEventListener('change', e => {
     const i = e.target as HTMLInputElement;
-    if (enhanced.has(i) && !plainNumber(i.value)) resolveTyped(i);
+    if (!enhanced.has(i)) return;
+    clearTimeout(typingTimers.get(i)); typingTimers.delete(i);
+    resolveTyped(i); // expressions and units worked out, values clamped to the range
   }, true);
 }

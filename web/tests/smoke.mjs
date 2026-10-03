@@ -68,14 +68,21 @@ try {
 
   await step('scrubby number fields: expressions, units, arrows (Shift ×10), clamping, field and label drags', async () => {
     const w = page.locator('#new-width');
+    // (Enter in this form creates the canvas, so each value is committed by leaving the field.)
+    const typeIn = async v => { await w.fill(v); await w.evaluate(e => e.blur()); };
     assert(await w.getAttribute('role') === 'spinbutton' && await w.getAttribute('type') === 'text', 'enhanced field');
-    await w.fill('50*2'); await w.press('Enter'); assert(await w.inputValue() === '100', 'expression ' + await w.inputValue());
-    await w.fill('(1920-40)/2'); await w.press('Enter'); assert(await w.inputValue() === '940', 'parentheses');
+    await typeIn('50*2'); assert(await w.inputValue() === '100', 'expression ' + await w.inputValue());
+    await typeIn('(1920-40)/2'); assert(await w.inputValue() === '940', 'parentheses');
     await w.press('ArrowUp'); assert(await w.inputValue() === '941', 'arrow up');
     await w.press('Shift+ArrowDown'); assert(await w.inputValue() === '931', 'shift arrow ×10');
-    await w.fill('-50'); await w.press('Enter'); assert(await w.inputValue() === '1', 'clamped to min');
-    await w.fill('1200px'); await w.press('Enter'); assert(await w.inputValue() === '1200', 'unit stripped');
-    await w.fill('12*'); await w.press('Enter'); assert(await w.inputValue() === '1200', 'nonsense reverts');
+    await typeIn('-50'); assert(await w.inputValue() === '1', 'clamped to min');
+    await typeIn('1200px'); assert(await w.inputValue() === '1200', 'own unit');
+    await typeIn('2in'); assert(await w.inputValue() === '144', 'inches → px at 72 ppi ' + await w.inputValue());
+    await typeIn('2.54 cm'); assert(await w.inputValue() === '72', 'cm → px');
+    await typeIn('36pt'); assert(await w.inputValue() === '36', 'pt → px');
+    await typeIn('50%'); assert(await w.inputValue() === '18', '% of the current value');
+    await typeIn('1200');
+    await typeIn('12*'); assert(await w.inputValue() === '1200', 'nonsense reverts');
     await page.mouse.click(5, 895); // blur
     const drag = async (sel, dx) => { const b = await page.locator(sel).boundingBox(); const y = b.y + b.height / 2, x = b.x + Math.min(20, b.width / 2);
       await page.mouse.move(x, y); await page.mouse.down(); for (let i = 1; i <= 10; i++) await page.mouse.move(x + dx * i / 10, y); await page.mouse.up(); };
@@ -131,6 +138,25 @@ try {
   await step('open sample project', async () => {
     await page.getByText('Try a sample').click();
     await page.waitForFunction(() => window.compositor.app.doc?.layers.length === 4);
+  });
+
+  await step('typing in an options-bar field applies once typing pauses (no size 1 → 10 → 100 on the way)', async () => {
+    await page.click('.rail-btn[data-tool="brush"]');
+    const f = page.locator('#brush-size');
+    const seen = [];
+    await f.click(); await page.keyboard.press('Control+a');
+    for (const ch of '100') { await page.keyboard.type(ch); seen.push(await page.evaluate(() => window.compositor.app.brush.size)); await page.waitForTimeout(120); }
+    const s0 = seen[0];
+    assert(seen.every(v => v === s0), 'no intermediate sizes while typing ' + JSON.stringify(seen));
+    await page.waitForTimeout(500);
+    assert(await page.evaluate(() => window.compositor.app.brush.size) === 100, 'applied after the pause');
+    await f.click(); await page.keyboard.press('Control+a'); await page.keyboard.type('60'); await f.press('Enter');
+    assert(await page.evaluate(() => window.compositor.app.brush.size) === 60, 'Enter applies at once');
+    await f.click(); await page.keyboard.press('Control+a'); await page.keyboard.type('0'); await page.waitForTimeout(500);
+    assert(await page.evaluate(() => window.compositor.app.brush.size) === 60, 'a value below the minimum is not applied mid-typing');
+    await page.keyboard.type('40'); await f.press('Enter'); // "040"
+    assert(await page.evaluate(() => window.compositor.app.brush.size) === 40, 'then 40');
+    await page.mouse.click(5, 895);
   });
 
   await step('add layer + paint with brush', async () => {
@@ -1243,6 +1269,12 @@ try {
     await page.evaluate(() => { window.compositor.app.newCanvas(100, 50, 'Sizes'); window.compositor.app.doc.guides.push({ id: 'g1', axis: 'vertical', position: 40 }); });
     await menu('Image', 'Canvas Size…');
     await page.waitForSelector('#canvas-size-modal');
+    // Typed units convert: % of the current width, inches at the document's resolution.
+    const cw = page.locator('#canvas-width'), blur = () => cw.evaluate(e => e.blur());
+    await cw.fill('50%'); await blur(); assert(await cw.inputValue() === '50', '50% of 100 px ' + await cw.inputValue());
+    const ppi = await page.evaluate(() => window.compositor.app.doc.resolution || 72);
+    await cw.fill('1in'); await blur(); assert(+await cw.inputValue() === ppi, `1 in at ${ppi} ppi: ` + await cw.inputValue());
+    await cw.fill('100'); await blur();
     await page.selectOption('#canvas-units', 'Percent');
     await page.check('#canvas-relative');
     await page.fill('#canvas-width', '50'); await page.fill('#canvas-height', '100');
