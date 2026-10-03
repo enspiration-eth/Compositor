@@ -504,6 +504,62 @@ if (!failed && !only) {
     await dctx.close();
     assert(!/\b(touch|compact|phone)\b/.test(d.cls) && !d.mod && !d.menu && d.layers, 'desktop layout ' + JSON.stringify(d));
     console.log('ok');
+    // Every number field reserves four tabular digits: its outer width (and its unit) doesn't move from 6 to 1000.
+    // Checked on a 360px phone (every tool's options bar, the color picker) and on the desktop (options bars, dialogs).
+    const suffix = useWebkit ? '-webkit' : '';
+    const stable = (pg, sel) => pg.evaluate(sel => [...document.querySelectorAll(sel)].filter(i => i.offsetParent).map(i => {
+      const box = i.closest('.num-box'), unit = box.querySelector('.unit'), bar = i.closest('.tool-header');
+      const set = v => { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); const r = box.getBoundingClientRect(); return { w: Math.round(r.width * 10) / 10, u: unit ? Math.round((unit.getBoundingClientRect().left - r.left) * 10) / 10 : 0, fits: i.scrollWidth <= i.clientWidth + 1 }; };
+      const orig = i.value, a = set('6'), b = set('1000'); i.value = orig; i.dispatchEvent(new Event('input', { bubbles: true }));
+      const r = box.getBoundingClientRect();
+      return { id: i.id || box.textContent.trim(), a, b, tab: getComputedStyle(i).fontVariantNumeric, onScreen: !!bar || (r.left >= -0.5 && r.right <= innerWidth + 0.5) };
+    }), sel);
+    const moved = list => list.filter(x => x.a.w !== x.b.w || x.a.u !== x.b.u || !x.a.fits || !x.b.fits || !/tabular-nums/.test(x.tab) || !x.onScreen);
+    process.stdout.write('• number fields keep their outer width from 6 to 1000: 360px phone (options bars, color picker) … ');
+    {
+      const desc = { ...devices['Pixel 7'], viewport: { width: 360, height: 740 } }; delete desc.defaultBrowserType;
+      const ctx = await browser.newContext(desc); const pg = await ctx.newPage();
+      await pg.goto(URL_, { waitUntil: 'networkidle' }); await pg.waitForFunction(() => window.compositor?.app);
+      await pg.tap('#create-canvas'); await pg.waitForFunction(() => window.compositor.app.doc); await pg.waitForTimeout(300);
+      const tools = await pg.evaluate(() => [...document.querySelectorAll('.rail-btn[data-tool]')].map(b => b.dataset.tool));
+      let n = 0; const bad = [];
+      for (const t of tools) {
+        await pg.evaluate(t => document.querySelector(`.rail-btn[data-tool="${t}"]`).click(), t); await pg.waitForTimeout(120);
+        const r = await stable(pg, '.tool-header .num-box input.num-field'); n += r.length; bad.push(...moved(r).map(x => ({ t, ...x })));
+      }
+      const over = await pg.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+      await pg.evaluate(() => document.querySelector('.rail-btn[data-tool="brush"]').click()); await pg.waitForTimeout(200);
+      await pg.screenshot({ path: `${SHOTS}/fixed-width-phone-options-bar${suffix}.png` });
+      await pg.tap('#swatch-fg'); await pg.waitForSelector('#color-picker .cp-fields'); await pg.waitForTimeout(300);
+      const cp = await stable(pg, '#color-picker .num-box input.num-field');
+      await ctx.close();
+      assert(n >= 20 && cp.length === 3, `fields found: ${n} in options bars, ${cp.length} in the picker`);
+      assert(!bad.length && !moved(cp).length, 'fields that moved or clipped ' + JSON.stringify([...bad, ...moved(cp)]));
+      assert(over <= 0, 'page wider than 360px by ' + over);
+    }
+    console.log('ok');
+    process.stdout.write('• number fields keep their outer width from 6 to 1000: desktop (options bars, dialogs) … ');
+    {
+      const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } }); const pg = await ctx.newPage();
+      await pg.goto(URL_, { waitUntil: 'networkidle' }); await pg.waitForFunction(() => window.compositor?.app);
+      await pg.click('#create-canvas'); await pg.waitForFunction(() => window.compositor.app.doc);
+      let n = 0; const bad = [];
+      for (const t of ['move', 'marquee', 'brush', 'cloneStamp', 'blur', 'type']) {
+        await pg.click(`.rail-btn[data-tool="${t}"]`); await pg.waitForTimeout(120);
+        const r = await stable(pg, '.tool-header .num-box input.num-field'); n += r.length; bad.push(...moved(r).map(x => ({ t, ...x })));
+      }
+      await pg.click('.rail-btn[data-tool="brush"]'); await pg.waitForTimeout(150);
+      await pg.screenshot({ path: `${SHOTS}/fixed-width-desktop-options-bar${suffix}.png`, clip: { x: 0, y: 0, width: 1440, height: 120 } });
+      for (const [top, item] of [['Image', 'Image Size…'], ['Image', 'Exposure…'], ['Filter', 'Add Noise…'], ['Image', 'Levels…']]) {
+        await pg.click(`.menubar-item[data-menu="${top}"]`); await pg.locator('.menu .menu-item', { hasText: item }).first().click(); await pg.waitForTimeout(400);
+        const r = await stable(pg, '.modal .num-box input.num-field, .floating-panel .num-box input.num-field'); n += r.length; bad.push(...moved(r).map(x => ({ dialog: item, ...x })));
+        await pg.keyboard.press('Escape'); await pg.waitForTimeout(250);
+      }
+      await ctx.close();
+      assert(n >= 25, 'fields found ' + n);
+      assert(!bad.length, 'fields that moved or clipped ' + JSON.stringify(bad));
+    }
+    console.log('ok');
   } catch (e) { failed = true; console.log('FAILED\n  ' + e.message); }
 }
 await browser.close(); if (server) try { process.kill(-server.pid); } catch {}
