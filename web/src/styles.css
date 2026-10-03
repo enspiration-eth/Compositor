@@ -471,3 +471,29 @@ body.touch .num-box > .num-pop-btn { width: 26px; height: 36px; }
 body.touch .tool-header .num-box > .num-pop-btn { display: none; }
 body.touch .tool-header .num-box.has-pop > .unit { padding-right: 8px; }
 body.touch .tool-header .slider-label { padding: 10px 2px; }
+
+/* The app's pop-up menus (ui/selectmenu.ts) in place of native selects; the select stays as the value, out of sight. */
+select.cs-native { position: absolute !important; width: 1px !important; height: 1px !important; min-height: 0 !important; padding: 0 !important; margin: 0 !important; border: 0 !important; opacity: 0; pointer-events: none; overflow: hidden; }
+.cs-button { display: inline-flex; align-items: center; gap: 6px; justify-content: space-between; text-align: left; cursor: default; min-width: 0; max-width: 100%; line-height: 1.2; }
+.cs-button.popup { height: 24px; padding: 3px 8px 3px 10px; }
+.cs-button .cs-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.cs-button .cs-chevron { flex: none; color: var(--text2); }
+.cs-button:focus-visible, .cs-button.open { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cs-button:disabled { color: var(--text3); }
+.cs-back { position: fixed; inset: 0; z-index: 5000; }
+.cs-list { position: fixed; box-sizing: border-box; overflow-y: auto; padding: 4px; background: #2c2c2c; border: 1px solid #4a4a4a; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.55); outline: none; max-width: calc(100vw - 12px); }
+.cs-option { display: flex; align-items: center; gap: 6px; padding: 4px 12px 4px 4px; border-radius: 5px; white-space: nowrap; cursor: default; color: var(--text); min-height: 18px; }
+.cs-option .cs-check { width: 14px; text-align: center; flex: none; font-size: 11px; }
+.cs-option.active { background: var(--accent); color: #fff; }
+.cs-option[aria-disabled=true] { color: var(--text3); }
+.cs-option[aria-disabled=true].active { background: #3a3a3a; }
+.cs-sep { height: 1px; margin: 4px 6px; background: #444; }
+.cs-group { padding: 6px 8px 2px; font-size: 11px; color: var(--text3); }
+/* Phones: a bottom sheet with big rows. */
+.cs-back.sheet { background: rgba(0,0,0,.45); }
+.cs-list.cs-sheet { left: 0; right: 0; bottom: 0; top: auto; max-width: none; max-height: 70vh; border-radius: 14px 14px 0 0; padding: 6px 8px calc(10px + env(safe-area-inset-bottom)); animation: cs-up .16s ease-out; }
+.cs-sheet .cs-option { min-height: 44px; font-size: 16px; padding: 0 12px 0 6px; }
+.cs-sheet .cs-option .cs-check { width: 22px; font-size: 15px; }
+.cs-sheet-title { text-align: center; color: var(--text2); font-size: 13px; padding: 8px 0 6px; position: sticky; top: -6px; background: #2c2c2c; }
+@keyframes cs-up { from { transform: translateY(30%); opacity: .4; } }
+body.touch .cs-button { min-height: 40px; font-size: 16px; }

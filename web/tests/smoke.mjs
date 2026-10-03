@@ -93,6 +93,24 @@ try {
     if (await page.evaluate(() => !!window.compositor.app.doc)) await page.evaluate(() => { const { app } = window.compositor; app.doc.dirty = false; app.closeProject(); });
   });
 
+  await step('custom pop-up menus: native select replaced, keyboard, type-ahead, ARIA, value stays in sync', async () => {
+    const btn = page.locator('#new-preset-button');
+    assert(await btn.getAttribute('role') === 'combobox' && await btn.getAttribute('aria-haspopup') === 'listbox', 'combobox button');
+    assert(await page.evaluate(() => getComputedStyle(document.getElementById('new-preset')).opacity === '0'), 'native select hidden');
+    await page.selectOption('#new-preset', '4K'); assert((await btn.textContent()).startsWith('4K') && await page.inputValue('#new-width') === '3840', 'selectOption still drives it');
+    await btn.click(); await page.waitForSelector('.cs-list[role=listbox]');
+    assert(await btn.getAttribute('aria-expanded') === 'true' && (await page.locator('.cs-option.active span:last-child').textContent()).startsWith('4K'), 'opens on the current item');
+    await page.screenshot({ path: `${SHOTS}/select-open.png` });
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+    assert(await page.inputValue('#new-preset') === '1440p' && await page.inputValue('#new-width') === '2560' && await page.locator('.cs-list').count() === 0, 'arrow + Enter picks');
+    assert(await page.evaluate(() => document.activeElement?.id === 'new-preset-button'), 'focus back on the button');
+    await btn.click(); await page.keyboard.type('you'); assert((await page.locator('.cs-option.active span:last-child').textContent()).startsWith('YouTube'), 'type-ahead');
+    await page.keyboard.press('Escape'); assert(await page.inputValue('#new-preset') === '1440p', 'Escape keeps the value');
+    await page.keyboard.press('End'); assert(await page.inputValue('#new-preset') !== '1440p', 'End on the closed button picks the last');
+    await page.fill('#new-width', '1000'); assert(await btn.textContent() === 'Custom', 'button follows select.value set in code');
+    await page.selectOption('#new-preset', '1080p');
+  });
+
   await step('paste an image on the welcome screen → new canvas sized to it', async () => {
     assert(!(await page.evaluate(() => !!window.compositor.app.doc)), 'welcome screen showing');
     assert(await page.isVisible('#welcome-paste'), 'Paste from clipboard button');

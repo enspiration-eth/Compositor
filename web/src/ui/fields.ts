@@ -5,6 +5,8 @@
 // builds a dialog keeps reading `input.value` and listening for 'input' / 'change' as before: the field always holds a
 // plain number by the time those listeners see it.
 
+import { enhanceSelects, pruneSelectButtons } from './selectmenu';
+
 const enhanced = new WeakSet<HTMLInputElement>();
 interface FieldState { min: number; max: number; step: number; decimals: number; unit: string; integer: boolean }
 
@@ -137,10 +139,10 @@ function sliderPopover(i: HTMLInputElement, anchor: HTMLElement) {
   range.addEventListener('input', () => commit(i, +range.value, ['input']));
   range.addEventListener('change', () => i.dispatchEvent(new Event('change', { bubbles: true })));
   const outside = (e: PointerEvent) => { if (!el.contains(e.target as Node) && !anchor.contains(e.target as Node)) close(); };
-  const key = (e: KeyboardEvent) => { if (e.key === 'Escape' || e.key === 'Enter') { e.stopPropagation(); close(); i.focus(); } };
-  const close = () => { el.remove(); window.removeEventListener('pointerdown', outside, true); el.removeEventListener('keydown', key); if (openPopover?.el === el) openPopover = null; };
+  const key = (e: KeyboardEvent) => { if (e.key === 'Escape' || (e.key === 'Enter' && el.contains(document.activeElement))) { e.stopPropagation(); e.preventDefault(); close(); if (!document.body.classList.contains('touch')) i.focus(); } };
+  const close = () => { el.remove(); window.removeEventListener('pointerdown', outside, true); window.removeEventListener('keydown', key, true); if (openPopover?.el === el) openPopover = null; };
   setTimeout(() => window.addEventListener('pointerdown', outside, true));
-  el.addEventListener('keydown', key);
+  window.addEventListener('keydown', key, true); // Escape closes it wherever the focus is
   openPopover = { el, close };
   range.focus();
 }
@@ -225,14 +227,17 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
 export function installFieldEnhancer(root: HTMLElement = document.body, extra?: (root: ParentNode) => void) {
   const scan = (n: ParentNode) => {
     for (const i of n.querySelectorAll<HTMLInputElement>('input[type="number"]:not([data-native])')) numberField(i);
+    enhanceSelects(n);
     extra?.(n);
   };
   scan(root);
   new MutationObserver(list => {
     for (const m of list) for (const n of m.addedNodes) if (n instanceof HTMLElement) {
       if (n.matches('input[type="number"]:not([data-native])')) numberField(n as HTMLInputElement);
+      if (n instanceof HTMLSelectElement) enhanceSelects(n);
       scan(n);
     }
+    for (const m of list) for (const n of m.removedNodes) pruneSelectButtons(n);
   }).observe(root, { childList: true, subtree: true });
   // While an expression is half typed ("50*"), the app's own 'input' listeners must not see it; on 'change' (blur) it
   // is resolved first. These run before any listener on the field itself.
