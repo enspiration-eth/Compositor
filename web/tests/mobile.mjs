@@ -246,10 +246,19 @@ for (const dev of runs) {
         const box = await page.evaluate(() => { const n = document.querySelector('.tool-header .slider-row .num-box'); const u = n?.querySelector('.unit'); return n && u ? { inside: n.contains(u), uw: u.getBoundingClientRect().right <= n.getBoundingClientRect().right } : null; });
         assert(box && box.inside && box.uw, 'unit inside the field box ' + JSON.stringify(box));
         // The Size box fits the value it holds (not the 4-digit maximum), and still shows it whole.
-        const sz = await page.evaluate(() => { const i = document.getElementById('brush-size'); return { box: i.parentElement.getBoundingClientRect().width, fits: i.scrollWidth <= i.clientWidth + 1, v: i.value }; });
-        assert(sz.fits && sz.box <= (sz.v.length <= 2 ? 80 : 92), 'compact Size field ' + JSON.stringify(sz));
-        await page.locator('.tool-header .slider-label', { hasText: 'Opacity' }).tap(); await wait(150);
-        assert(await page.isVisible('.num-popover input[type=range]'), 'label tap opens the slider popover');
+        // The Size value is as wide as the value it holds (not the 4-digit maximum), shown whole; the label sits inside the box.
+        const sz = await page.evaluate(() => { const i = document.getElementById('brush-size'); return { input: i.getBoundingClientRect().width, fits: i.scrollWidth <= i.clientWidth + 1, v: i.value, label: !!i.parentElement.querySelector('.num-inlabel'), h: i.parentElement.getBoundingClientRect().height }; });
+        assert(sz.fits && sz.input <= (sz.v.length <= 2 ? 34 : 44) && sz.label && sz.h >= 43, 'Size field ' + JSON.stringify(sz));
+        // A drag anywhere on the labeled box scrubs; its slider button opens the popover.
+        const ob = await page.locator('.tool-header .num-box', { hasText: 'Hardness' }).boundingBox();
+        const hv0 = await page.evaluate(() => window.compositor.app.brush.hardness);
+        await touch('touchStart', [[ob.x + 20, ob.y + ob.height / 2]]);
+        for (let k = 1; k <= 8; k++) await touch('touchMove', [[ob.x + 20 - k * 6, ob.y + ob.height / 2]]);
+        await touch('touchEnd', []); await wait(100);
+        const hv1 = await page.evaluate(() => window.compositor.app.brush.hardness);
+        assert(hv1 < hv0, `touch drag on the box scrubs: ${hv0} → ${hv1}`);
+        await page.locator('.tool-header .num-box', { hasText: 'Opacity' }).locator('.num-pop-btn').tap(); await wait(150);
+        assert(await page.isVisible('.num-popover input[type=range]'), 'slider button opens the popover');
         await shot('options-popover');
         await page.keyboard.press('Escape'); await wait(100);
         assert(!(await page.isVisible('.num-popover')), 'Escape closes the slider popover');

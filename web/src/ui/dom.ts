@@ -85,6 +85,7 @@ export function slider(o: SliderOpts): HTMLElement {
   num.addEventListener('keydown', e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); e.stopPropagation(); });
   const label = h('label', { class: 'slider-label scrub', title: 'Drag to scrub' }, o.label);
   label.addEventListener('pointerdown', e => {
+    if (label.closest('.num-box')) return; // inside a labeled field box, the box does the scrubbing (ui/fields.ts)
     const x0 = e.clientX, v0 = +range.value, span = o.max - o.min;
     label.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => set(v0 + (ev.clientX - x0) * span / 300 * (ev.shiftKey ? 0.1 : 1));

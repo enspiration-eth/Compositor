@@ -178,6 +178,16 @@ function sliderPopover(i: HTMLInputElement, anchor: HTMLElement) {
   range.focus();
 }
 
+/** The label to put inside the field's box, if the field has one in its row and there's room for it. */
+function findInlineLabel(i: HTMLInputElement): HTMLElement | null {
+  if (i.closest('.cp-row, [data-compact]') || i.dataset.compact !== undefined) return null;
+  const row = i.closest('.slider-row');
+  if (row) return row.closest('.tool-header') ? row.querySelector<HTMLElement>(':scope > .slider-label') : null; // panels keep their sliders
+  const p = i.parentElement; if (!p) return null;
+  if (p.matches('label.hdr-field, label.lv-field')) { const sp = p.querySelector<HTMLElement>(':scope > span:not(.unit)'); return sp && sp !== i ? sp : null; }
+  if (p.classList.contains('row') && p.querySelectorAll('input:not([type=hidden]):not([type=checkbox]), select').length === 1) return p.querySelector<HTMLElement>(':scope > .lbl');
+  return null;
+}
 /** Makes one input a scrubby number field. `opts.popover` adds the slider button (default: bounded fields only). */
 export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | null; popover?: boolean; unit?: string } = {}) {
   if (enhanced.has(i)) return i;
@@ -213,8 +223,11 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
     }
   });
   i.addEventListener('change', syncAria); i.addEventListener('input', syncAria);
+  // The labeled variant: the row's label moves inside the field's box ([Size      58 px]) and the whole box is the
+  // scrub target. Rows too tight for that (the color picker's R/G/B) keep the compact box with the label outside.
+  const inlineLabel = findInlineLabel(i);
   // Label scrubbing: the field's <label>, or one pointing at it.
-  const label = opts.label ?? (i.closest('label') as HTMLElement | null) ?? (i.id ? document.querySelector<HTMLElement>(`label[for="${CSS.escape(i.id)}"]`) : null)
+  const label = inlineLabel ? null : opts.label ?? (i.closest('label') as HTMLElement | null) ?? (i.id ? document.querySelector<HTMLElement>(`label[for="${CSS.escape(i.id)}"]`) : null)
     ?? (i.parentElement?.querySelectorAll('input:not([type=hidden]):not([type=checkbox])').length === 1 ? i.parentElement.querySelector<HTMLElement>(':scope > .lbl') : null);
   if (label && !label.classList.contains('scrub') && !label.dataset.scrubFor) {
     label.dataset.scrubFor = '1'; label.classList.add('scrub-label');
@@ -232,6 +245,21 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
   box.className = 'num-box';
   i.before(box); box.append(i);
   if (unitEl) { box.append(unitEl); box.classList.add('has-unit'); }
+  if (inlineLabel) {
+    box.prepend(inlineLabel); box.classList.add('labeled'); inlineLabel.classList.add('num-inlabel');
+    const text = inlineLabel.textContent?.trim();
+    if (text && !i.getAttribute('aria-label') && !i.closest('label')) i.setAttribute('aria-label', text);
+    inlineLabel.setAttribute('aria-hidden', i.closest('label') ? 'false' : 'true');
+    i.closest('.slider-row')?.classList.add('has-labeled');
+  }
+  // Where the value sits in its range, as a faint bar along the bottom (also a hint that it drags).
+  const syncFill = () => {
+    const st2 = stateOf(i), v = parseFloat(i.value);
+    if (!Number.isFinite(st2.min) || !Number.isFinite(st2.max) || st2.max <= st2.min || !Number.isFinite(v)) { box.classList.remove('has-fill'); return; }
+    box.classList.add('has-fill');
+    box.style.setProperty('--fill', `${Math.round(Math.min(1, Math.max(0, (v - st2.min) / (st2.max - st2.min))) * 1000) / 10}%`);
+  };
+  if (inlineLabel) { syncFill(); i.addEventListener('input', syncFill); i.addEventListener('change', syncFill); }
   box.addEventListener('pointerdown', e => { if (e.target !== i && !(e.target as HTMLElement).closest('button')) { if (document.activeElement === i) e.preventDefault(); else scrubFrom(i, e, i, false); } });
   const st = stateOf(i);
   const chars = Math.min(7, Math.max(2, ...[st.min, st.max].filter(Number.isFinite).map(v => format(v, st).length), Number.isFinite(st.max) ? 0 : st.integer ? 5 : 6));
@@ -244,9 +272,9 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
   fit();
   i.addEventListener('input', fit); i.addEventListener('change', fit); i.addEventListener('blur', fit);
   fitters.set(i, fit);
-  if (document.body.classList.contains('touch')) { // values set in code (the [ and ] keys, a slider) refit it too
+  if (document.body.classList.contains('touch') || inlineLabel) { // values set in code (the [ and ] keys, a slider) refit it too
     const d = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
-    Object.defineProperty(i, 'value', { configurable: true, get() { return d.get!.call(this); }, set(v) { d.set!.call(this, v); fit(); } });
+    Object.defineProperty(i, 'value', { configurable: true, get() { return d.get!.call(this); }, set(v) { d.set!.call(this, v); fit(); if (inlineLabel) syncFill(); } });
   }
   const inSlider = !!i.closest('.slider-row') && !i.closest('.tool-header');
   if (opts.popover ?? (!inSlider && Number.isFinite(st.min) && Number.isFinite(st.max) && st.max - st.min > 0 && (st.max - st.min <= 1000 || !!i.closest('.tool-header')) && !i.dataset.noPopover)) {
@@ -255,13 +283,6 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
     b.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
     b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); if (!i.disabled) sliderPopover(i, b); });
     box.append(b); box.classList.add('has-pop');
-    // On touch screens the options bar hides the small slider button; a tap on the label (one that doesn't scrub) opens it.
-    const lbl = i.closest('.tool-header') ? i.closest('.slider-row')?.querySelector<HTMLElement>('.slider-label') ?? label : null;
-    if (lbl) {
-      let x0 = 0, y0 = 0;
-      lbl.addEventListener('pointerdown', e => { x0 = e.clientX; y0 = e.clientY; });
-      lbl.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse' && Math.hypot(e.clientX - x0, e.clientY - y0) < 6 && !i.disabled) sliderPopover(i, box); });
-    }
   }
   return i;
 }

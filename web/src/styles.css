@@ -407,7 +407,16 @@ body.phone .hdr-title { display: none; }
 body.phone .tool-header { height: 50px; }
 body.phone .layers-panel { top: auto; left: 0; width: auto !important; height: min(64dvh, 560px); border-left: none; border-top: 1px solid var(--line); border-radius: 14px 14px 0 0;
   transform: translateY(105%); box-shadow: 0 -12px 40px rgba(0,0,0,0.5); padding-right: 0; }
-body.phone .layers-panel::before { content: ''; display: block; width: 40px; height: 5px; border-radius: 3px; background: #555; margin: 6px auto 0; flex: none; }
+/* The grab handle (ui/mobile.ts makeSheetDraggable): a real button with a big hit area around the pill. */
+.sheet-handle { display: none; }
+body.phone .sheet-handle { display: block; flex: none; width: 100%; height: 22px; margin: 0; padding: 0; border: 0; background: none; position: relative; cursor: grab; touch-action: none; }
+body.phone .sheet-handle::before { content: ''; position: absolute; left: 50%; top: 8px; width: 40px; height: 5px; margin-left: -20px; border-radius: 3px; background: #666; }
+body.phone .sheet-handle:focus-visible::before { background: var(--accent); }
+body.phone .layers-panel { height: var(--sheet-h, min(64dvh, 560px)); max-height: calc(var(--vvh, 100dvh) - 40px); }
+body.phone.layers-open .layers-panel { transform: translateY(var(--sheet-drag, 0px)); }
+body.phone .layers-panel.sheet-dragging { transition: none; }
+body.phone .layers-panel.sheet-anim { transition: height .38s cubic-bezier(.22, 1.2, .36, 1), transform .3s cubic-bezier(.22, 1, .36, 1); }
+body.phone .layers-panel .layers-head { touch-action: none; }
 body.phone .tabs .tab { max-width: 120px; }
 
 
@@ -468,7 +477,7 @@ body.touch .num-pop-btn { width: 32px; height: 40px; }
 body.touch .num-box { min-height: 40px; }
 body.touch .num-box > input.num-field { min-height: 0; font-size: 16px; padding-top: 6px; padding-bottom: 6px; }
 body.touch .num-box > .num-pop-btn { width: 26px; height: 36px; }
-body.touch .tool-header .num-box > .num-pop-btn { display: none; }
+body.touch .tool-header .num-box:not(.labeled) > .num-pop-btn { display: none; }
 body.touch .tool-header .num-box.has-pop > .unit { padding-right: 8px; }
 body.touch .tool-header .slider-label { padding: 10px 2px; }
 
@@ -497,3 +506,29 @@ select.cs-native { position: absolute !important; width: 1px !important; height:
 .cs-sheet-title { text-align: center; color: var(--text2); font-size: 13px; padding: 8px 0 6px; position: sticky; top: -6px; background: #2c2c2c; }
 @keyframes cs-up { from { transform: translateY(30%); opacity: .4; } }
 body.touch .cs-button { min-height: 40px; font-size: 16px; }
+
+/* Labeled field ([Size      58 px]): the label sits inside the box on the left, the value and unit on the right, and
+   the whole box scrubs. A faint fill shows where the value sits in its range. */
+.num-box.labeled { height: 34px; min-width: 128px; padding-left: 10px; gap: 0; position: relative; overflow: hidden; }
+.num-box.labeled > .num-inlabel { color: var(--text2); min-width: 0 !important; width: auto !important; margin: 0 10px 0 0; padding: 0 !important; flex: 1 0 auto; white-space: nowrap; font-size: inherit; cursor: inherit; user-select: none; }
+.num-box.labeled > input.num-field { flex: 0 1 auto; padding-left: 0; height: 100%; }
+.num-box.labeled > .unit { padding-right: 10px; }
+.num-box.labeled.has-pop > .unit { padding-right: 2px; }
+.num-box.labeled > .num-pop-btn { height: 100%; width: 22px; margin: 0; border-radius: 0 4px 4px 0; }
+.num-box.labeled.has-fill { background: linear-gradient(rgba(76,141,255,.6), rgba(76,141,255,.6)) 0 100% / var(--fill, 0%) 2px no-repeat, linear-gradient(rgba(255,255,255,.045), rgba(255,255,255,.045)) 0 0 / var(--fill, 0%) 100% no-repeat, #1c1c1c; }
+.num-box.labeled:hover { border-color: #555; }
+.num-box.labeled:focus-within > .num-inlabel { color: var(--text); }
+.tool-header .slider-row.has-labeled { margin-right: 0; }
+.tool-header .slider-row.has-labeled .slider-val { margin-right: 0; }
+.tool-header:has(.num-box.labeled) { gap: 14px; }
+.row > .num-box.labeled { min-width: 180px; }
+label.hdr-field:has(.num-box.labeled) { gap: 0; }
+.hdr-field .num-box.labeled { min-width: 96px; }
+.lv-field:has(.num-box.labeled) .num-box.labeled { min-width: 0; }
+body.touch .num-box.labeled { height: 44px; min-height: 44px; min-width: 148px; font-size: 16px; }
+body.touch .num-box.labeled > input.num-field { font-size: 16px; padding-top: 0; padding-bottom: 0; }
+body.touch .num-box.labeled > .num-pop-btn { width: 44px; height: 100%; }
+body.touch .tool-header:has(.num-box.labeled) { gap: 12px; }
+body.touch:not(.tool-options-open) .tool-header:has(.num-box.labeled) { height: 56px; }
+body.compact.tool-options-open .tool-header .slider-row.has-labeled { flex: 1 0 auto; }
+body.compact.tool-options-open .tool-header .slider-row.has-labeled .slider-val, body.compact.tool-options-open .tool-header .slider-row.has-labeled .num-box { flex: 1; }
