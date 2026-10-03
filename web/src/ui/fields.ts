@@ -195,7 +195,7 @@ export function numberField(i: HTMLInputElement, opts: { label?: HTMLElement | n
   // One bordered box holds the value and its unit (muted, right after the number), sized to fit them.
   const next = i.nextElementSibling as HTMLElement | null;
   const unitEl = next?.classList.contains('unit') ? next : opts.unit || i.dataset.unit ? Object.assign(document.createElement('span'), { className: 'unit', textContent: opts.unit || i.dataset.unit }) : null;
-  const box = document.createElement('span');
+  const box = document.createElement('div'); // a div: rules aimed at a row's label spans must not size it
   box.className = 'num-box';
   i.before(box); box.append(i);
   if (unitEl) { box.append(unitEl); box.classList.add('has-unit'); }
