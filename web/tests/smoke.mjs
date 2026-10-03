@@ -751,7 +751,12 @@ try {
     await page.dblclick('#jpeg-frame');
     assert(await page.textContent('#jpeg-zoom') === '100%', 'double-click from Fit goes to 100%');
     // The background swatch opens the app's picker above the sheet.
+    // A slow first frame must not pull the focus out of a field already being typed in (Return would then mean OK): hold frames back while the picker opens.
+    await page.evaluate(() => { window.__raf = window.requestAnimationFrame; window.requestAnimationFrame = cb => window.__raf(() => setTimeout(() => cb(performance.now()), 400)); });
     await page.click('#jpeg-modal .well'); await page.waitForSelector('#color-picker');
+    await page.focus('#cp-hex'); await page.waitForTimeout(600);
+    await page.evaluate(() => { window.requestAnimationFrame = window.__raf; });
+    assert(await page.evaluate(() => document.activeElement?.id === 'cp-hex'), 'the hex field keeps the focus');
     await page.fill('#cp-hex', '000000'); await page.press('#cp-hex', 'Enter'); await page.click('#cp-ok');
     assert(await page.evaluate(() => !!document.getElementById('jpeg-modal') && !document.getElementById('color-picker')), 'sheet still open after the picker, picker closed');
     await page.waitForFunction(() => /KB|MB/.test(document.getElementById('jpeg-size').textContent));

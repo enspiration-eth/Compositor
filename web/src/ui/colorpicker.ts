@@ -147,7 +147,9 @@ export function openColorPicker(opts: PickerOptions) {
 
   open = { panel, opts, finish, sample: c => { hsb = setRGB(hsb, quantize(c)); update(); } };
   update();
-  requestAnimationFrame(() => ok.focus());
+  // OK takes the focus (Return accepts) unless a field already has it: on a slow frame the user (or a test) may be typing into one by now,
+  // and moving the focus would turn their Return into OK.
+  requestAnimationFrame(() => { if (!done && !panel.el.contains(document.activeElement)) ok.focus(); });
 }
 
 /** A color swatch button that opens the picker (DialogColorSwatch): the color follows the picker as it moves and keeps the one chosen. */
